@@ -314,7 +314,7 @@ class ProductionReadinessService {
   remediationFor(id) {
     const messages = {
       text_provider: 'Run npm run walkthrough, verify the selected model, and confirm provider credits or quota.',
-      quality_pipeline: 'Start Ollama, pull the configured model, and set GEMINI_API_KEY (or saved Gemini credentials) plus GROQ_API_KEY. Rerun readiness.'
+      quality_pipeline: 'Start Ollama, pull the configured model, and set GEMINI_API_KEY (or saved Gemini credentials) plus GROQ_API_KEY. Rerun readiness.',
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
