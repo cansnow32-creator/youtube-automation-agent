@@ -1492,7 +1492,7 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
-    const requestedConceptId = input.approvedConceptId || input.strategyContext?.approvedVideoConceptId;
+    const requestedConceptId = input.approvedConceptId || input.approvedVideoConceptId || input.strategyContext?.approvedVideoConceptId;
     const approvedConcept = await requireApprovedVideoConcept(this.db, requestedConceptId);
     validation.value.strategyContext = {
       ...(validation.value.strategyContext || {}),
