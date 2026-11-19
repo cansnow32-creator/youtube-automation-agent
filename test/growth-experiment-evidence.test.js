@@ -94,7 +94,7 @@ async function run() {
     test.status = 'awaiting_winner';
     test.winningArmId = 'variant';
     test.productionId = 'production-1';
-    test.arms[1].title = 'A proven title pattern';
+    test.arms[1].title = 'A centered composition title';
     test.result = { liftPercent: 25, zScore: 2.4, confidence: 'high', guardrails: { passed: true } };
     const { service } = makeService([]);
     service.requireExperiment = async () => test;
@@ -105,11 +105,15 @@ async function run() {
         packagingExperiment: {
           titleVariants: [
             { label: 'Control', title: 'Original title' },
-            { label: 'Step-by-step', title: 'A proven title pattern' }
+            { label: 'Step-by-step + Color contrast', title: 'A step-by-step title' },
+            { label: 'Curiosity + Alternate promise', title: 'A curiosity title' },
+            { label: 'Benefit + Centered composition', title: 'A centered composition title' }
           ],
           thumbnailVariants: [
             { label: 'Control', path: '/tmp/control.jpg' },
-            { label: 'Centered composition', path: '/tmp/variant.jpg' }
+            { label: 'Color contrast', path: '/tmp/contrast.jpg' },
+            { label: 'Alternate promise', path: '/tmp/alternate.jpg' },
+            { label: 'Centered composition', path: '/tmp/centered.jpg' }
           ]
         }
       }
@@ -121,7 +125,7 @@ async function run() {
     service.db.reviewLearningRecommendation = async (id, status) => ({ id, status });
     service.db.updateGrowthExperiment = async (_id, changes) => ({ ...test, ...changes });
     const result = await service.adoptWinner(test.id, { confirmed: true });
-    assert.equal(savedRecommendation.proposedChange.winningTitle, 'A proven title pattern');
+    assert.equal(savedRecommendation.proposedChange.winningTitle, 'A centered composition title');
     assert.equal(savedRecommendation.proposedChange.winningThumbnailPattern, 'Centered composition');
     assert.equal(savedRecommendation.proposedChange.winningArmLabel, 'Variant B');
     assert.equal(result.status, 'adopted');
