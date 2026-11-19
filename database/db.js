@@ -1722,6 +1722,19 @@ class Database {
     return this.getReferenceVideo(id);
   }
 
+  async updateVideoConcept(id, concept) {
+    const result = await this.executeQuery(
+      "UPDATE video_concepts SET concept_json = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
+      [JSON.stringify(concept), id]
+    );
+    if (!result.changes) {
+      const current = await this.getVideoConcept(id);
+      if (!current) return null;
+      throw new Error('Approved concepts are immutable. Attach music before approval or create a new concept.');
+    }
+    return this.getVideoConcept(id);
+  }
+
   async approveVideoConcept(id) {
     const result = await this.executeQuery("UPDATE video_concepts SET status = 'approved', approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'", [id]);
     if (!result.changes) {
