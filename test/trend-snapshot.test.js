@@ -52,6 +52,7 @@ async function run() {
     const refreshed = await strategy.refreshTrendSnapshot();
     createdIds.push(refreshed.id);
     assert.ok(refreshed.topicCount > 0, 'weekly trend refresh should produce topics');
+    assert.ok(refreshed.trendChanges.newTopics.length > 0, 'weekly refresh should identify newly emerging topics');
     assert.equal(refreshed.sourceCounts.youtubeTrendingVideos, 1);
     assert.equal(refreshed.sourceCounts.competitorChannels, 1);
 
