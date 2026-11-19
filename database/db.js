@@ -652,6 +652,20 @@ class Database {
         FOREIGN KEY (revision_of) REFERENCES video_concepts(id)
       )`,
       `CREATE INDEX IF NOT EXISTS idx_video_concepts_topic_created ON video_concepts(topic, created_at DESC)`,
+      // User-supplied reference videos are stored locally and analyzed for style only.
+      `CREATE TABLE IF NOT EXISTS reference_videos (
+        id TEXT PRIMARY KEY,
+        original_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        duration_seconds REAL NOT NULL,
+        frame_paths_json TEXT NOT NULL,
+        analysis_json TEXT,
+        analysis_status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_reference_videos_created ON reference_videos(created_at DESC)`,
       // System Settings
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -1676,6 +1690,36 @@ class Database {
     const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 20));
     const rows = await this.getAllRows('SELECT id FROM video_concepts ORDER BY created_at DESC LIMIT ?', [safeLimit]);
     return Promise.all(rows.map(row => this.getVideoConcept(row.id)));
+  }
+
+  async saveReferenceVideo(record) {
+    await this.executeQuery(
+      `INSERT INTO reference_videos (id, original_name, file_path, mime_type, size_bytes, duration_seconds, frame_paths_json, analysis_json, analysis_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.originalName, record.filePath, record.mimeType, record.sizeBytes, record.durationSeconds,
+        JSON.stringify(record.framePaths || []), record.analysis ? JSON.stringify(record.analysis) : null, record.analysisStatus || 'pending']
+    );
+    return this.getReferenceVideo(record.id);
+  }
+
+  async getReferenceVideo(id) {
+    const row = await this.getRow('SELECT * FROM reference_videos WHERE id = ?', [id]);
+    if (!row) return null;
+    return {
+      id: row.id, originalName: row.original_name, filePath: row.file_path,
+      mimeType: row.mime_type, sizeBytes: row.size_bytes,
+      durationSeconds: row.duration_seconds, framePaths: JSON.parse(row.frame_paths_json || '[]'),
+      analysis: row.analysis_json ? JSON.parse(row.analysis_json) : null,
+      analysisStatus: row.analysis_status, createdAt: row.created_at
+    };
+  }
+
+  async updateReferenceVideoAnalysis(id, analysis, status = 'complete') {
+    await this.executeQuery(
+      'UPDATE reference_videos SET analysis_json = ?, analysis_status = ? WHERE id = ?',
+      [analysis ? JSON.stringify(analysis) : null, status, id]
+    );
+    return this.getReferenceVideo(id);
   }
 
   async approveVideoConcept(id) {
