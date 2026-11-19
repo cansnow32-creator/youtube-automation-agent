@@ -33,8 +33,10 @@ async function testValidationAndArguments(directory) {
   let capturedArgs = null;
   const result = await mixBackgroundMusic(videoPath, outputPath, licensedMusic({ path: musicPath, licenseUrl: 'https://example.com/license' }), {
     runFFmpeg: async args => {
-      capturedArgs = args;
-      if (args[args.length - 1].endsWith('.mixing.mp4')) await fs.writeFile(args[args.length - 1], Buffer.from('mixed'));
+      if (args[args.length - 1].endsWith('.mixing.mp4')) {
+        capturedArgs = args;
+        await fs.writeFile(args[args.length - 1], Buffer.from('mixed'));
+      }
     },
     getMediaInfo: async () => ({ duration: 20, width: 1920, height: 1080, hasAudio: true }),
     getAudioInfo: async () => ({ duration: 8, codec: 'pcm_s16le' })
