@@ -1467,6 +1467,11 @@ class YouTubeAutomationAgent {
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
       const generated = await this.agents.strategy.generateContentStrategy(topic);
+      const { getApprovedPackagingLearning } = require('./utils/packaging-learning');
+      const approvedLearnings = this.db.listLearningRecommendations
+        ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
+        : [];
+      generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
