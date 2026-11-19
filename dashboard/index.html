@@ -22,6 +22,7 @@
       <p class="sidebar-label" aria-hidden="true">Workspace</p>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="9.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="1.5"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="1.5"/><rect x="3" y="15.5" width="7.5" height="5.5" rx="1.5"/></svg> Overview</button>
+        <button class="nav-item" data-view="concepts">Video concept studio</button>
         <button class="nav-item" data-view="operator"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg> Autonomous operator</button>
         <button class="nav-item" data-view="pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17.5" cy="6" r="2"/><circle cx="14.5" cy="18" r="2"/></svg> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
         <button class="nav-item" data-view="calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4M7.5 13.5h3v3h-3z"/></svg> Calendar & ideas</button>
@@ -80,6 +81,25 @@
             <div class="panel-heading"><div><p class="eyebrow">INBOX</p><h2>Recent activity</h2></div></div>
             <div id="notification-list" class="activity-list"></div>
           </article>
+        </div>
+      </section>
+
+      <section id="concepts-view" class="view">
+        <div class="section-intro">
+          <div><h2>Video concept studio</h2><p>Propose with local Ollama, revise until it matches your direction, then approve before production.</p></div>
+          <span class="status">Local-first · qwen3.5:4b</span>
+        </div>
+        <form id="concept-propose-form" class="panel settings-form">
+          <div class="panel-heading"><div><p class="eyebrow">PRE-PRODUCTION</p><h2>What video should we create?</h2></div></div>
+          <label><span>Topic</span><input name="topic" maxlength="300" placeholder="e.g. GTA 6 launch: what makes the open world different?" required></label>
+          <label><span>Your creative direction <small>Optional — leave blank for an independent proposal</small></span><textarea name="direction" rows="3" maxlength="2000" placeholder="Tell the AI what should stay, what should change, mood, audience, format..."></textarea></label>
+          <label><span>Reference video notes <small>Style analysis only; do not paste or reuse copyrighted footage/audio</small></span><textarea name="referenceNotes" rows="2" maxlength="3000" placeholder="Describe the pacing, visual language or subtitle treatment you want to learn from."></textarea></label>
+          <div class="form-actions"><button type="submit" class="button primary">Propose concept with Ollama</button></div>
+          <p class="callout">This step uses local Ollama only. If Ollama is offline, the proposal fails clearly; there is no paid cloud fallback.</p>
+        </form>
+        <div class="concept-grid">
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">VERSION HISTORY</p><h2>Concept proposals</h2></div><button id="concept-refresh-button" type="button" class="button secondary small">Refresh</button></div><div id="concept-list" class="card-list"></div></article>
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">REVIEW & APPROVAL</p><h2>Selected concept</h2></div><span id="concept-status" class="status">Not selected</span></div><div id="concept-detail"><div class="empty">Create or select a concept to review it here.</div></div><form id="concept-revision-form" class="settings-form hidden"><label><span>What should stay, change or improve?</span><textarea name="feedback" rows="4" maxlength="4000" placeholder="Keep the opening and color palette. Change the middle section, make the narration more energetic..." required></textarea></label><div class="form-actions"><button type="submit" class="button secondary">Request revision</button></div></form></article>
         </div>
       </section>
 
