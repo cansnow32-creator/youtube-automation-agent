@@ -36,25 +36,44 @@ function validateSrtContent(content) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new Error('SRT captions must contain at least one subtitle cue');
   }
-  const blocks = content.trim().split(/\r?\n\s*\r?\n/);
-  const timestamp = /^(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})$/;
+
+  const blocks = content.trim().split(/\\r?\\n\\s*\\r?\\n/);
+  const timestamp = /^(\\d{2,}):([0-5]\\d):([0-5]\\d),(\\d{3}) --> (\\d{2,}):([0-5]\\d):([0-5]\\d),(\\d{3})$/;
+  let previousIndex = 0;
   let validCues = 0;
+
+  const toMs = match => {
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3]);
+    const millis = Number(match[4]);
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
+  };
+
   for (const block of blocks) {
-    const lines = block.split(/\r?\n/);
-    if (!/^\d+$/.test((lines[0] || '').trim())) continue;
-    const match = timestamp.exec((lines[1] || '').trim());
+    const lines = block.split(/\\r?\\n/);
+    const indexText = (lines[0] || '').trim();
+    if (!/^\\d+$/.test(indexText) || Number(indexText) <= previousIndex) {
+      throw new Error('SRT captions contain a malformed or out-of-order cue index');
+    }
+
+    const timingLine = (lines[1] || '').trim();
+    const match = timestamp.exec(timingLine);
     const captionText = lines.slice(2).join(' ').trim();
-    if (!match || !captionText) throw new Error('SRT captions contain a malformed or empty subtitle cue');
-    const toMs = value => {
-      const [clock, millis] = value.split(',');
-      const [hours, minutes, seconds] = clock.split(':').map(Number);
-      return ((hours * 60 + minutes) * 60 + seconds) * 1000 + Number(millis);
-    };
-    if (toMs(match[2]) <= toMs(match[1])) {
+    if (!match || !captionText) {
+      throw new Error('SRT captions contain a malformed or empty subtitle cue');
+    }
+
+    const startTime = toMs(match.slice(1, 5));
+    const endTime = toMs(match.slice(5, 9));
+    if (endTime <= startTime) {
       throw new Error('SRT subtitle cue end time must be after its start time');
     }
+
+    previousIndex = Number(indexText);
     validCues++;
   }
+
   if (!validCues) throw new Error('SRT captions must contain at least one valid subtitle cue');
   return { cueCount: validCues };
 }
