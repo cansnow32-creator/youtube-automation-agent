@@ -15,6 +15,26 @@ function extractJson(value) {
   }
 }
 
+function platformMetadataIssues(metadata) {
+  const issues = [];
+  const required = {
+    youtube: ['title', 'description', 'hashtags', 'tags'],
+    instagram_reels: ['caption', 'hashtags'],
+    tiktok: ['caption', 'hashtags']
+  };
+  for (const [platform, fields] of Object.entries(required)) {
+    const value = metadata?.[platform];
+    for (const field of fields) {
+      const item = value?.[field];
+      const valid = Array.isArray(item)
+        ? item.length > 0 && item.every(entry => typeof entry === 'string' && entry.trim())
+        : typeof item === 'string' && item.trim();
+      if (!valid) issues.push(`platform_metadata.${platform}.${field} is missing or invalid`);
+    }
+  }
+  return issues;
+}
+
 class LocalFirstQualityPipeline {
   constructor(credentials = {}, options = {}) {
     this.credentials = credentials || {};
@@ -92,6 +112,12 @@ class LocalFirstQualityPipeline {
       if (!Array.isArray(result.blockers) || !Array.isArray(result.revision_instructions)) {
         throw new Error(`${name} reviewer response is missing blockers or revision instructions`);
       }
+      const metadataIssues = platformMetadataIssues(result.platform_metadata);
+      if (metadataIssues.length) {
+        result.blockers.push(...metadataIssues);
+        result.revision_instructions.push(...metadataIssues.map(issue => `Provide complete, platform-specific metadata: ${issue}`));
+        result.approved = false;
+      }
     }
     return { gemini, groq };
   }
@@ -148,4 +174,4 @@ class LocalFirstQualityPipeline {
   }
 }
 
-module.exports = { LocalFirstQualityPipeline, extractJson, MINIMUM_SCORE, MAX_REVISIONS };
+module.exports = { LocalFirstQualityPipeline, extractJson, platformMetadataIssues, MINIMUM_SCORE, MAX_REVISIONS };
