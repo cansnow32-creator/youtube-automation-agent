@@ -109,6 +109,29 @@ class PublishingSchedulingAgent {
           error.code = 'PROVENANCE_BLOCKED';
           throw error;
         }
+
+        // Enforce operator approval in the publishing service itself. This protects
+        // every caller, including scheduled jobs and the emergency "publish now" path.
+        if (productionBundle) {
+          if (productionBundle.review_status !== 'approved') {
+            const error = new Error('Publishing is blocked until the production has explicit operator approval');
+            error.status = 409;
+            error.code = 'CONTENT_NOT_APPROVED';
+            throw error;
+          }
+        } else {
+          const shortClip = this.db.getShortClip ? await this.db.getShortClip(contentId) : null;
+          const approvedShort = shortClip &&
+            ['scheduled', 'uploading', 'reconciliation_required', 'published'].includes(shortClip.status) &&
+            Boolean(shortClip.approvedAt) &&
+            shortClip.inheritedEvidence?.ready === true;
+          if (!approvedShort) {
+            const error = new Error('Publishing is blocked until the Short has explicit approval and verified source evidence');
+            error.status = 409;
+            error.code = 'SHORT_NOT_APPROVED';
+            throw error;
+          }
+        }
       }
       if (this.db.getLatestReadinessRun) {
         const readiness = await this.db.getLatestReadinessRun();
