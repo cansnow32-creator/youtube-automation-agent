@@ -2327,8 +2327,20 @@ class SystemTest {
     }
 
     const pipeline = new YouTubeAutomationAgent();
+    const approvedConceptRecord = {
+      id: 'open-issue-approved-concept',
+      status: 'approved',
+      concept: {
+        name: 'Approved regression-test concept',
+        visualDirection: { style: 'animated', palette: 'warm' },
+        audioDirection: { narration: 'calm', pacing: 'measured' },
+        subtitleDirection: { typography: 'clean sans', placement: 'lower safe area' },
+        scenePlan: [{ scene: 1, purpose: 'Hook', visual: 'Opening' }, { scene: 2, purpose: 'Payoff', visual: 'Resolution' }]
+      }
+    };
     pipeline.db = {
       getChannelProfile: async () => ({}),
+      getVideoConcept: async id => id === approvedConceptRecord.id ? approvedConceptRecord : null,
       saveProductionData: async data => data.id,
       saveProductionSnapshot: async () => {},
       getSetting: async () => 'true',
@@ -2352,7 +2364,7 @@ class SystemTest {
       }) },
       publishing: { scheduleContent: async () => null }
     };
-    const generated = await pipeline.generateContent(null, null, 'short', { strategyContext: null });
+    const generated = await pipeline.generateContent(null, null, 'short', { strategyContext: { approvedVideoConceptId: approvedConceptRecord.id } });
     if (generated.contentId !== 'null-context-production') {
       throw new Error('A null manual strategy context still prevented generation');
     }
@@ -2378,8 +2390,23 @@ class SystemTest {
       topic: 'Checkpointed automation',
       contentType: 'Tutorial',
       requestedStyle: 'tutorial',
-      requestedLengthKey: 'short'
+      requestedLengthKey: 'short',
+      approvedVideoConceptId: 'recovery-approved-concept'
     };
+    await db.saveVideoConcept({
+      id: 'recovery-approved-concept',
+      topic: strategy.topic,
+      concept: {
+        name: 'Approved recovery concept',
+        visualDirection: { style: 'tutorial', palette: 'neutral' },
+        audioDirection: { narration: 'clear', pacing: 'measured' },
+        subtitleDirection: { typography: 'clean sans', placement: 'lower safe area' },
+        scenePlan: [{ scene: 1, purpose: 'Hook', visual: 'Opening' }, { scene: 2, purpose: 'Payoff', visual: 'Resolution' }]
+      },
+      status: 'approved',
+      revisionOf: null,
+      feedback: null
+    });
     const script = {
       title: 'Checkpointed automation',
       fullScript: 'A complete script that can be reused after an interrupted generation run.',
@@ -2433,7 +2460,7 @@ class SystemTest {
         style: 'tutorial',
         length: 'short',
         source: 'manual',
-        strategyContext: { objective: 'Test recovery' }
+        strategyContext: { objective: 'Test recovery', approvedVideoConceptId: strategy.approvedVideoConceptId }
       });
       await db.saveGenerationCheckpoint(job.id, 'strategy', {
         status: 'completed', artifact: strategy, completedAt: new Date().toISOString()
