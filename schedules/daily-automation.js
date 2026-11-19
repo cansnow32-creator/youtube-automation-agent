@@ -139,8 +139,25 @@ class DailyAutomation {
         return;
       }
 
-      // Generate content strategy
-      const strategy = await this.agents.strategy.generateContentStrategy();
+      // The legacy scheduler path must select an approved concept before
+      // invoking any AI strategy, script, thumbnail, or SEO generation.
+      const approvedConcepts = await this.db.listVideoConcepts(100);
+      const approvedConcept = approvedConcepts.find(item => item?.status === 'approved');
+      if (!approvedConcept) {
+        const error = new Error('Daily generation is blocked until a video concept is approved in Concept Studio.');
+        error.status = 409;
+        error.code = 'APPROVED_CONCEPT_REQUIRED';
+        throw error;
+      }
+
+      // Generate content strategy and bind the approved concept before any
+      // downstream agent can spend provider credits or create production assets.
+      const generatedStrategy = await this.agents.strategy.generateContentStrategy();
+      const strategy = {
+        ...generatedStrategy,
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      };
       this.logger.info(`Generated strategy: ${strategy.topic}`);
 
       // Generate script
