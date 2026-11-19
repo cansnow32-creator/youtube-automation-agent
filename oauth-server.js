@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
 const crypto = require('crypto');
+const { YOUTUBE_SCOPES } = require('./modern-auth');
 
 class OAuthServer {
   constructor() {
@@ -137,13 +138,7 @@ class OAuthServer {
 
     this.oauthState = crypto.randomBytes(32).toString('hex');
 
-    const scopes = [
-      'https://www.googleapis.com/auth/youtube.upload',
-      'https://www.googleapis.com/auth/youtube',
-      'https://www.googleapis.com/auth/youtube.readonly',
-      'https://www.googleapis.com/auth/yt-analytics.readonly',
-      'https://www.googleapis.com/auth/youtube.force-ssl'
-    ];
+    const scopes = YOUTUBE_SCOPES;
 
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
