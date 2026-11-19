@@ -3,11 +3,12 @@ const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
-const { runFFmpeg } = require('../utils/ffmpeg');
+const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
+const { mixBackgroundMusic } = require('../utils/audio-mixer');
 const { buildSubtitleFilter, describeSubtitleApplication } = require('../utils/subtitle-renderer');
 
 class ProductionManagementAgent {
-  constructor(db, credentials) {
+  constructor(db, credentials, options = {}) {
     this.db = db;
     this.credentials = credentials;
     this.logger = new Logger('ProductionManagement');
@@ -15,6 +16,12 @@ class ProductionManagementAgent {
     this.assets = new Map();
     this.aiVideoGenerator = new AIVideoGenerator(credentials, { db });
     this.sceneRepair = new SceneRepairService(db, this.aiVideoGenerator, { logger: this.logger });
+    this.audioMixer = options.audioMixer || mixBackgroundMusic;
+    this.audioMixerDependencies = {
+      runFFmpeg: options.runFFmpeg || runFFmpeg,
+      getMediaInfo: options.getMediaInfo || getMediaInfo,
+      getAudioInfo: options.getAudioInfo || getAudioInfo
+    };
   }
 
   async initialize() {
@@ -616,12 +623,30 @@ class ProductionManagementAgent {
       }
 
       let finalVideoPath = producedPath;
+      const approvedConcept = productionData.strategy?.approvedVideoConcept || {};
+      const audioDirection = approvedConcept.audioDirection || {};
+      const musicAsset = audioDirection.musicAsset || approvedConcept.backgroundMusic || null;
+      if (musicAsset && musicAsset.enabled !== false) {
+        const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music_mixed.mp4`);
+        const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
+        finalVideoPath = mixResult.path;
+        productionData.assets.backgroundMusic = {
+          ...mixResult,
+          direction: typeof audioDirection.music === 'string' ? audioDirection.music : null
+        };
+      } else {
+        productionData.assets.backgroundMusic = {
+          status: musicAsset?.enabled === false ? 'disabled' : 'not_configured',
+          direction: typeof audioDirection.music === 'string' ? audioDirection.music : null
+        };
+      }
+
       const captionsPath = productionData.assets.captions?.path;
       const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
       if (captionsPath) {
         const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
         await runFFmpeg([
-          '-y', '-i', producedPath,
+          '-y', '-i', finalVideoPath,
           '-vf', buildSubtitleFilter(captionsPath, subtitleDirection),
           '-map', '0:v:0', '-map', '0:a:0?',
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
