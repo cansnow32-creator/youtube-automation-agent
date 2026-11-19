@@ -5,9 +5,10 @@ const { Logger } = require('./logger');
 
 function dimensions(resolution = '720p', aspectRatio = '16:9') {
   const height = resolution === '1080p' ? 1080 : resolution === '480p' ? 480 : 720;
-  if (aspectRatio === '9:16') return { width: Math.round(height * 9 / 16), height };
+  const even = value => Math.max(2, Math.floor(value / 2) * 2);
+  if (aspectRatio === '9:16') return { width: even(height * 9 / 16), height };
   if (aspectRatio === '1:1') return { width: height, height };
-  return { width: Math.round(height * 16 / 9), height };
+  return { width: even(height * 16 / 9), height };
 }
 
 function colorGrade(palette = '') {
@@ -90,6 +91,8 @@ class CineCodeRenderer {
       totalDuration: durations.reduce((sum, duration) => sum + duration, 0),
       model: 'local-ffmpeg-camera-motion',
       resolution: `${width}x${height}`,
+      width,
+      height,
       colorGrade: grade
     };
   }
