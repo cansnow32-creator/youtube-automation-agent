@@ -29,6 +29,9 @@ function validateMusicRights(music = {}) {
   if (['cc_by', 'cc_by_sa'].includes(music.licenseType) && !cleanText(music.attribution)) {
     throw new Error('Creative Commons music requires its attribution text');
   }
+  if (music.licenseType === 'commercial_license' && !cleanText(music.licenseName) && !cleanText(music.licenseUrl)) {
+    throw new Error('Commercially licensed music requires a license name or license URL');
+  }
 }
 
 async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencies = {}) {
