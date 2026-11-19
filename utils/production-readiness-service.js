@@ -153,7 +153,8 @@ class ProductionReadinessService {
     if (!geminiKey) throw new Error('Gemini reviewer is not configured');
     if (!process.env.GROQ_API_KEY) throw new Error('Groq reviewer is not configured');
 
-    const baseUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    let baseUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434');
+    while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
     const model = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
     const response = await fetch(`${baseUrl}/api/tags`, { signal: globalThis.AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`Ollama model check failed: HTTP ${response.status}`);
