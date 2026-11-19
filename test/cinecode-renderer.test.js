@@ -51,7 +51,7 @@ async function run() {
       visualAssets: [path.join(directory, 'placeholder.info')],
       totalDuration: 6,
       outputDir: directory
-    }), /placeholder/);
+    }), /simulated or non-image assets/);
 
     let slideshowCalls = 0;
     const fake = {
