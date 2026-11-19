@@ -5,6 +5,7 @@ const path = require('node:path');
 const sharp = require('sharp');
 const { CineCodeRenderer } = require('../utils/cinecode-renderer');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
+const { checkFFmpeg, runFFmpeg, getMediaDuration } = require('../utils/ffmpeg');
 
 async function run() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-renderer-'));
@@ -109,6 +110,41 @@ async function run() {
 
     validator.getMediaDuration = async () => 0;
     await assert.rejects(() => validator.validateRenderedVideo(validationPath), /no valid media duration/);
+
+    const ffmpegAvailable = await checkFFmpeg();
+    if (!ffmpegAvailable && process.env.CI === 'true') {
+      throw new Error('CI must provide FFmpeg for the real CineCode render smoke test');
+    }
+    if (ffmpegAvailable) {
+      const realRenderer = new CineCodeRenderer({ logger: { info() {} } });
+      const realRender = await realRenderer.renderScenes({
+        visualAssets: [imageOne],
+        totalDuration: 3,
+        outputDir: directory,
+        outputPrefix: 'real-ffmpeg-smoke',
+        resolution: '480p',
+        aspectRatio: '16:9',
+        concept: { visualDirection: { palette: 'cool blue' }, scenePlan: [{ purpose: 'FFmpeg smoke test' }] }
+      });
+      assert.equal(realRender.clips.length, 1);
+
+      const audioPath = path.join(directory, 'smoke-audio.wav');
+      await runFFmpeg(['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-c:a', 'pcm_s16le', audioPath]);
+      const realGenerator = new AIVideoGenerator({}, { getMediaDuration, runFFmpeg });
+      const finalPath = path.join(directory, 'real-ffmpeg-final.mp4');
+      await realGenerator.generateHybridVideo(
+        realRender.clips, [], audioPath, finalPath, 3,
+        { width: realRender.width, height: realRender.height }
+      );
+      const finalStats = await fs.stat(finalPath);
+      assert.ok(finalStats.size > 0, 'real FFmpeg assembly must produce a final MP4');
+      assert.ok((await getMediaDuration(finalPath)) > 0, 'final MP4 must have a readable duration');
+      assert.equal(await fs.access(finalPath).then(() => true, () => false), true);
+      assert.equal(await fs.access(finalPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4')).then(() => true, () => false), false);
+      assert.equal(await fs.access(finalPath.replace(/\\.mp4$/i, '_finalizing.mp4')).then(() => true, () => false), false);
+    } else {
+      process.stdout.write('FFmpeg unavailable locally; real render smoke test skipped\\n');
+    }
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
