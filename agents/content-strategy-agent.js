@@ -550,12 +550,44 @@ class ContentStrategyAgent {
       }))
     };
 
-    let plan = await this.generateAutonomousPlanWithAI(channelStrategy, research, targetCount);
+    const savedIdeas = this.db.listContentIdeas ? await this.db.listContentIdeas() : [];
+    const rankedBacklog = savedIdeas.filter(item => item.status === 'backlog')
+      .map(item => {
+        let rationale = {};
+        try { rationale = typeof item.rationale === 'string' ? JSON.parse(item.rationale || '{}') : (item.rationale || {}); }
+        catch { rationale = {}; }
+        return { item, rationale, score: Number(rationale.score) || 0 };
+      })
+      .filter(entry => entry.rationale.source === 'weekly_trend_snapshot' && entry.score >= 50)
+      .filter(entry => !research.recentTopics.some(topic =>
+        String(topic).trim().toLowerCase() === String(entry.item.topic || '').trim().toLowerCase()
+      ))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, targetCount);
+    const backlogPlan = rankedBacklog.map(({ item, rationale, score }) => ({
+      topic: item.topic,
+      pillar: rationale.pillar || '',
+      angle: item.angle || '',
+      rationale: `Prioritized from the channel's scored idea backlog (${score}/100). ${rationale.explanation || ''}`.trim(),
+      format: item.style || channelStrategy.default_format,
+      length: channelStrategy.default_length,
+      sourceUrls: (rationale.evidence || []).map(source => source.url).filter(Boolean)
+    }));
+
+    let plan = backlogPlan;
+    if (plan.length < targetCount) {
+      const aiPlan = await this.generateAutonomousPlanWithAI(channelStrategy, research, targetCount - plan.length);
+      plan = [...plan, ...aiPlan];
+    }
     plan = this.normalizeAutonomousPlan(plan, channelStrategy, targetCount, research);
     if (plan.length < targetCount) {
       const fallback = this.buildFallbackAutonomousPlan(channelStrategy, research, targetCount);
       plan = this.normalizeAutonomousPlan([...plan, ...fallback], channelStrategy, targetCount, research);
     }
+    research.prioritizedBacklogIdeas = backlogPlan.map((item, index) => ({
+      topic: item.topic,
+      score: rankedBacklog[index]?.score || null
+    }));
 
     return { research, plan };
   }
