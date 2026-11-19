@@ -1,4 +1,8 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { checkFFmpeg } = require('../utils/ffmpeg');
 const { ProductionReadinessService } = require('../utils/production-readiness-service');
 
 const NOW = new Date('2026-11-19T12:00:00.000Z');
@@ -167,6 +171,30 @@ async function run() {
   await verifyPublishGate({ status: 'running', completed_at: recent, checks: [] }, true, /status \(running\)/);
   await verifyPublishGate({ status: 'passed', completed_at: recent, checks: [] }, false);
   await verifyPublishGate({ status: 'warning', completed_at: recent, checks: [{ id: 'optional_image', blocking: false, status: 'skipped' }] }, false);
+
+  const localDiagnostics = new ProductionReadinessService({}, {}, { logger: { warn() {}, info() {} } });
+  const runtime = await localDiagnostics.probeLocalRuntime();
+  assert.equal(runtime.details.nodeVersion, process.versions.node);
+  assert.equal(runtime.details.dataDirectoryWritable, true);
+  assert.equal(runtime.details.temporaryDirectoryWritable, true);
+
+  if (await checkFFmpeg()) {
+    const mediaDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-readiness-ffmpeg-'));
+    try {
+      const mediaCheck = await localDiagnostics.probeVideoAssembly(mediaDirectory);
+      assert.equal(mediaCheck.details.videoEncoder, 'libx264');
+      assert.equal(mediaCheck.details.audioEncoder, 'aac');
+      assert.deepEqual(mediaCheck.details.filters, ['zoompan', 'vignette']);
+      assert.equal(mediaCheck.details.outputWidth, 320);
+      assert.equal(mediaCheck.details.outputHeight, 180);
+      assert.ok(mediaCheck.details.outputBytes > 1000);
+      assert.ok(mediaCheck.details.ffmpegPath);
+    } finally {
+      await fs.rm(mediaDirectory, { recursive: true, force: true });
+    }
+  } else {
+    process.stdout.write('Local FFmpeg capability diagnostic skipped: FFmpeg is unavailable\\n');
+  }
 
   process.stdout.write('Production readiness gate tests passed\\n');
 }
