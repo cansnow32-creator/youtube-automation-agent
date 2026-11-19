@@ -493,16 +493,20 @@ class YouTubeAutomationAgent {
       }),
       async (req, res) => {
         try {
+          const headerText = name => {
+            const value = req.get(name) || '';
+            try { return decodeURIComponent(value); } catch (_error) { return value; }
+          };
           const concept = await this.concepts.attachMusicAsset(req.params.conceptId, req.body, {
             mimeType: req.get('content-type'),
-            title: req.get('x-music-title'),
-            creator: req.get('x-music-creator'),
+            title: headerText('x-music-title'),
+            creator: headerText('x-music-creator'),
             licenseType: req.get('x-license-type'),
             rightsConfirmed: req.get('x-rights-confirmed') === 'true',
-            attribution: req.get('x-music-attribution'),
-            licenseName: req.get('x-license-name'),
-            licenseUrl: req.get('x-license-url'),
-            sourceUrl: req.get('x-source-url'),
+            attribution: headerText('x-music-attribution'),
+            licenseName: headerText('x-license-name'),
+            licenseUrl: headerText('x-license-url'),
+            sourceUrl: headerText('x-source-url'),
             volume: req.get('x-music-volume') === undefined ? 0.18 : Number(req.get('x-music-volume')),
             loop: req.get('x-music-loop') !== 'false',
             fadeInSeconds: req.get('x-music-fade-in') === undefined ? 2 : Number(req.get('x-music-fade-in')),
