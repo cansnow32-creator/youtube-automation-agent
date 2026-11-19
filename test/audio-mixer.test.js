@@ -69,10 +69,10 @@ async function testProductionIntegration(directory) {
     isUsableAudioFile: async () => true,
     generateVideo: async () => source
   };
-  agent.audioMixer = async (_input, output, music) => {
+  agent.audioMixer = async (_input, _output, music) => {
     assert.equal(music.title, 'Approved music');
-    await fs.writeFile(output, Buffer.from('mixed'));
-    return { status: 'mixed', path: output, licenseType: music.licenseType, rightsConfirmed: true };
+    await fs.writeFile(mixed, Buffer.from('mixed'));
+    return { status: 'mixed', path: mixed, licenseType: music.licenseType, rightsConfirmed: true };
   };
   agent.audioMixerDependencies = {};
   const production = {
