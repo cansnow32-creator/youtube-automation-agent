@@ -175,6 +175,22 @@ async function testRealFFmpegMix(directory) {
   assert.equal(info.hasAudio, true);
   assert.ok(Math.abs(info.duration - 3) < 0.5);
   assert.ok((await getAudioInfo(output)).duration > 0);
+
+  // The 880 Hz music bed must be present in the mix, not merely an audio stream.
+  async function measureMusicBand(filePath) {
+    const measured = await runFFmpeg([
+      '-ss', '1', '-t', '1', '-i', filePath,
+      '-af', 'bandpass=f=880:width_type=h:width=100,volumedetect',
+      '-f', 'null', '-'
+    ]);
+    const match = String(measured.stderr || '').match(/mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/i);
+    assert.ok(match, 'FFmpeg must report the filtered music-band level');
+    return Number(match[1]);
+  }
+  const sourceMusicBand = await measureMusicBand(source);
+  const mixedMusicBand = await measureMusicBand(output);
+  assert.ok(mixedMusicBand > sourceMusicBand + 8,
+    `background music must measurably increase its frequency band (source ${sourceMusicBand} dB, mixed ${mixedMusicBand} dB)`);
   await runFFmpeg(['-v', 'error', '-i', output, '-f', 'null', '-']);
 }
 
