@@ -1658,13 +1658,20 @@ class YouTubeAutomationAgent {
 
   async preparePackagingExperiment(thumbnail, productionData, seoData, script) {
     const approved = await this.db.listLearningRecommendations({ status: 'approved', limit: 25 });
-    const recommendation = approved.find(item => item.proposedChange?.experiment === 'title_thumbnail_variant');
+    const { isApprovedPackagingLearning } = require('./utils/packaging-learning');
+    const recommendation = approved.find(isApprovedPackagingLearning);
     if (!recommendation) return null;
     try {
       const generated = await this.agents.thumbnailDesigner.generateABVariants(thumbnail.concept);
       return {
         sourceRecommendationId: recommendation.id,
         hypothesis: recommendation.title,
+        learning: {
+          rationale: recommendation.rationale || '',
+          confidence: recommendation.confidence || 'unknown',
+          winningTitle: recommendation.proposedChange?.winningTitle || null,
+          evidence: recommendation.evidence || {}
+        },
         status: 'draft',
         titleVariants: this.buildTitleExperimentVariants(seoData.title || script.title),
         thumbnailVariants: [
