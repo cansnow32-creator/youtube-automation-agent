@@ -173,6 +173,7 @@ class ContentStrategyAgent {
         competitorData.push({
           channelId,
           topPerformingTopics: analysis.topTopics,
+          topPerformingTemplates: analysis.topTemplates,
           averageViews: analysis.avgViews,
           uploadFrequency: analysis.frequency
         });
@@ -211,8 +212,9 @@ class ContentStrategyAgent {
   }
 
   analyzeVideoPerformance(videos) {
+    const { analyzeVideoTemplates } = require('../utils/viral-template-analyzer');
     if (!videos || videos.length === 0) {
-      return { topTopics: [], avgViews: 0, frequency: 0 };
+      return { topTopics: [], topTemplates: [], avgViews: 0, frequency: 0 };
     }
 
     const topics = {};
@@ -246,6 +248,7 @@ class ContentStrategyAgent {
 
     return {
       topTopics,
+      topTemplates: analyzeVideoTemplates(videos),
       avgViews: totalViews / videos.length,
       frequency: videos.length
     };
