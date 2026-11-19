@@ -29,6 +29,7 @@ async function run() {
         sourceTopic: 'AI video editing',
         topic: 'AI video editing workflow for beginner creators',
         angle: 'A practical workflow',
+        pillar: 'editing tutorials',
         format: 'tutorial'
       }
     ], snapshot.topics, {
@@ -36,13 +37,38 @@ async function run() {
       audience: 'beginner video creators',
       contentPillars: ['AI video tools', 'editing tutorials']
     }, [{
+      videoId: 'performance-video-1',
+      measuredAt: '2026-11-18T12:00:00.000Z',
       simulated: false,
-      contentAttributes: { topic: 'AI video editing' },
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
       metrics: { performanceScore: 86, ctr: 6, retention: 55 }
+    }, {
+      videoId: 'performance-video-1',
+      measuredAt: '2026-11-17T12:00:00.000Z',
+      simulated: false,
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 10, ctr: 1, retention: 10 }
+    }, {
+      videoId: 'performance-video-2',
+      measuredAt: '2026-11-18T12:00:00.000Z',
+      simulated: false,
+      contentAttributes: { topic: 'camera lighting basics', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 80, ctr: 5, retention: 50 }
+    }, {
+      videoId: 'simulated-video',
+      simulated: true,
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 100, ctr: 10, retention: 100 }
     }]);
     assert.equal(ranked.length, 1);
-    assert.equal(ranked[0].scoreBreakdown.historicalPerformance, 67);
-    assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 1);
+    assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 2,
+      'multiple measurement windows for one video count as one independent sample');
+    assert.equal(ranked[0].scoreBreakdown.historicalConfidence, 0.5,
+      'two independent videos receive a 50% confidence weight');
+    assert.equal(ranked[0].scoreBreakdown.historicalPillarMatches, 2,
+      'successful videos in the same content pillar can inform new ideas');
+    assert.ok(ranked[0].scoreBreakdown.historicalPerformance < ranked[0].scoreBreakdown.historicalRawPerformance,
+      'small samples are pulled toward a neutral score');
 
     const audienceDemand = buildAudienceDemand([
       {
@@ -97,10 +123,41 @@ async function run() {
       };
     };
 
+    const backlogIdea = await db.createContentIdea({
+      topic: 'Beginner AI video editing workflow checklist',
+      angle: 'Practical steps for beginners',
+      style: 'tutorial',
+      status: 'backlog',
+      rationale: JSON.stringify({
+        source: 'weekly_trend_snapshot',
+        sourceTopic: 'AI video editing',
+        pillar: 'editing tutorials',
+        explanation: 'Existing saved idea to re-rank'
+      })
+    });
+    ideaIds.push(backlogIdea.id);
+    await db.savePerformanceSnapshot({
+      videoId: 'backlog-ranking-performance-video',
+      productionId: 'backlog-ranking-production',
+      measurementWindow: '7d',
+      publishedAt: '2026-11-10T00:00:00.000Z',
+      metrics: { views: 1400, impressions: 12000, ctr: 6, retention: 55, performanceScore: 86 },
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial', surface: 'long_form' },
+      baseline: {},
+      deltas: {},
+      confidence: 'high',
+      simulated: false
+    });
+
     const strategy = new ContentStrategyAgent(db, {});
     const result = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
     assert.equal(result.status, 'success');
     assert.equal(result.createdCount, 1);
+    assert.equal(result.rerankedBacklogCount, 1, 'existing backlog ideas should be rescored');
+    const refreshedBacklog = (await db.listContentIdeas()).find(item => item.id === backlogIdea.id);
+    const refreshedRationale = JSON.parse(refreshedBacklog.rationale);
+    assert.equal(refreshedRationale.scoreBreakdown.historicalSampleSize, 1);
+    assert.ok(refreshedRationale.rankingUpdatedAt);
     assert.equal(result.ideas[0].topic, 'A beginner workflow for AI video editing');
 
     const savedIdeas = await db.listContentIdeas();
