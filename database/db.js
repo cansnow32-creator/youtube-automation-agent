@@ -638,6 +638,20 @@ class Database {
       )`,
       `CREATE INDEX IF NOT EXISTS idx_trend_snapshots_captured_at
         ON trend_snapshots(captured_at DESC)`,
+      // Versioned creative briefs; only approved concepts may be used for production.
+      `CREATE TABLE IF NOT EXISTS video_concepts (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL,
+        concept_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        revision_of TEXT,
+        feedback TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        approved_at TEXT,
+        FOREIGN KEY (revision_of) REFERENCES video_concepts(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_video_concepts_topic_created ON video_concepts(topic, created_at DESC)`,
       // System Settings
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -1647,6 +1661,33 @@ class Database {
     return this.getDiscoverabilityFinding(findingId);
   }
 
+  async saveVideoConcept(record) {
+    await this.executeQuery('INSERT INTO video_concepts (id, topic, concept_json, status, revision_of, feedback) VALUES (?, ?, ?, ?, ?, ?)', [record.id, record.topic, JSON.stringify(record.concept), record.status || 'pending', record.revisionOf || null, record.feedback || null]);
+    return this.getVideoConcept(record.id);
+  }
+
+  async getVideoConcept(id) {
+    const row = await this.getRow('SELECT * FROM video_concepts WHERE id = ?', [id]);
+    if (!row) return null;
+    return { id: row.id, topic: row.topic, concept: JSON.parse(row.concept_json), status: row.status, revisionOf: row.revision_of, feedback: row.feedback, createdAt: row.created_at, updatedAt: row.updated_at, approvedAt: row.approved_at };
+  }
+
+  async listVideoConcepts(limit = 20) {
+    const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 20));
+    const rows = await this.getAllRows('SELECT id FROM video_concepts ORDER BY created_at DESC LIMIT ?', [safeLimit]);
+    return Promise.all(rows.map(row => this.getVideoConcept(row.id)));
+  }
+
+  async approveVideoConcept(id) {
+    const result = await this.executeQuery("UPDATE video_concepts SET status = 'approved', approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'", [id]);
+    if (!result.changes) {
+      const current = await this.getVideoConcept(id);
+      if (!current) return null;
+      if (current.status === 'approved') return current;
+      throw new Error('Concept cannot be approved from status: ' + current.status);
+    }
+    return this.getVideoConcept(id);
+  }
   async getChannelProfile() {
     const row = await this.getRow("SELECT * FROM channel_profiles WHERE id = 'default'");
     return row ? { ...row, bannedTopics: JSON.parse(row.banned_topics || '[]') } : null;
