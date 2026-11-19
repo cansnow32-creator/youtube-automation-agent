@@ -11,6 +11,8 @@ async function run() {
   const db = new Database();
   db.dbPath = path.join(tempDir, 'test.db');
   await db.initialize();
+  assert.equal(require('../utils/trend-idea-ranker').overlapScore('öğrenme alışkanlıkları', 'öğrenme alışkanlıkları geliştirme'), 60,
+    'Turkish characters must remain valid tokens during niche matching');
   const ideaIds = [];
   const snapshotIds = [];
   const originalFetch = global.fetch;
