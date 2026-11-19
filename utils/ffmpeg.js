@@ -79,6 +79,49 @@ async function getMediaDuration(filePath) {
   throw new Error(`Could not determine media duration for ${filePath}`);
 }
 
+async function getMediaInfo(filePath) {
+  try {
+    const { stdout } = await execFileAsync(getFFprobePath(), [
+      '-v', 'error', '-show_entries', 'format=duration:stream=codec_type,width,height',
+      '-of', 'json', filePath
+    ]);
+    const parsed = JSON.parse(stdout || '{}');
+    const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+    const video = streams.find(stream => stream.codec_type === 'video' && stream.width && stream.height);
+    const duration = Number(parsed.format?.duration);
+    if (video && Number.isFinite(duration) && duration > 0) {
+      return {
+        duration,
+        width: Number(video.width),
+        height: Number(video.height),
+        hasAudio: streams.some(stream => stream.codec_type === 'audio')
+      };
+    }
+  } catch (_error) {
+    // Fall back to FFmpeg's input metadata when a separate ffprobe binary is unavailable.
+  }
+
+  try {
+    await runFFmpeg(['-i', filePath]);
+  } catch (error) {
+    const output = String(error.stderr || '');
+    const durationMatch = output.match(/Duration:\\s*(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)/i);
+    const videoMatch = output.match(/Stream #\\d+:\\d+[^\\n]*Video:[^\\n]*?(\\d{2,5})x(\\d{2,5})/i);
+    if (durationMatch && videoMatch) {
+      const duration = Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3]);
+      if (Number.isFinite(duration) && duration > 0) {
+        return {
+          duration,
+          width: Number(videoMatch[1]),
+          height: Number(videoMatch[2]),
+          hasAudio: /Stream #\\d+:\\d+[^\\n]*Audio:/i.test(output)
+        };
+      }
+    }
+  }
+  throw new Error(`Could not determine video dimensions and duration for ${filePath}`);
+}
+
 function ffmpegInstallHint() {
   const hints = {
     win32: 'winget install Gyan.FFmpeg (then restart your terminal)',
@@ -90,4 +133,4 @@ function ffmpegInstallHint() {
   return `FFmpeg not found. Install it with: ${platformHint} — or run "npm install" again to fetch the bundled ffmpeg-static binary, or set FFMPEG_PATH to your ffmpeg executable.`;
 }
 
-module.exports = { getFFmpegPath, getFFprobePath, getMediaDuration, checkFFmpeg, runFFmpeg, ffmpegInstallHint };
+module.exports = { getFFmpegPath, getFFprobePath, getMediaDuration, getMediaInfo, checkFFmpeg, runFFmpeg, ffmpegInstallHint };
