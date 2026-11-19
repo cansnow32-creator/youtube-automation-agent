@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const sharp = require('sharp');
 const { CineCodeRenderer } = require('../utils/cinecode-renderer');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 
@@ -9,8 +10,8 @@ async function run() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-renderer-'));
   const imageOne = path.join(directory, 'one.png');
   const imageTwo = path.join(directory, 'two.png');
-  await fs.writeFile(imageOne, Buffer.from('image-one'));
-  await fs.writeFile(imageTwo, Buffer.from('image-two'));
+  await sharp({ create: { width: 32, height: 32, channels: 3, background: '#345678' } }).png().toFile(imageOne);
+  await sharp({ create: { width: 32, height: 32, channels: 3, background: '#876543' } }).png().toFile(imageTwo);
   const commands = [];
   try {
     const renderer = new CineCodeRenderer({
@@ -53,6 +54,14 @@ async function run() {
       outputDir: directory
     }), /simulated or non-image assets/);
 
+    const corruptImage = path.join(directory, 'corrupt.png');
+    await fs.writeFile(corruptImage, Buffer.from('not-an-image'));
+    await assert.rejects(() => placeholder.renderScenes({
+      visualAssets: [corruptImage],
+      totalDuration: 6,
+      outputDir: directory
+    }), /not a decodable image/);
+
     let slideshowCalls = 0;
     const fake = {
       logger: { info() {}, error() {} },
@@ -86,6 +95,20 @@ async function run() {
     );
     assert.equal(failing.lastVideoResult.actualProvider, 'failed');
     assert.equal(slideshowCalls, 0);
+
+    const validator = Object.create(AIVideoGenerator.prototype);
+    const validationPath = path.join(directory, 'validation.mp4');
+    await fs.writeFile(validationPath, Buffer.from('video-container'));
+    let decodeCommand = null;
+    validator.getMediaDuration = async () => 4.5;
+    validator.runFFmpeg = async args => { decodeCommand = args; };
+    const validation = await validator.validateRenderedVideo(validationPath);
+    assert.equal(validation.duration, 4.5);
+    assert.equal(validation.size, Buffer.byteLength('video-container'));
+    assert.deepEqual(decodeCommand, ['-v', 'error', '-i', validationPath, '-f', 'null', '-']);
+
+    validator.getMediaDuration = async () => 0;
+    await assert.rejects(() => validator.validateRenderedVideo(validationPath), /no valid media duration/);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
