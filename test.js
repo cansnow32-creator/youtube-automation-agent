@@ -418,6 +418,11 @@ class SystemTest {
         throw new Error('Strategy did not produce an evidence-labeled autonomous plan');
       }
 
+      strategy.approvedVideoConceptId = 'approved-concept-autonomous-test';
+      strategy.approvedVideoConcept = {
+        name: 'Approved autonomous test concept',
+        scenePlan: [{ scene: 1, visual: 'Opening' }, { scene: 2, visual: 'Payoff' }]
+      };
       const receivedInputs = [];
       let resumedJobs = 0;
       const operator = new AutonomousChannelOperator(db, {
@@ -444,7 +449,12 @@ class SystemTest {
       if (
         completed.status !== 'waiting_review' ||
         completed.generatedJobs.length !== 2 ||
-        receivedInputs.some(input => input.source !== 'autonomous_operator' || !input.strategyContext?.angle) ||
+        receivedInputs.some(input =>
+          input.source !== 'autonomous_operator' ||
+          !input.strategyContext?.angle ||
+          input.strategyContext.approvedVideoConceptId !== strategy.approvedVideoConceptId ||
+          input.strategyContext.approvedVideoConcept?.name !== strategy.approvedVideoConcept.name
+        ) ||
         receivedInputs[0].strategyContext.researchSources.length !== 1
       ) {
         throw new Error('Autonomous operator did not execute the planned workflow');
