@@ -17,6 +17,13 @@ This branch updates the runtime dependency baseline and removes an unused Google
 - Hybrid assembly writes to temporary files, verifies that the final MP4 has a readable positive duration, and runs an FFmpeg decode pass before promoting it to the final output path.
 - Temporary visual and finalizing files are removed on both success and failure. CineCode errors remain explicit and do not fall back to slideshow rendering.
 
+## Shorts render integrity
+
+- The Shorts renderer writes to a temporary MP4 and promotes it to the final output only after a successful FFmpeg decode pass.
+- Rendered output is probed for duration and dimensions. Duration must remain within a bounded tolerance of the requested excerpt, and the frame must be portrait 9:16 before the draft can be marked rendered.
+- Render metadata (duration, width, height, and audio presence) is retained with the Short record. Failed renders remove temporary output and remain blocked from approval.
+- FFprobe is preferred; when it is unavailable, FFmpeg's own input metadata is parsed as a local fallback.
+
 ## Lockfile and verification
 
 The CI workflow regenerates `package-lock.json` from the declared dependency ranges before `npm ci`, runs lint and the full test suite, and commits the generated lockfile only from a successful branch-push run. No production publishing or PR merge is performed by this workflow.
