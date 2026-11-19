@@ -137,12 +137,8 @@ class ModernAuth {
         }
         
         if (error) {
-          res.writeHead(400, { 'Content-Type': 'text/html' });
-          res.end(`
-            <h1>❌ Authorization Error</h1>
-            <p>${error}</p>
-            <p>You can close this window.</p>
-          `);
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(`Authorization error: ${error}. You can close this window.`);
           this.rejectAuth(new Error(`Authorization error: ${error}`));
           return;
         }
@@ -173,11 +169,8 @@ class ModernAuth {
             this.resolveAuth(tokens);
             
           } catch (tokenError) {
-            res.writeHead(500, { 'Content-Type': 'text/html' });
-            res.end(`
-              <h1>❌ Token Exchange Failed</h1>
-              <p>${tokenError.message}</p>
-            `);
+            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end(`Token exchange failed: ${tokenError.message}`);
             this.rejectAuth(tokenError);
           }
         }
