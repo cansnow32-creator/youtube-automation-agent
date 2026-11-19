@@ -24,10 +24,10 @@ async function run() {
   const approved = await requireApprovedVideoConcept(db, 'approved-id');
   assert.equal(approved.id, 'approved-id');
   assert.deepEqual(approved.concept, { name: 'Approved' });
-  process.stdout.write('Approved video concept gate tests passed\\n');
+  process.stdout.write('Approved video concept gate tests passed\n');
 }
 
 run().catch(error => {
-  process.stderr.write('Approved video concept gate tests failed: ' + (error.stack || error.message) + '\\n');
+  process.stderr.write('Approved video concept gate tests failed: ' + (error.stack || error.message) + '\n');
   process.exitCode = 1;
 });
