@@ -341,24 +341,40 @@ class DailyAutomation {
   }
 
   async refreshWeeklyTrends() {
-    if (!this.agents.strategy?.refreshTrendSnapshot) {
+    const strategy = this.agents.strategy;
+    if (!strategy?.refreshTrendSnapshot) {
       await this.logAutomationEvent('weekly_trend_refresh', 'skipped', {
         reason: 'Trend refresh is not configured'
       });
       return null;
     }
+
+    let result = null;
     try {
       this.logger.info('Refreshing weekly trend research...');
-      const result = await this.agents.strategy.refreshTrendSnapshot();
+      result = await strategy.refreshTrendSnapshot();
       await this.logAutomationEvent('weekly_trend_refresh', 'success', result);
-      return result;
     } catch (error) {
       this.logger.error('Weekly trend refresh failed:', error);
       await this.logAutomationEvent('weekly_trend_refresh', 'error', {
         error: error.message
       });
-      return null;
     }
+
+    if (strategy.generateTrendIdeasFromSnapshot) {
+      try {
+        const ideaResult = await strategy.generateTrendIdeasFromSnapshot();
+        await this.logAutomationEvent('weekly_trend_idea_generation', ideaResult.status === 'success' ? 'success' : 'skipped', ideaResult);
+        result = { ...(result || {}), ideaGeneration: ideaResult };
+      } catch (error) {
+        this.logger.error('Weekly trend idea generation failed:', error);
+        await this.logAutomationEvent('weekly_trend_idea_generation', 'error', {
+          error: error.message
+        });
+        result = { ...(result || {}), ideaGeneration: { status: 'error', reason: error.message } };
+      }
+    }
+    return result;
   }
 
   async weeklyStrategyReview() {
