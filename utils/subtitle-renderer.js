@@ -36,7 +36,9 @@ function validateSrtContent(content) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new Error('SRT captions must contain at least one subtitle cue');
   }
-  const blocks = content.trim().split(/\r?\n\s*\r?\n/);
+  // SRT files exported by Windows editors may include a UTF-8 BOM before cue 1.
+  const normalizedContent = content.replace(/^\uFEFF/, '');
+  const blocks = normalizedContent.trim().split(/\r?\n\s*\r?\n/);
   const timestamp = /^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3}) --> (\d{2,}):([0-5]\d):([0-5]\d),(\d{3})$/;
   let previousIndex = 0;
   let validCues = 0;
