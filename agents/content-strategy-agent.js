@@ -432,6 +432,43 @@ class ContentStrategyAgent {
     const existing = await this.db.listContentIdeas();
     const existingTopics = new Set(existing.map(item => String(item.topic || '').trim().toLowerCase()));
     const history = await this.db.listPerformanceSnapshots({ reliableOnly: true });
+    const parseRationale = value => {
+      if (!value) return {};
+      if (typeof value === 'object') return value;
+      try { return JSON.parse(value); } catch { return {}; }
+    };
+
+    // Re-score saved trend ideas still waiting in the backlog using the newest
+    // real channel outcomes. Production ideas are intentionally left untouched.
+    const backlogIdeas = existing.filter(item => item.status === 'backlog')
+      .map(item => {
+        const rationale = parseRationale(item.rationale);
+        return {
+          id: item.id,
+          topic: item.topic,
+          angle: item.angle,
+          format: item.style,
+          pillar: rationale.pillar || '',
+          sourceTopic: rationale.sourceTopic,
+          rationale: rationale.explanation || ''
+        };
+      }).filter(item => item.sourceTopic);
+    const rescoredBacklog = scoreTrendIdeas(backlogIdeas, trendTopics, channelStrategy, history, audienceDemand);
+    for (const idea of rescoredBacklog) {
+      const original = existing.find(item => item.id === idea.id);
+      const rationale = parseRationale(original?.rationale);
+      await this.db.updateContentIdea(idea.id, {
+        rationale: JSON.stringify({
+          ...rationale,
+          score: idea.score,
+          scoreBreakdown: idea.scoreBreakdown,
+          audienceDemandEvidence: idea.scoreBreakdown.audienceEvidence,
+          snapshotId: snapshot.id,
+          rankingUpdatedAt: new Date().toISOString()
+        })
+      });
+    }
+
     const scored = scoreTrendIdeas(response, trendTopics, channelStrategy, history, audienceDemand)
       .filter(item => item.topic && !existingTopics.has(item.topic.toLowerCase()))
       .slice(0, Math.max(1, Math.min(10, Number(options.limit || 8))));
@@ -445,6 +482,7 @@ class ContentStrategyAgent {
         rationale: JSON.stringify({
           source: 'weekly_trend_snapshot',
           sourceTopic: idea.sourceTopic,
+          pillar: idea.pillar || '',
           score: idea.score,
           scoreBreakdown: idea.scoreBreakdown,
           audienceDemandEvidence: idea.scoreBreakdown.audienceEvidence,
@@ -465,6 +503,7 @@ class ContentStrategyAgent {
       snapshotId: snapshot.id,
       candidates: response.length,
       createdCount: created.length,
+      rerankedBacklogCount: rescoredBacklog.length,
       ideas: created
     };
   }
