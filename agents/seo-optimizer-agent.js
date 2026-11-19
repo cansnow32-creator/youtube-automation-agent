@@ -1,6 +1,42 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
 
+function getReviewedPlatformMetadata(script) {
+  const metadata = script?.metadata?.qualityGate?.platformMetadata;
+  const required = {
+    youtube: ['title', 'description', 'hashtags', 'tags'],
+    instagram_reels: ['caption', 'hashtags'],
+    tiktok: ['caption', 'hashtags']
+  };
+  for (const [platform, fields] of Object.entries(required)) {
+    for (const field of fields) {
+      const value = metadata?.[platform]?.[field];
+      const valid = Array.isArray(value)
+        ? value.length > 0 && value.every(item => typeof item === 'string' && item.trim())
+        : typeof value === 'string' && value.trim();
+      if (!valid) return null;
+    }
+  }
+  return {
+    youtube: {
+      title: metadata.youtube.title.trim().slice(0, 100),
+      description: metadata.youtube.description.trim().slice(0, 5000),
+      hashtags: metadata.youtube.hashtags.map(item => item.trim()).slice(0, 15),
+      tags: metadata.youtube.tags.map(item => item.trim()).slice(0, 30)
+    },
+    instagram_reels: {
+      caption: metadata.instagram_reels.caption.trim().slice(0, 2200),
+      hashtags: metadata.instagram_reels.hashtags.map(item => item.trim()).slice(0, 30)
+    },
+    tiktok: {
+      caption: metadata.tiktok.caption.trim().slice(0, 2200),
+      hashtags: metadata.tiktok.hashtags.map(item => item.trim()).slice(0, 30)
+    }
+  };
+}
+
+
+
 class SEOOptimizerAgent {
   constructor(db, credentials) {
     this.db = db;
@@ -31,7 +67,9 @@ class SEOOptimizerAgent {
     try {
       this.logger.info(`Optimizing SEO for: ${script.title}`);
       
-      const aiSEO = await this.generateSEOWithAI(script, strategy);
+      const platformMetadata = getReviewedPlatformMetadata(script);
+      // Reuse the independently reviewed metadata instead of making another provider call.
+      const aiSEO = platformMetadata ? null : await this.generateSEOWithAI(script, strategy);
       let title, description, tags;
 
       if (aiSEO) {
@@ -48,8 +86,14 @@ class SEOOptimizerAgent {
         tags = await this.generateTags(script, strategy);
       }
       
+      if (platformMetadata?.youtube) {
+        title = platformMetadata.youtube.title;
+        description = platformMetadata.youtube.description;
+        tags = platformMetadata.youtube.tags;
+      }
+
       // Generate hashtags
-      const hashtags = await this.generateHashtags(strategy);
+      const hashtags = [...new Set([...(platformMetadata?.youtube?.hashtags || []), ...(await this.generateHashtags(strategy))])].slice(0, 15);
       
       // Create chapters/timestamps
       const chapters = await this.generateChapters(script);
@@ -65,6 +109,7 @@ class SEOOptimizerAgent {
         description,
         tags,
         hashtags,
+        platformMetadata,
         chapters,
         endScreen,
         seoScore,
@@ -621,4 +666,4 @@ Keep tags under YouTube's 500 character total guidance. Avoid fabricated statist
   }
 }
 
-module.exports = { SEOOptimizerAgent };
+module.exports = { SEOOptimizerAgent, getReviewedPlatformMetadata };
