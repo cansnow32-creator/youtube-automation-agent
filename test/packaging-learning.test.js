@@ -3,6 +3,7 @@ const {
   isApprovedPackagingLearning,
   getApprovedPackagingLearning
 } = require('../utils/packaging-learning');
+const { ThumbnailDesignerAgent } = require('../agents/thumbnail-designer-agent');
 
 const legacy = {
   status: 'approved',
@@ -20,6 +21,8 @@ const adoptedWinner = {
     target: 'future_packaging',
     experiment: 'validated_title_thumbnail_pattern',
     winningTitle: 'A proven title pattern',
+    winningThumbnailPattern: 'Centered composition',
+    winningArmLabel: 'Curiosity / Centered composition',
     hypothesis: 'Curiosity framing improves clicks'
   }
 };
@@ -43,9 +46,28 @@ const context = getApprovedPackagingLearning([{
 }, adoptedWinner]);
 assert.equal(context.recommendationId, 'learning-1');
 assert.equal(context.winningTitle, 'A proven title pattern');
+assert.equal(context.winningThumbnailPattern, 'Centered composition');
+assert.equal(context.winningArmLabel, 'Curiosity / Centered composition');
 assert.equal(context.evidence.liftPercent, 18.5);
 assert.equal(context.confidence, 'high');
 assert.equal(getApprovedPackagingLearning([]), null);
 assert.equal(getApprovedPackagingLearning(null), null);
+
+const designer = new ThumbnailDesignerAgent({}, {});
+const script = { title: 'A Complete Guide to Better Habits', metadata: { strategy: { contentType: 'explainer' } } };
+(async () => {
+  const baseline = await designer.generateConcept(script);
+  const contrast = await designer.generateConcept(script, { winningThumbnailPattern: 'Color contrast' });
+  const alternate = await designer.generateConcept(script, { winningThumbnailPattern: 'Alternate promise' });
+  const centered = await designer.generateConcept(script, { winningThumbnailPattern: 'Centered composition' });
+  assert.equal(contrast.colors.primary, baseline.colors.secondary);
+  assert.equal(contrast.colors.secondary, baseline.colors.primary);
+  assert.equal(alternate.primaryText, designer.generateAlternativeText(baseline.primaryText));
+  assert.equal(centered.composition, 'centered');
+  process.stdout.write('Packaging learning selection and thumbnail tests passed\\n');
+})().catch(error => {
+  process.stderr.write(`Packaging learning tests failed: ${error.stack || error.message}\\n`);
+  process.exitCode = 1;
+});
 
 process.stdout.write('Packaging learning selection tests passed\\n');
