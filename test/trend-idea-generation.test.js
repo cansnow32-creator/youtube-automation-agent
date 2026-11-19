@@ -39,6 +39,19 @@ async function run() {
       'competitor discovery should inspect the channel highest-view videos, not only newest uploads');
     assert.equal(competitorVideos[0].id, 'top-video-1');
 
+    const { analyzeVideoTemplates } = require('../utils/viral-template-analyzer');
+    const templateAnalysis = analyzeVideoTemplates([
+      { id: 'template-list', snippet: { title: '7 Ways to Improve Your Workflow', description: 'A practical tutorial' }, statistics: { viewCount: '90000' } },
+      { id: 'template-list-2', snippet: { title: 'Top 5 Editing Mistakes', description: 'Avoid these mistakes' }, statistics: { viewCount: '110000' } },
+      { id: 'template-question', snippet: { title: 'Why Does Editing Take So Long?', description: 'Explained simply' }, statistics: { viewCount: '50000' } }
+    ]);
+    assert.equal(templateAnalysis[0].patternId, 'numbered_list');
+    assert.equal(templateAnalysis[0].sampleCount, 2);
+    assert.equal(templateAnalysis[0].averageViews, 100000);
+    assert.equal(templateAnalysis[0].relativeToChannelAverage, 1.2);
+    assert.equal(templateAnalysis[0].evidence.length, 2);
+    assert.ok(templateAnalysis.some(item => item.patternId === 'question'));
+
     const snapshot = await db.saveTrendSnapshot({
       regionCode: 'US',
       topics: [{
