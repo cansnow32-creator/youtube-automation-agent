@@ -605,7 +605,8 @@ class ProductionManagementAgent {
         {
           jobId: productionData.jobId,
           productionId: productionData.id,
-          estimatedDuration: productionData.estimatedDuration
+          estimatedDuration: productionData.estimatedDuration,
+          approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
         }
       );
 
