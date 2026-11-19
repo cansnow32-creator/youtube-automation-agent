@@ -10,7 +10,6 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
   const direction = normalizeDirection(rawDirection);
   const typography = String(direction.typography || '').toLowerCase();
   const placement = String(direction.placement || '').toLowerCase();
-
   const fontName = /serif/.test(typography) ? 'Georgia'
     : /mono/.test(typography) ? 'Consolas'
       : /rounded/.test(typography) ? 'Trebuchet MS' : 'Arial';
@@ -21,17 +20,16 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
   const alignment = /top|upper/.test(placement) ? 8
     : /center|middle/.test(placement) ? 5 : 2;
   const margin = alignment === 8 ? 90 : alignment === 5 ? 0 : 110;
-
   const escapedPath = path.resolve(captionsPath)
-    .replaceAll('\', '/')
-    .replaceAll(':', '\:')
-    .replaceAll("'", "\'");
+    .replaceAll('\\', '/')
+    .replaceAll(':', '\\:')
+    .replaceAll("'", "\\'");
   const style = [
-    `FontName=${fontName}`, `FontSize=${fontSize}`, `Bold=${bold}`,
-    `PrimaryColour=${color}`, 'OutlineColour=&H00000000', 'BorderStyle=1',
-    'Outline=2', 'Shadow=1', `Alignment=${alignment}`, `MarginV=${margin}`
+    \`FontName=\${fontName}\`, \`FontSize=\${fontSize}\`, \`Bold=\${bold}\`,
+    \`PrimaryColour=\${color}\`, 'OutlineColour=&H00000000', 'BorderStyle=1',
+    'Outline=2', 'Shadow=1', \`Alignment=\${alignment}\`, \`MarginV=\${margin}\`
   ].join(',');
-  return `subtitles='${escapedPath}':force_style='${style}'`;
+  return \`subtitles='\${escapedPath}':force_style='\${style}'\`;
 }
 
 function validateSrtContent(content) {
@@ -45,8 +43,8 @@ function validateSrtContent(content) {
     const lines = block.split(/\r?\n/);
     if (!/^\d+$/.test((lines[0] || '').trim())) continue;
     const match = timestamp.exec((lines[1] || '').trim());
-    const text = lines.slice(2).join(' ').trim();
-    if (!match || !text) throw new Error('SRT captions contain a malformed or empty subtitle cue');
+    const captionText = lines.slice(2).join(' ').trim();
+    if (!match || !captionText) throw new Error('SRT captions contain a malformed or empty subtitle cue');
     const toMs = value => {
       const [clock, millis] = value.split(',');
       const [hours, minutes, seconds] = clock.split(':').map(Number);
