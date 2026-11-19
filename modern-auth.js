@@ -6,6 +6,15 @@ const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
 
+// Narrow OAuth permissions to the APIs this agent actually calls. Avoid the
+// broader youtube account-management scope; force-ssl covers Data API writes.
+const YOUTUBE_SCOPES = [
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/yt-analytics.readonly',
+  'https://www.googleapis.com/auth/youtube.force-ssl'
+];
+
 function preserveRefreshToken(previousTokens, receivedTokens) {
   const next = { ...(receivedTokens || {}) };
   if (!next.refresh_token && previousTokens?.refresh_token) {
@@ -40,13 +49,7 @@ class ModernAuth {
 
       this.oauthState = crypto.randomBytes(32).toString('hex');
 
-      const scopes = [
-        'https://www.googleapis.com/auth/youtube.upload',
-        'https://www.googleapis.com/auth/youtube',
-        'https://www.googleapis.com/auth/youtube.readonly',
-        'https://www.googleapis.com/auth/yt-analytics.readonly',
-        'https://www.googleapis.com/auth/youtube.force-ssl'
-      ];
+      const scopes = YOUTUBE_SCOPES;
 
       const authResult = new Promise((resolve, reject) => {
         this.resolveAuth = resolve;
@@ -292,4 +295,4 @@ if (require.main === module) {
   runAuth();
 }
 
-module.exports = { ModernAuth, preserveRefreshToken };
+module.exports = { ModernAuth, preserveRefreshToken, YOUTUBE_SCOPES };
