@@ -74,6 +74,41 @@ class ContentStrategyAgent {
       throw new Error('Trend refresh returned no usable topics; previous snapshot was preserved');
     }
 
+    const previous = this.db.getLatestTrendSnapshot
+      ? await this.db.getLatestTrendSnapshot()
+      : null;
+    const previousScores = new Map((previous?.topics || []).map(item => [
+      String(item.topic || '').toLowerCase(),
+      Number(item.score) || 0
+    ]));
+    const currentScores = new Map(topics.map(item => [
+      String(item.topic || '').toLowerCase(),
+      Number(item.score) || 0
+    ]));
+    const newTopics = topics
+      .filter(item => !previousScores.has(String(item.topic || '').toLowerCase()))
+      .slice(0, 10)
+      .map(item => ({ topic: item.topic, score: item.score }));
+    const risingTopics = topics
+      .filter(item => {
+        const key = String(item.topic || '').toLowerCase();
+        return previousScores.has(key) && (Number(item.score) || 0) > previousScores.get(key);
+      })
+      .map(item => ({
+        topic: item.topic,
+        previousScore: previousScores.get(String(item.topic || '').toLowerCase()),
+        currentScore: Number(item.score) || 0
+      }))
+      .sort((left, right) =>
+        (right.currentScore - right.previousScore) - (left.currentScore - left.previousScore)
+      )
+      .slice(0, 10);
+    const fadingTopics = (previous?.topics || [])
+      .filter(item => !currentScores.has(String(item.topic || '').toLowerCase()))
+      .slice(0, 10)
+      .map(item => ({ topic: item.topic, previousScore: Number(item.score) || 0 }));
+    const trendChanges = { newTopics, risingTopics, fadingTopics };
+
     this.trendingTopics = topics;
     this.competitorData = competitors;
     const snapshot = await this.db.saveTrendSnapshot({
@@ -92,6 +127,7 @@ class ContentStrategyAgent {
       regionCode,
       topicCount: topics.length,
       sourceCounts: snapshot.sourceCounts,
+      trendChanges,
       capturedAt: snapshot.capturedAt
     };
   }
