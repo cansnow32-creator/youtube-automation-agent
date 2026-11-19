@@ -208,7 +208,8 @@ class VideoConceptService {
     }
 
     await fs.mkdir(this.audioDirectory, { recursive: true });
-    const filePath = path.join(this.audioDirectory, `${conceptId}_${crypto.randomUUID()}${extension}`);
+    const safeConceptId = String(conceptId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const filePath = path.join(this.audioDirectory, `${safeConceptId}_${crypto.randomUUID()}${extension}`);
     await fs.writeFile(filePath, audioBuffer, { flag: 'wx' });
     try {
       const audioInfo = await this.getAudioInfo(filePath);
@@ -223,7 +224,9 @@ class VideoConceptService {
           musicAsset
         }
       };
-      return await this.db.updateVideoConcept(conceptId, concept);
+      const updated = await this.db.updateVideoConcept(conceptId, concept);
+      if (!updated) throw new Error('Video concept not found');
+      return updated;
     } catch (error) {
       await fs.rm(filePath, { force: true }).catch(() => {});
       throw error;
