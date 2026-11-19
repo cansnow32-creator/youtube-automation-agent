@@ -70,4 +70,3 @@ const script = { title: 'A Complete Guide to Better Habits', metadata: { strateg
   process.exitCode = 1;
 });
 
-process.stdout.write('Packaging learning selection tests passed\\n');
