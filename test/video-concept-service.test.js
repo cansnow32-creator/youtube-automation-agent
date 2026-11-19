@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { VideoConceptService, extractJson, validateConcept } = require('../utils/video-concept-service');
 
 const sampleConcept = (name = 'Original story') => ({
@@ -19,6 +22,7 @@ async function run() {
   const db = {
     async saveVideoConcept(record) { records.set(record.id, record); return record; },
     async getVideoConcept(id) { return records.get(id) || null; },
+    async updateVideoConcept(id, concept) { const item = records.get(id); if (!item || item.status !== 'pending') throw new Error('Approved concepts are immutable'); item.concept = concept; return item; },
     async getChannelProfile() { return { channel_name: 'Test channel', target_audience: 'Test audience' }; },
     async approveVideoConcept(id) { const item = records.get(id); if (!item) return null; item.status = 'approved'; return item; }
   };
@@ -45,6 +49,32 @@ async function run() {
   assert.equal(revised.status, 'pending');
   assert.match(lastPrompt, /Keep the opening/);
   assert.match(lastPrompt, /First story/);
+
+  const audioDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'concept-music-test-'));
+  try {
+    const musicService = new VideoConceptService(db, {
+      audioDirectory,
+      getAudioInfo: async () => ({ duration: 42, codec: 'pcm_s16le' })
+    });
+    const withMusic = await musicService.attachMusicAsset(revised.id, Buffer.from('test audio bytes'), {
+      mimeType: 'audio/wav',
+      title: 'Owned ambient track',
+      creator: 'Test creator',
+      licenseType: 'user_owned',
+      rightsConfirmed: true,
+      volume: 0.2
+    });
+    const attached = withMusic.concept.audioDirection.musicAsset;
+    assert.equal(attached.title, 'Owned ambient track');
+    assert.equal(attached.trackDuration, 42);
+    assert.equal(attached.rightsConfirmed, true);
+    await fs.access(attached.path);
+    await assert.rejects(() => musicService.attachMusicAsset(revised.id, Buffer.from('bad'), {
+      mimeType: 'audio/wav', licenseType: 'cc_by', rightsConfirmed: true
+    }), /requires its attribution/);
+  } finally {
+    await fs.rm(audioDirectory, { recursive: true, force: true });
+  }
 
   const approved = await service.approve(revised.id);
   assert.equal(approved.status, 'approved');
