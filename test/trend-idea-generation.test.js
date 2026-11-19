@@ -1,10 +1,15 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
 const { scoreTrendIdeas, buildAudienceDemand } = require('../utils/trend-idea-ranker');
 
 async function run() {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trend-idea-generation-'));
   const db = new Database();
+  db.dbPath = path.join(tempDir, 'test.db');
   await db.initialize();
   const ideaIds = [];
   const snapshotIds = [];
@@ -206,6 +211,7 @@ async function run() {
       await db.executeQuery(`DELETE FROM trend_snapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds);
     }
     await db.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 
   process.stdout.write('Trend idea generation tests passed\\n');
