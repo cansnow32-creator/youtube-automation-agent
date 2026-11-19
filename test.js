@@ -2662,17 +2662,21 @@ class SystemTest {
     }
 
     thumbnailFailure.publishQueue = [thumbnailFailureEntry];
-    thumbnailFailure.youtube.thumbnails.set = async request => {
-      if (request.videoId !== 'youtube-thumbnail-failure') throw new Error('Thumbnail retry used the wrong video ID');
-      return { data: { success: true } };
+    let thumbnailRepairCalls = 0;
+    thumbnailFailure.uploadThumbnail = async (videoId, thumbnailPath) => {
+      if (videoId !== 'youtube-thumbnail-failure' || thumbnailPath !== 'thumbnail.png') {
+        throw new Error('Thumbnail retry used the wrong video ID or asset path');
+      }
+      thumbnailRepairCalls++;
+      return { videoId, uploaded: true };
     };
     const repairedThumbnail = await thumbnailFailure.retryThumbnailUpload('production-thumbnail-failure');
     if (repairedThumbnail.metadata.thumbnailUpload.status !== 'uploaded' ||
         repairedThumbnail.metadata.thumbnailUpload.retryRequired !== false) {
       throw new Error('Thumbnail-only retry did not persist a successful repair state');
     }
-    if (videoUploadCalls !== 1) {
-      throw new Error('Thumbnail-only repair attempted to upload the YouTube video again');
+    if (videoUploadCalls !== 1 || thumbnailRepairCalls !== 1) {
+      throw new Error('Thumbnail-only repair attempted to upload the YouTube video again or did not retry the thumbnail');
     }
 
     this.logger.info('Publishing safety test completed successfully');
