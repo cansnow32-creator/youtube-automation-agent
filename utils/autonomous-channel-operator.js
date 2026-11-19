@@ -147,6 +147,8 @@ class AutonomousChannelOperator {
                 objective: strategy.objective,
                 valueProposition: strategy.value_proposition,
                 constraints: strategy.constraints,
+                approvedVideoConcept: strategy.approvedVideoConcept || null,
+                approvedVideoConceptId: strategy.approvedVideoConceptId || null,
                 researchSources: (research.sourceCatalog || []).filter(source => selectedSourceUrls.has(source.url))
               }
             });
