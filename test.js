@@ -2223,6 +2223,24 @@ class SystemTest {
     }
     auth.oauthState = null;
 
+    // Refresh events must update the private token file for the next process start.
+    const tokenDirectory = await fs.mkdtemp(path.join(require('os').tmpdir(), 'agenttube-oauth-'));
+    try {
+      const manager = new CredentialManager();
+      manager.credentials = { youtube: { client_id: 'test-client', client_secret: 'test-secret', redirect_uris: ['http://127.0.0.1'] } };
+      manager.tokens = { youtube: { access_token: 'old-access', refresh_token: 'old-refresh' } };
+      manager.tokensPath = path.join(tokenDirectory, 'tokens.json');
+      const client = manager.getYouTubeAuth();
+      client.emit('tokens', { access_token: 'new-access', refresh_token: 'rotated-refresh' });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const persisted = JSON.parse(await fs.readFile(manager.tokensPath, 'utf8')).youtube;
+      if (persisted.access_token !== 'new-access' || persisted.refresh_token !== 'rotated-refresh') {
+        throw new Error('Refreshed YouTube tokens were not persisted');
+      }
+    } finally {
+      await fs.rm(tokenDirectory, { recursive: true, force: true });
+    }
+
     const legacyOAuth = new OAuthServer();
     legacyOAuth.oauthState = 'legacy-expected-state';
     if (!legacyOAuth.isValidState('legacy-expected-state') ||
