@@ -28,6 +28,7 @@ const { GrowthExperimentService } = require('./utils/growth-experiment-service')
 const { AITextService } = require('./utils/ai-text-service');
 const { VideoConceptService } = require('./utils/video-concept-service');
 const { requireApprovedVideoConcept } = require('./utils/approved-video-concept-gate');
+const { ReferenceVideoService } = require('./utils/reference-video-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
@@ -65,6 +66,7 @@ class YouTubeAutomationAgent {
     this.experiments = null;
     this.discoverability = null;
     this.setupRequired = false;
+    this.references = null;
   }
 
   async initialize() {
@@ -413,6 +415,43 @@ class YouTubeAutomationAgent {
 
     // Local-first video concept proposal, revision and approval.
     this.concepts = new VideoConceptService(this.db);
+    this.references = new ReferenceVideoService(this.db);
+    this.app.post(
+      '/api/concepts/reference-videos',
+      this.requireAPIKey(),
+      express.raw({ type: ['video/mp4', 'video/quicktime', 'video/webm'], limit: '200mb' }),
+      async (req, res) => {
+        let record = null;
+        try {
+          let fileName = req.get('x-file-name') || 'reference-video';
+          try { fileName = decodeURIComponent(fileName); } catch (_error) { /* retain the supplied safe fallback */ }
+          record = await this.references.upload(req.body, fileName, req.get('content-type'));
+          let analysisError = null;
+          try {
+            record = await this.concepts.analyzeReferenceVideo(record.id);
+          } catch (error) {
+            analysisError = error.message;
+            record = await this.db.updateReferenceVideoAnalysis(record.id, { error: error.message }, 'failed');
+          }
+          return res.status(201).json({
+            success: true,
+            referenceVideo: this.references.toPublicRecord(record),
+            analysisError
+          });
+        } catch (error) {
+          return res.status(error.status || 400).json({ success: false, error: error.message });
+        }
+      }
+    );
+    this.app.get('/api/concepts/reference-videos/:referenceId/frames/:frameIndex', this.requireAPIKey(), async (req, res) => {
+      try {
+        const framePath = await this.references.getFrame(req.params.referenceId, req.params.frameIndex);
+        if (!framePath) return res.status(404).json({ success: false, error: 'Reference frame not found' });
+        return res.sendFile(framePath);
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
     this.app.get('/api/concepts', this.requireAPIKey(), async (_req, res) => {
       try {
         return res.json({ success: true, concepts: await this.db.listVideoConcepts(30) });
@@ -426,9 +465,10 @@ class YouTubeAutomationAgent {
         const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
         const direction = typeof req.body?.direction === 'string' ? req.body.direction.trim() : '';
         const referenceNotes = typeof req.body?.referenceNotes === 'string' ? req.body.referenceNotes.trim().slice(0, 3000) : '';
+        const referenceVideoId = typeof req.body?.referenceVideoId === 'string' ? req.body.referenceVideoId : null;
         if (!topic) return res.status(400).json({ success: false, error: 'Topic is required' });
         const profile = await this.db.getChannelProfile();
-        const concept = await this.concepts.propose({ topic, direction, profile, referenceNotes });
+        const concept = await this.concepts.propose({ topic, direction, profile, referenceNotes, referenceVideoId });
         return res.status(201).json({ success: true, concept });
       } catch (error) {
         return res.status(503).json({ success: false, error: error.message });
