@@ -81,6 +81,9 @@ class ProductionReadinessService {
 
     try {
       checks.push(await this.executeCheck('text_provider', 'AI text provider', true, () => this.probeText()));
+      if (process.env.QUALITY_PIPELINE_ENABLED === 'true') {
+        checks.push(await this.executeCheck('quality_pipeline', 'Local-first script quality pipeline', true, () => this.probeQualityPipeline()));
+      }
       checks.push(await this.executeCheck('image_provider', 'Image provider', false, () => this.probeImage(tempDir, Boolean(options.includePaidMedia))));
       checks.push(await this.executeCheck('video_provider', 'AI video provider', true, () => this.probeVideoProvider(tempDir, Boolean(options.includePaidVideo))));
       checks.push(await this.executeCheck('voice_narration', 'Voice narration', true, () => this.probeNarration(tempDir)));
@@ -144,6 +147,26 @@ class ProductionReadinessService {
     }
   }
 
+  async probeQualityPipeline() {
+    const credentials = this.credentialManager.credentials || {};
+    const geminiKey = credentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
+    if (!geminiKey) throw new Error('Gemini reviewer is not configured');
+    if (!process.env.GROQ_API_KEY) throw new Error('Groq reviewer is not configured');
+
+    const baseUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');
+    const model = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
+    const response = await fetch(`${baseUrl}/api/tags`, { signal: globalThis.AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`Ollama model check failed: HTTP ${response.status}`);
+    const data = await response.json();
+    const installed = (data.models || []).map(item => String(item.name || item.model || ''));
+    if (!installed.some(name => name === model || name.startsWith(`${model}:`))) {
+      throw new Error(`Ollama model ${model} is not installed`);
+    }
+    return {
+      message: 'Ollama model is installed and Gemini/Groq reviewer credentials are configured.',
+      details: { ollamaModel: model, geminiConfigured: true, groqConfigured: true }
+    };
+  }
   async probeText() {
     if (this.probes.text) return this.probes.text();
     const service = new AITextService(this.credentialManager.credentials || {});
@@ -291,6 +314,7 @@ class ProductionReadinessService {
   remediationFor(id) {
     const messages = {
       text_provider: 'Run npm run walkthrough, verify the selected model, and confirm provider credits or quota.',
+      quality_pipeline: 'Start Ollama, pull the configured model, and set GEMINI_API_KEY (or saved Gemini credentials) plus GROQ_API_KEY. Rerun readiness.'
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
