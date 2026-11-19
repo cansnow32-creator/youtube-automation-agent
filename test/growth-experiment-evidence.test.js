@@ -89,6 +89,43 @@ async function run() {
     assert.equal(applied, false, 'winner adoption must not change live packaging without explicit confirmation');
   }
 
+  {
+    const test = experiment();
+    test.status = 'awaiting_winner';
+    test.winningArmId = 'variant';
+    test.productionId = 'production-1';
+    test.result = { liftPercent: 25, zScore: 2.4, confidence: 'high', guardrails: { passed: true } };
+    const { service } = makeService([]);
+    service.requireExperiment = async () => test;
+    service.applyArm = async () => {};
+    let savedRecommendation = null;
+    service.db.getProductionBundle = async () => ({
+      editorData: {
+        packagingExperiment: {
+          titleVariants: [
+            { label: 'Control', title: 'Original title' },
+            { label: 'Step-by-step', title: 'A proven title pattern' }
+          ],
+          thumbnailVariants: [
+            { label: 'Control', path: '/tmp/control.jpg' },
+            { label: 'Centered composition', path: '/tmp/variant.jpg' }
+          ]
+        }
+      }
+    });
+    service.db.saveLearningRecommendation = async recommendation => {
+      savedRecommendation = recommendation;
+      return { id: 'learning-2', ...recommendation };
+    };
+    service.db.reviewLearningRecommendation = async (id, status) => ({ id, status });
+    service.db.updateGrowthExperiment = async (_id, changes) => ({ ...test, ...changes });
+    const result = await service.adoptWinner(test.id, { confirmed: true });
+    assert.equal(savedRecommendation.proposedChange.winningTitle, 'A proven title pattern');
+    assert.equal(savedRecommendation.proposedChange.winningThumbnailPattern, 'Centered composition');
+    assert.equal(savedRecommendation.proposedChange.winningArmLabel, 'Variant B');
+    assert.equal(result.status, 'adopted');
+  }
+
   process.stdout.write('Growth experiment evidence tests passed\\n');
 }
 
