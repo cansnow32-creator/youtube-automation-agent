@@ -20,6 +20,25 @@ async function run() {
   const originalUrl = process.env.OLLAMA_BASE_URL;
 
   try {
+    let competitorSearchOrder = null;
+    const competitorAgent = new ContentStrategyAgent(db, {
+      getYouTubeClient: () => ({
+        search: { list: async params => {
+          competitorSearchOrder = params.order;
+          return { data: { items: [{ id: { videoId: 'top-video-1' } }] } };
+        } },
+        videos: { list: async () => ({ data: { items: [{
+          id: 'top-video-1',
+          snippet: { title: 'A proven niche video', channelTitle: 'Example channel', publishedAt: '2026-11-19T00:00:00Z' },
+          statistics: { viewCount: '250000' }
+        }] } }) }
+      })
+    });
+    const competitorVideos = await competitorAgent.getChannelVideos('UC-example');
+    assert.equal(competitorSearchOrder, 'viewCount',
+      'competitor discovery should inspect the channel highest-view videos, not only newest uploads');
+    assert.equal(competitorVideos[0].id, 'top-video-1');
+
     const snapshot = await db.saveTrendSnapshot({
       regionCode: 'US',
       topics: [{
