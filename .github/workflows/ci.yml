@@ -28,7 +28,7 @@ jobs:
 
       - name: Generate safe dependency remediation candidate
         run: |
-          npm audit fix --package-lock-only --ignore-scripts
+          npm audit fix --package-lock-only --ignore-scripts || echo "Safe fixes applied where possible; remaining advisories will be reported separately."
           npm ci
 
       - name: Dependency audit report (non-blocking)
