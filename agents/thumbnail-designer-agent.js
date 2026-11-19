@@ -26,12 +26,12 @@ class ThumbnailDesignerAgent {
     }
   }
 
-  async generateThumbnail(script) {
+  async generateThumbnail(script, packagingLearning = null) {
     try {
       this.logger.info(`Generating thumbnail for: ${script.title}`);
       
       // Generate thumbnail concept
-      const concept = await this.generateConcept(script);
+      const concept = await this.generateConcept(script, packagingLearning);
       
       // Create thumbnail prompt for AI generation
       const prompt = await this.createPrompt(concept);
@@ -65,7 +65,7 @@ class ThumbnailDesignerAgent {
     }
   }
 
-  async generateConcept(script) {
+  async generateConcept(script, packagingLearning = null) {
     const concepts = {
       tutorial: {
         style: 'clean',
@@ -101,7 +101,7 @@ class ThumbnailDesignerAgent {
 
     const baseConcept = concepts[script.metadata?.strategy?.contentType?.toLowerCase()] || concepts.explainer;
     
-    return {
+    const concept = {
       title: this.formatThumbnailTitle(script.title),
       style: baseConcept.style,
       primaryText: this.extractPrimaryText(script.title),
@@ -116,6 +116,23 @@ class ThumbnailDesignerAgent {
       composition: this.selectComposition(),
       effects: this.selectEffects()
     };
+
+    // Reuse only the visual treatment proven by an explicitly adopted experiment.
+    switch (packagingLearning?.winningThumbnailPattern) {
+      case 'Color contrast':
+        [concept.colors.primary, concept.colors.secondary] =
+          [concept.colors.secondary, concept.colors.primary];
+        break;
+      case 'Alternate promise':
+        concept.primaryText = this.generateAlternativeText(concept.primaryText);
+        break;
+      case 'Centered composition':
+        concept.composition = 'centered';
+        break;
+      default:
+        break;
+    }
+    return concept;
   }
 
   formatThumbnailTitle(title) {
