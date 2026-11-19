@@ -2193,6 +2193,7 @@ class SystemTest {
   }
 
   async testOpenIssueRegressions() {
+    const fs = require('fs').promises;
     const { ModernAuth, preserveRefreshToken } = require('./modern-auth');
     const { OAuthServer } = require('./oauth-server');
     const { ProductionManagementAgent } = require('./agents/production-management-agent');
