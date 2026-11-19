@@ -2204,6 +2204,14 @@ class SystemTest {
     if (fixedRedirect.hostname !== '127.0.0.1' || fixedRedirect.port < 8000 || fixedRedirect.pathname !== '/') {
       throw new Error('OAuth did not use a desktop-app loopback redirect with a local dynamic port');
     }
+    auth.oauthState = 'expected-oauth-state';
+    if (!auth.isValidOAuthState('expected-oauth-state') ||
+        auth.isValidOAuthState('attacker-controlled-state') ||
+        auth.isValidOAuthState('') ||
+        auth.isValidOAuthState(null)) {
+      throw new Error('OAuth callback state validation accepted a missing or mismatched state');
+    }
+    auth.oauthState = null;
 
     const visualStyles = [];
     const productionAgent = Object.create(ProductionManagementAgent.prototype);
