@@ -508,6 +508,102 @@ class ContentStrategyAgent {
     };
   }
 
+  async buildPerformancePlanGuidance() {
+    if (!this.db.listPerformanceSnapshots) {
+      return { status: 'insufficient_evidence', independentVideoCount: 0, minimumSamplesPerGroup: 3, preferences: [] };
+    }
+
+    const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
+    const snapshots = await this.db.listPerformanceSnapshots({ reliableOnly: true });
+    const engine = new ChannelLearningEngine(this.db);
+    const preferred = engine.preferredSnapshotPerVideo(snapshots);
+    const report = engine.buildPerformanceInsights(preferred, 3);
+    const dimensions = [
+      { key: 'pillar', target: 'pillar' },
+      { key: 'format', target: 'format' },
+      { key: 'durationBucket', target: 'length' }
+    ];
+    const preferences = [];
+
+    for (const dimension of dimensions) {
+      const cohorts = (report.dimensions?.[dimension.key]?.cohorts || [])
+        .filter(cohort => cohort.videoCount >= 3);
+      if (cohorts.length < 2) continue;
+
+      const scoreEligible = cohorts.every(cohort => cohort.metrics?.performanceScore?.measuredVideos >= 3);
+      const metric = scoreEligible ? 'performanceScore' : 'views';
+      const ranked = cohorts
+        .filter(cohort => cohort.metrics?.[metric]?.measuredVideos >= 3 &&
+          Number.isFinite(cohort.metrics[metric].average))
+        .sort((a, b) => b.metrics[metric].average - a.metrics[metric].average);
+      if (ranked.length < 2) continue;
+
+      const leader = ranked[0];
+      const alternative = ranked[1];
+      const leaderValue = leader.metrics[metric].average;
+      const alternativeValue = alternative.metrics[metric].average;
+      const difference = leaderValue - alternativeValue;
+      const meaningful = metric === 'performanceScore'
+        ? difference >= 5
+        : alternativeValue > 0 ? difference / Math.abs(alternativeValue) >= 0.2 : difference > 0;
+      if (!meaningful) continue;
+
+      const preferredValue = dimension.key === 'durationBucket'
+        ? this.lengthForDurationBucket(leader.name)
+        : leader.name;
+      if (!preferredValue || preferredValue === 'unknown') continue;
+      preferences.push({
+        dimension: dimension.target,
+        sourceDimension: dimension.key,
+        prefer: preferredValue,
+        sourceValue: leader.name,
+        metric,
+        sampleSize: leader.videoCount,
+        comparisonSampleSize: alternative.videoCount,
+        average: leaderValue,
+        comparisonAverage: alternativeValue,
+        rationale: `${leader.name} led ${alternative.name} on ${metric} (${leaderValue} vs ${alternativeValue}) across ${leader.videoCount} vs ${alternative.videoCount} independent videos.`
+      });
+    }
+
+    return {
+      status: preferences.length ? 'evidence_backed' : 'insufficient_evidence',
+      independentVideoCount: preferred.length,
+      minimumSamplesPerGroup: 3,
+      preferences
+    };
+  }
+
+  lengthForDurationBucket(bucket) {
+    if (['under_1m', '1_to_3m'].includes(bucket)) return 'short';
+    if (bucket === '3_to_8m') return 'medium';
+    if (['8_to_15m', '15m_plus'].includes(bucket)) return 'long';
+    return null;
+  }
+
+  applyPerformanceGuidance(plan, guidance = {}) {
+    const preferences = Array.isArray(guidance.preferences) ? guidance.preferences : [];
+    if (!preferences.length) return plan;
+
+    return plan.map((item, index) => {
+      const matched = preferences.filter(preference =>
+        String(item[preference.dimension] || '').trim().toLowerCase() ===
+        String(preference.prefer || '').trim().toLowerCase()
+      );
+      return {
+        ...item,
+        _performanceGuidanceMatches: matched.length,
+        rationale: matched.length
+          ? `${item.rationale || ''}${item.rationale ? ' ' : ''}Performance evidence: ${matched.map(item => item.rationale).join(' ')}`
+          : item.rationale,
+        _originalPlanOrder: index
+      };
+    }).sort((a, b) =>
+      b._performanceGuidanceMatches - a._performanceGuidanceMatches ||
+      a._originalPlanOrder - b._originalPlanOrder
+    ).map(({ _performanceGuidanceMatches, _originalPlanOrder, ...item }) => item);
+  }
+
   async researchAndPlanChannel(channelStrategy) {
     const targetCount = Math.max(1, Math.min(5, Number(channelStrategy.videos_per_run || 1)));
     await this.analyzeTrends();
@@ -515,6 +611,7 @@ class ContentStrategyAgent {
     const recentRows = await this.db.getAllRows(
       "SELECT topic, created_at FROM content_strategies WHERE created_at >= datetime('now', '-90 days') ORDER BY created_at DESC LIMIT 50"
     );
+    const performanceGuidance = await this.buildPerformancePlanGuidance();
     const approvedLearnings = this.db.listLearningRecommendations
       ? await this.db.listLearningRecommendations({ status: 'approved', limit: 10 })
       : [];
@@ -532,7 +629,8 @@ class ContentStrategyAgent {
       ...(signalSources.has('trending') ? ['YouTube most-popular videos'] : []),
       ...(signalSources.has('competitor') ? ['Configured competitor channels'] : []),
       ...(recentRows.length ? ['Channel content history'] : []),
-      ...(approvedLearnings.length ? ['Operator-approved channel performance learnings'] : [])
+      ...(approvedLearnings.length ? ['Operator-approved channel performance learnings'] : []),
+      ...(performanceGuidance.preferences.length ? ['Evidence-backed performance cohort comparisons'] : [])
     ];
     const research = {
       generatedAt: new Date().toISOString(),
@@ -541,6 +639,7 @@ class ContentStrategyAgent {
       sourceCatalog,
       recentTopics: recentRows.map(row => row.topic),
       competitorChannelsAnalyzed: this.competitorData.length,
+      performanceGuidance,
       approvedLearnings: approvedLearnings.map(item => ({
         category: item.category,
         title: item.title,
@@ -584,6 +683,7 @@ class ContentStrategyAgent {
       const fallback = this.buildFallbackAutonomousPlan(channelStrategy, research, targetCount);
       plan = this.normalizeAutonomousPlan([...plan, ...fallback], channelStrategy, targetCount, research);
     }
+    plan = this.applyPerformanceGuidance(plan, performanceGuidance);
     research.prioritizedBacklogIdeas = backlogPlan.map((item, index) => ({
       topic: item.topic,
       score: rankedBacklog[index]?.score || null
@@ -614,8 +714,9 @@ Research signals: ${JSON.stringify(research.signals)}
 Allowed source catalog: ${JSON.stringify(research.sourceCatalog)}
 Recent topics to avoid repeating: ${JSON.stringify(research.recentTopics)}
 Operator-approved performance learnings to apply: ${JSON.stringify(research.approvedLearnings)}
+Evidence-backed performance preferences (advisory ranking only; do not force an unsuitable topic or invent evidence): ${JSON.stringify(research.performanceGuidance || {})}
 
-Do not invent trend data, statistics, sources, URLs, or factual claims. Use only exact URLs from the supplied source catalog. Apply only the supplied approved learnings; pending or rejected recommendations are not authorized. Prefer evergreen topics when the supplied signals are weak. Learnings with category "audience_demand" are audience-requested topics mined from real comments on published videos; prefer planning a video that directly answers one when it fits the channel objective, and cite it in the rationale.`;
+Do not invent trend data, statistics, sources, URLs, or factual claims. Use only exact URLs from the supplied source catalog. Apply only the supplied approved learnings; pending or rejected recommendations are not authorized. Use performance preferences only to rank otherwise suitable plan options; never override the channel objective, invent evidence, or change the channel strategy. Prefer evergreen topics when the supplied signals are weak. Learnings with category "audience_demand" are audience-requested topics mined from real comments on published videos; prefer planning a video that directly answers one when it fits the channel objective, and cite it in the rationale.`;
 
     try {
       const response = await this.aiTextService.generateText(prompt, { maxTokens: 1800, temperature: 0.65 });
