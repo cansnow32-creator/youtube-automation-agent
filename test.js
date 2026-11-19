@@ -2806,6 +2806,27 @@ class SystemTest {
       throw new Error('An uncertain upload outcome was retried or failed to require reconciliation');
     }
 
+    // Re-approval must not reset an in-flight or uncertain upload to "scheduled".
+    const { YouTubeAutomationAgent } = require('./index');
+    const approvalAgent = new YouTubeAutomationAgent();
+    for (const status of ['uploading', 'uploaded', 'reconciliation_required']) {
+      approvalAgent.db = {
+        getProductionBundle: async () => ({
+          id: 'prod-approval-state',
+          schedule: { status }
+        })
+      };
+      let approvalStateProtected = false;
+      try {
+        await approvalAgent.approveContent('prod-approval-state', {});
+      } catch (error) {
+        approvalStateProtected = error.code === 'UPLOAD_OUTCOME_UNKNOWN' && error.status === 409;
+      }
+      if (!approvalStateProtected) {
+        throw new Error(`Re-approval reset the protected ${status} upload state`);
+      }
+    }
+
     let reconciliationCalls = 0;
     const recorded = {
       id: 'schedule-recorded', productionId: 'prod-recorded', title: 'Recorded', status: 'uploaded',
