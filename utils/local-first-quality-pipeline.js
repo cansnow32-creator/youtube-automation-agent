@@ -41,7 +41,7 @@ class LocalFirstQualityPipeline {
         format: 'json',
         options: { temperature: 0.4 }
       }),
-      signal: AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 120000))
+      signal: globalThis.AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 120000))
     });
     if (!response.ok) throw new Error(`Ollama request failed: HTTP ${response.status}`);
     const data = await response.json();
