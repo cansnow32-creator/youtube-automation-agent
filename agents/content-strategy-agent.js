@@ -255,14 +255,25 @@ class ContentStrategyAgent {
   }
 
   extractKeywords(text) {
-    // Simple keyword extraction
-    const stopWords = ['the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'as', 'are', 'was', 'were', 'been', 'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'could', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'what', 'which', 'who', 'when', 'where', 'why', 'how', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now'];
-    
-    return text
-      .toLowerCase()
-      .replace(/[^\w\s]/g, '')
+    // Preserve Unicode letters and numbers so Turkish and other non-English
+    // channel niches remain searchable instead of being stripped by ASCII \w.
+    const stopWords = new Set([
+      'the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'as', 'are', 'was', 'were',
+      'been', 'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+      'could', 'should', 'may', 'might', 'must', 'can', 'i', 'you', 'he', 'she',
+      'it', 'we', 'they', 'what', 'who', 'when', 'where', 'why', 'how', 'all',
+      'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such',
+      'nor', 'not', 'only', 'own', 'same', 'than', 'too', 'very', 'just', 'now',
+      've', 'bir', 'bu', 'şu', 'ile', 'için', 'ama', 'veya', 'gibi', 'çok',
+      'daha', 'nasıl', 'neden'
+    ]);
+
+    return String(text || '')
+      .toLocaleLowerCase()
+      .normalize('NFKC')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
-      .filter(word => word.length > 3 && !stopWords.includes(word));
+      .filter(word => [...word].length > 3 && !stopWords.has(word));
   }
 
   mergeTrendData(trends, competitors) {
