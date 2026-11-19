@@ -155,6 +155,7 @@ Angle: ${strategy.angle}
 Content type: ${strategy.contentType}
 Target audience: ${strategy.targetAudience}
 Keywords: ${(strategy.keywords || []).join(', ')}
+Approved packaging learning (evidence-backed style reference only; never copy the old title verbatim and never let it override this video's topic): ${strategy.packagingLearning ? JSON.stringify(strategy.packagingLearning) : 'None'}
 Keep tags under YouTube's 500 character total guidance. Avoid fabricated statistics and unsupported claims.`;
 
     try {
