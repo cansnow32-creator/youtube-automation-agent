@@ -2460,8 +2460,14 @@ class SystemTest {
     if (!unsafeBindRejected) {
       throw new Error('Network binding without API_KEY was not rejected');
     }
-    if (!validateHostConfiguration('0.0.0.0', 'test-secret')) {
-      throw new Error('Network binding with API_KEY should be allowed');
+    let keyedNetworkBindRejected = false;
+    try {
+      validateHostConfiguration('0.0.0.0', 'test-secret');
+    } catch (error) {
+      keyedNetworkBindRejected = /loopback/.test(error.message);
+    }
+    if (!keyedNetworkBindRejected) {
+      throw new Error('Network binding was allowed even though read-only API routes lack session authentication');
     }
 
     if (typeof agent.validateGenerateRequestBody !== 'function') {
