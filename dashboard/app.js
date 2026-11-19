@@ -942,6 +942,34 @@ function renderVideoConcept(record) {
   ui.currentConceptId = record.id;
   $('#concept-status').textContent = label(record.status);
   const concept = record.concept || {};
+  const musicAsset = concept.audioDirection?.musicAsset || null;
+  const musicSummary = musicAsset
+    ? `<p class="callout">Music attached: ${escapeHTML(musicAsset.title || 'Untitled track')} · ${escapeHTML(musicAsset.licenseType || 'license pending')} · ${escapeHTML(musicAsset.trackDuration ? Math.round(musicAsset.trackDuration) + ' sec' : 'duration checked')}</p>`
+    : '';
+  const musicForm = record.status === 'pending' ? `
+    <form id="concept-music-form" class="settings-form">
+      <h4>Background music (optional)</h4>
+      <p class="meta-line">Upload a track you own or are licensed to use. It will be mixed locally under narration after video rendering.</p>
+      ${musicSummary}
+      <label><span>Audio file <small>MP3, WAV, M4A, AAC, OGG, FLAC or WebM · maximum 50 MB</small></span><input name="musicFile" type="file" accept="audio/*" required></label>
+      <label><span>License type</span><select name="licenseType" required>
+        <option value="user_owned">I created / own this track</option>
+        <option value="commercial_license">Commercial license</option>
+        <option value="public_domain">Public domain</option>
+        <option value="cc0">Creative Commons CC0</option>
+        <option value="cc_by">Creative Commons BY</option>
+        <option value="cc_by_sa">Creative Commons BY-SA</option>
+      </select></label>
+      <label><span>Track title</span><input name="title" maxlength="200" placeholder="Track title"></label>
+      <label><span>Creator / rights holder</span><input name="creator" maxlength="200" placeholder="Creator or rights holder"></label>
+      <label><span>Attribution <small>Required for CC BY and CC BY-SA</small></span><textarea name="attribution" rows="2" maxlength="1000" placeholder="Credit text, author, and license"></textarea></label>
+      <label><span>Commercial license name</span><input name="licenseName" maxlength="200" placeholder="License or purchase reference"></label>
+      <label><span>License URL</span><input name="licenseUrl" type="url" maxlength="1000" placeholder="https://..."></label>
+      <label><span>Source URL</span><input name="sourceUrl" type="url" maxlength="1000" placeholder="https://..."></label>
+      <label><span>Background music volume <small>0.01–0.50 · default 0.18</small></span><input name="volume" type="number" min="0.01" max="0.5" step="0.01" value="0.18" required></label>
+      <label class="checkbox-row"><input name="rightsConfirmed" type="checkbox" required><span>I confirm that I own this music or have permission for commercial use in this video.</span></label>
+      <div class="form-actions"><button type="submit" class="button secondary">Upload & attach music</button></div>
+    </form>` : musicSummary;
   const sceneRows = Array.isArray(concept.scenePlan) ? concept.scenePlan.map(scene => `
     <article class="idea-card"><strong>Scene ${escapeHTML(scene.scene)}</strong><div class="meta-line">${escapeHTML(scene.purpose || '')}</div><p>${escapeHTML(scene.visual || '')}</p><small>${escapeHTML(scene.narrationIntent || '')} · ${escapeHTML(scene.durationSeconds || '?')} sec</small></article>`).join('') : '';
   $('#concept-detail').innerHTML = `
@@ -952,6 +980,7 @@ function renderVideoConcept(record) {
     <h4>Story arc</h4><p>${escapeHTML(Array.isArray(concept.storyArc) ? concept.storyArc.join(' → ') : concept.storyArc || '')}</p>
     <h4>Visual direction</h4><pre>${escapeHTML(JSON.stringify(concept.visualDirection || {}, null, 2))}</pre>
     <h4>Audio & subtitles</h4><pre>${escapeHTML(JSON.stringify({ audio: concept.audioDirection || {}, subtitles: concept.subtitleDirection || {}, transitions: concept.transitions || '' }, null, 2))}</pre>
+    ${musicForm}
     <h4>Scene plan</h4><div class="card-list">${sceneRows}</div>
     <div class="form-actions">
       ${record.status === 'pending' ? '<button type="button" class="button secondary" data-concept-revise>Revise concept</button><button type="button" class="button primary" data-concept-approve>Approve concept</button>' : ''}
@@ -1998,6 +2027,43 @@ $('#concept-propose-form').addEventListener('submit', async event => {
   } catch (error) {
     showToast(error.message, 'error');
   } finally { button.disabled = false; }
+});
+
+$('#concept-detail').addEventListener('submit', async event => {
+  const form = event.target.closest('#concept-music-form');
+  if (!form) return;
+  event.preventDefault();
+  if (!ui.currentConceptId) return;
+  const values = Object.fromEntries(new FormData(form));
+  const file = form.elements.musicFile.files?.[0];
+  if (!file) return showToast('Choose an audio file first.', 'error');
+  if (file.size > 50 * 1024 * 1024) return showToast('Music files must be 50 MB or smaller.', 'error');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const headers = {
+      'Content-Type': file.type,
+      'X-Music-Title': values.title || '',
+      'X-Music-Creator': values.creator || '',
+      'X-License-Type': values.licenseType,
+      'X-Rights-Confirmed': form.elements.rightsConfirmed.checked ? 'true' : 'false',
+      'X-Music-Attribution': values.attribution || '',
+      'X-License-Name': values.licenseName || '',
+      'X-License-Url': values.licenseUrl || '',
+      'X-Source-Url': values.sourceUrl || '',
+      'X-Music-Volume': values.volume || '0.18'
+    };
+    const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/music', {
+      method: 'POST', headers, body: file
+    });
+    renderVideoConcept(data.concept);
+    showToast('Music uploaded, rights recorded and attached to the concept.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $('#concept-revision-form').addEventListener('submit', async event => {
