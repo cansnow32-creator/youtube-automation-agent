@@ -21,9 +21,9 @@ function getApprovedPackagingLearning(recommendations = []) {
     winningArmLabel: String(recommendation.proposedChange?.winningArmLabel || '').slice(0, 100),
     hypothesis: String(recommendation.proposedChange?.hypothesis || '').slice(0, 300),
     evidence: {
-      liftPercent: Number.isFinite(Number(recommendation.evidence?.liftPercent))
+      liftPercent: recommendation.evidence?.liftPercent != null && Number.isFinite(Number(recommendation.evidence.liftPercent))
         ? Number(recommendation.evidence.liftPercent) : null,
-      zScore: Number.isFinite(Number(recommendation.evidence?.zScore))
+      zScore: recommendation.evidence?.zScore != null && Number.isFinite(Number(recommendation.evidence.zScore))
         ? Number(recommendation.evidence.zScore) : null
     }
   };
