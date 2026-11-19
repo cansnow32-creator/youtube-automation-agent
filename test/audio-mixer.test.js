@@ -114,6 +114,7 @@ async function testProductionIntegration(directory) {
     assert.equal(production.assets.backgroundMusic.licenseType, 'user_owned');
     assert.equal(production.assets.finalVideo.path, finalPath);
     assert.equal(production.assets.finalVideo.cleanPath, source);
+    assert.ok(production.assets.finalVideo.cleanFileSize > 0);
     assert.notEqual(production.assets.finalVideo.cleanPath, production.assets.finalVideo.path);
     assert.ok((await fs.stat(finalPath)).size > 0);
     assert.ok((await fs.stat(production.assets.finalVideo.cleanPath)).size > 0);
