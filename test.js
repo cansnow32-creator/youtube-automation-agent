@@ -1006,6 +1006,43 @@ class SystemTest {
     }
     if (!blocked) throw new Error('Failed readiness did not block protected automation');
 
+    const { YOUTUBE_SCOPES } = require('./modern-auth');
+    let channelProbeCalls = 0;
+    const scopedCredentials = {
+      tokens: { youtube: { scope: YOUTUBE_SCOPES.join(' ') } },
+      getYouTubeClient: () => ({
+        channels: { list: async () => {
+          channelProbeCalls++;
+          return { data: { items: [{ id: 'channel-test', snippet: { title: 'Test channel' } }] } };
+        } }
+      })
+    };
+    const scopedReadiness = new ProductionReadinessService({}, scopedCredentials);
+    const channelAccess = await scopedReadiness.probeYouTube();
+    if (channelProbeCalls !== 1 || !channelAccess.details.channelId) {
+      throw new Error('YouTube readiness did not verify channel access with the required OAuth scopes');
+    }
+
+    let missingScopeChannelCalls = 0;
+    const missingScopeReadiness = new ProductionReadinessService({}, {
+      tokens: { youtube: { scope: 'https://www.googleapis.com/auth/youtube.readonly' } },
+      getYouTubeClient: () => ({
+        channels: { list: async () => {
+          missingScopeChannelCalls++;
+          return { data: { items: [{ id: 'unexpected' }] } };
+        } }
+      })
+    });
+    let missingScopesBlocked = false;
+    try {
+      await missingScopeReadiness.probeYouTube();
+    } catch (error) {
+      missingScopesBlocked = /missing required OAuth scopes/.test(error.message);
+    }
+    if (!missingScopesBlocked || missingScopeChannelCalls !== 0) {
+      throw new Error('Readiness accepted a YouTube token missing required write or analytics scopes');
+    }
+
     const tags = normalizeTags(['#Automation', 'automation', 'bad"tag', 'x'.repeat(140)]);
     const metadata = validateYouTubeMetadata({
       title: 'A valid title',
