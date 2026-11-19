@@ -15,11 +15,11 @@ assert.throws(() => buildSubtitleFilter(null), /captions file is required/);
 
 const path = require('node:path');
 const specialCaptionPath = path.resolve('temp', 'captions folder', "creator's captions.srt")
-  .replaceAll('\\\\', '/')
-  .replaceAll(':', '\\\\:')
-  .replaceAll("'", "\\\\'");
+  .replaceAll('\\', '/')
+  .replaceAll(':', '\\:')
+  .replaceAll("'", "\\'");
 const specialPathFilter = buildSubtitleFilter(path.resolve('temp', 'captions folder', "creator's captions.srt"));
-assert.ok(specialPathFilter.includes(`subtitles='${specialCaptionPath}'`));
+assert.ok(specialPathFilter.includes(\`subtitles='\${specialCaptionPath}'\`));
 
 const validSrt = '1\n00:00:00,000 --> 00:00:02,500\nA valid caption line\n\n2\n00:00:02,500 --> 00:00:04,000\nSecond caption\n';
 assert.deepEqual(validateSrtContent(validSrt), { cueCount: 2 });
