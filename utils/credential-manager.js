@@ -128,6 +128,14 @@ class CredentialManager {
     );
 
     oauth2Client.setCredentials(this.tokens.youtube);
+    // Persist refreshed access tokens and any rotated refresh token so the next
+    // process start can continue without requiring another interactive sign-in.
+    oauth2Client.on('tokens', updatedTokens => {
+      this.tokens.youtube = { ...this.tokens.youtube, ...updatedTokens };
+      this.saveTokens().catch(error => {
+        this.logger.error('Failed to persist refreshed YouTube tokens:', error);
+      });
+    });
     return oauth2Client;
   }
 
