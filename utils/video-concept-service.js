@@ -38,7 +38,7 @@ class VideoConceptService {
       response = await this.fetch(this.ollamaUrl + '/api/chat', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: prompt }], stream: false, format: 'json', options: { temperature: 0.45 } }),
-        signal: AbortSignal.timeout(this.timeoutMs)
+        signal: globalThis.AbortSignal.timeout(this.timeoutMs)
       });
     } catch (error) {
       throw new Error('Local Ollama is unavailable at ' + this.ollamaUrl + '. Start Ollama and ensure ' + this.model + ' is installed. No cloud or paid fallback was attempted. Cause: ' + error.message);
