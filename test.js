@@ -2445,8 +2445,24 @@ class SystemTest {
   }
 
   async testAPIValidationAndSecurity() {
-    const { YouTubeAutomationAgent } = require('./index');
+    const { YouTubeAutomationAgent, validateHostConfiguration } = require('./index');
     const agent = new YouTubeAutomationAgent();
+
+    if (!validateHostConfiguration('127.0.0.1', undefined)) {
+      throw new Error('Loopback binding should be allowed without an API key');
+    }
+    let unsafeBindRejected = false;
+    try {
+      validateHostConfiguration('0.0.0.0', undefined);
+    } catch (error) {
+      unsafeBindRejected = /API_KEY/.test(error.message);
+    }
+    if (!unsafeBindRejected) {
+      throw new Error('Network binding without API_KEY was not rejected');
+    }
+    if (!validateHostConfiguration('0.0.0.0', 'test-secret')) {
+      throw new Error('Network binding with API_KEY should be allowed');
+    }
 
     if (typeof agent.validateGenerateRequestBody !== 'function') {
       throw new Error('validateGenerateRequestBody is not implemented');
