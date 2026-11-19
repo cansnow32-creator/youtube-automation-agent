@@ -40,11 +40,60 @@ class ContentStrategyAgent {
       
       // Combine insights
       this.trendingTopics = this.mergeTrendData(trends, competitors);
-      
+
+      if (this.trendingTopics.length === 0 && this.db.getLatestTrendSnapshot) {
+        const previous = await this.db.getLatestTrendSnapshot();
+        if (previous?.topics?.length) {
+          this.trendingTopics = previous.topics;
+          this.logger.warn(`Live trend sources unavailable; using saved snapshot from ${previous.capturedAt}`);
+        }
+      }
+
       this.logger.info(`Identified ${this.trendingTopics.length} trending topics`);
     } catch (error) {
       this.logger.error('Error analyzing trends:', error);
+      if (this.db.getLatestTrendSnapshot) {
+        try {
+          const previous = await this.db.getLatestTrendSnapshot();
+          if (previous?.topics?.length) this.trendingTopics = previous.topics;
+        } catch (snapshotError) {
+          this.logger.warn(`Could not load saved trend snapshot: ${snapshotError.message}`);
+        }
+      }
     }
+  }
+
+  async refreshTrendSnapshot() {
+    const regionCode = String(process.env.YOUTUBE_REGION || 'US').toUpperCase();
+    const [trends, competitors] = await Promise.all([
+      this.fetchYouTubeTrends(),
+      this.analyzeCompetitors()
+    ]);
+    const topics = this.mergeTrendData(trends, competitors);
+    if (!topics.length) {
+      throw new Error('Trend refresh returned no usable topics; previous snapshot was preserved');
+    }
+
+    this.trendingTopics = topics;
+    this.competitorData = competitors;
+    const snapshot = await this.db.saveTrendSnapshot({
+      regionCode,
+      topics,
+      sourceCounts: {
+        youtubeTrendingVideos: trends.length,
+        competitorChannels: competitors.length,
+        competitorVideosAnalyzed: competitors.reduce((sum, item) => sum + (item.frequency || 0), 0)
+      },
+      capturedAt: new Date().toISOString()
+    });
+    this.logger.success(`Saved weekly trend snapshot: ${topics.length} topics for ${regionCode}`);
+    return {
+      id: snapshot.id,
+      regionCode,
+      topicCount: topics.length,
+      sourceCounts: snapshot.sourceCounts,
+      capturedAt: snapshot.capturedAt
+    };
   }
 
   async fetchYouTubeTrends() {
