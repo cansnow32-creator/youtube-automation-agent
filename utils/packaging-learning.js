@@ -17,6 +17,8 @@ function getApprovedPackagingLearning(recommendations = []) {
     rationale: String(recommendation.rationale || '').slice(0, 500),
     confidence: recommendation.confidence || 'unknown',
     winningTitle: String(recommendation.proposedChange?.winningTitle || '').slice(0, 100),
+    winningThumbnailPattern: String(recommendation.proposedChange?.winningThumbnailPattern || '').slice(0, 80),
+    winningArmLabel: String(recommendation.proposedChange?.winningArmLabel || '').slice(0, 100),
     hypothesis: String(recommendation.proposedChange?.hypothesis || '').slice(0, 300),
     evidence: {
       liftPercent: Number.isFinite(Number(recommendation.evidence?.liftPercent))
