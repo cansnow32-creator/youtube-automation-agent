@@ -55,6 +55,15 @@ class DailyAutomation {
       }, { scheduled: false })
     );
 
+    // Refresh trend research before the weekly strategy review.
+    this.scheduledTasks.set('weekly-trend-refresh',
+      cron.schedule('30 7 * * 0', async () => {
+        if (this.isEnabled) {
+          await this.refreshWeeklyTrends();
+        }
+      }, { scheduled: false })
+    );
+
     // Weekly strategy review on Sundays at 8:00 AM
     this.scheduledTasks.set('weekly-strategy-review',
       cron.schedule('0 8 * * 0', async () => {
@@ -328,6 +337,27 @@ class DailyAutomation {
     } catch (error) {
       this.logger.error('Growth experiment refresh failed:', error);
       await this.logAutomationEvent('growth_experiment_refresh', 'error', { error: error.message });
+    }
+  }
+
+  async refreshWeeklyTrends() {
+    if (!this.agents.strategy?.refreshTrendSnapshot) {
+      await this.logAutomationEvent('weekly_trend_refresh', 'skipped', {
+        reason: 'Trend refresh is not configured'
+      });
+      return null;
+    }
+    try {
+      this.logger.info('Refreshing weekly trend research...');
+      const result = await this.agents.strategy.refreshTrendSnapshot();
+      await this.logAutomationEvent('weekly_trend_refresh', 'success', result);
+      return result;
+    } catch (error) {
+      this.logger.error('Weekly trend refresh failed:', error);
+      await this.logAutomationEvent('weekly_trend_refresh', 'error', {
+        error: error.message
+      });
+      return null;
     }
   }
 
