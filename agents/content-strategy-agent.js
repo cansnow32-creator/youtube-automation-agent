@@ -192,7 +192,7 @@ class ContentStrategyAgent {
         part: 'snippet',
         channelId: channelId,
         maxResults: 20,
-        order: 'date',
+        order: 'viewCount',
         type: 'video'
       });
 
