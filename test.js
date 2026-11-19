@@ -2461,7 +2461,7 @@ class SystemTest {
     try {
       validateHostConfiguration('0.0.0.0', undefined);
     } catch (error) {
-      unsafeBindRejected = /API_KEY/.test(error.message);
+      unsafeBindRejected = /loopback/.test(error.message);
     }
     if (!unsafeBindRejected) {
       throw new Error('Network binding without API_KEY was not rejected');
