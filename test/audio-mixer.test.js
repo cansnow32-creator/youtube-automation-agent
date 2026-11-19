@@ -22,6 +22,7 @@ const licensedMusic = overrides => ({
 async function testValidationAndArguments(directory) {
   assert.throws(() => validateMusicRights(licensedMusic({ rightsConfirmed: false })), /confirm that you own/);
   assert.throws(() => validateMusicRights(licensedMusic({ licenseType: 'cc_by', attribution: '' })), /requires its attribution/);
+  assert.throws(() => validateMusicRights(licensedMusic({ licenseType: 'commercial_license' })), /requires a license name or license URL/);
 
   const videoPath = path.join(directory, 'source.mp4');
   const musicPath = path.join(directory, 'music.wav');
