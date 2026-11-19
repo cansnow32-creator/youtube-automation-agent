@@ -644,6 +644,7 @@ class ProductionManagementAgent {
       
       productionData.assets.finalVideo = {
         path: finalVideoPath,
+        cleanPath: producedPath,
         fileSize: stats.size,
         duration: productionData.estimatedDuration,
         generatedWith: 'AI',
