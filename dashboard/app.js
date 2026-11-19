@@ -1140,6 +1140,7 @@ async function openContent(productionId) {
             <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
+            ${item.schedule?.metadata?.thumbnailUpload?.status === 'failed' ? `<div class="callout error"><strong>Thumbnail upload failed.</strong> ${escapeHTML(item.schedule.metadata.thumbnailUpload.errorMessage || 'The video is already uploaded; retrying here uploads only the thumbnail.')}<div class="form-actions"><button type="button" class="button secondary" data-retry-thumbnail="${escapeHTML(item.id)}">Retry thumbnail upload</button></div></div>` : item.schedule?.metadata?.thumbnailUpload?.status === 'uploaded' ? '<p class="meta-line">✓ YouTube thumbnail uploaded successfully.</p>' : ''}
           </div>
           <div class="editor">
             <label><span>Title</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
@@ -1701,6 +1702,15 @@ document.addEventListener('click', async event => {
     try {
       await mutate(`/api/content/${encodeURIComponent(publishNow.dataset.publishNowContent)}/publish-now`, 'POST', {}, 'Content published.');
       $('#content-dialog').close();
+    } catch (_error) { /* toast already shown */ }
+    return;
+  }
+
+  const retryThumbnail = event.target.closest('[data-retry-thumbnail]');
+  if (retryThumbnail) {
+    try {
+      await mutate(`/api/content/${encodeURIComponent(retryThumbnail.dataset.retryThumbnail)}/retry-thumbnail`, 'POST', {}, 'Thumbnail uploaded successfully. The video was not uploaded again.');
+      await openContent(retryThumbnail.dataset.retryThumbnail);
     } catch (_error) { /* toast already shown */ }
     return;
   }
