@@ -41,7 +41,7 @@ async function run() {
 
     const { analyzeVideoTemplates } = require('../utils/viral-template-analyzer');
     const templateAnalysis = analyzeVideoTemplates([
-      { id: 'template-list', snippet: { title: '7 Ways to Improve Your Workflow', description: 'A practical tutorial' }, statistics: { viewCount: '90000' } },
+      { id: 'template-list', snippet: { title: '7 Ways to Improve Your Workflow', description: 'A practical workflow' }, statistics: { viewCount: '90000' } },
       { id: 'template-list-2', snippet: { title: 'Top 5 Editing Mistakes', description: 'Avoid these mistakes' }, statistics: { viewCount: '110000' } },
       { id: 'template-question', snippet: { title: 'Why Does Editing Take So Long?', description: 'Explained simply' }, statistics: { viewCount: '50000' } }
     ]);
