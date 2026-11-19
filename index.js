@@ -27,6 +27,7 @@ const { AudienceEngagementService } = require('./utils/audience-engagement-servi
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
 const { VideoConceptService } = require('./utils/video-concept-service');
+const { requireApprovedVideoConcept } = require('./utils/approved-video-concept-gate');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
@@ -910,11 +911,16 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/retry', protect, async (req, res) => {
       const bundle = await this.db.getProductionBundle(req.params.productionId);
       if (!bundle) return res.status(404).json({ error: 'Content not found' });
+      const approvedConceptId = bundle.strategy?.approvedVideoConceptId;
+      if (!approvedConceptId) {
+        return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'This production has no approved concept linked to it. Create and approve a concept before retrying.' });
+      }
       const job = await this.startGenerationJob({
         topic: bundle.strategy.topic || bundle.editorData.title || null,
         style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
         length: bundle.strategy.requestedLengthKey || 'medium',
-        source: 'retry'
+        source: 'retry',
+        approvedConceptId
       });
       return res.status(202).json({ success: true, result: job });
     });
@@ -1319,7 +1325,11 @@ class YouTubeAutomationAgent {
     this.app.post('/api/ideas/:ideaId/generate', protect, async (req, res) => {
       const idea = await this.db.updateContentIdea(req.params.ideaId, { status: 'generating' });
       if (!idea) return res.status(404).json({ error: 'Idea not found' });
-      const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea' });
+      const approvedConceptId = req.body?.approvedConceptId;
+      if (!approvedConceptId) {
+        return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'Approve a video concept in Video Concept Studio before generating this idea.' });
+      }
+      const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea', approvedConceptId });
       await this.db.updateContentIdea(idea.id, { status: 'generated' });
       return res.status(202).json({ success: true, result: job });
     });
@@ -1397,19 +1407,13 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
-    if (input.requireApprovedConcept === true) {
-      const approvedConcept = await this.db.getVideoConcept(input.approvedConceptId);
-      if (!approvedConcept || approvedConcept.status !== 'approved') {
-        const error = new Error('An approved video concept is required before production');
-        error.status = 409;
-        throw error;
-      }
-      validation.value.strategyContext = {
-        ...(validation.value.strategyContext || {}),
-        approvedVideoConcept: approvedConcept.concept,
-        approvedVideoConceptId: approvedConcept.id
-      };
-    }
+    const requestedConceptId = input.approvedConceptId || input.strategyContext?.approvedVideoConceptId;
+    const approvedConcept = await requireApprovedVideoConcept(this.db, requestedConceptId);
+    validation.value.strategyContext = {
+      ...(validation.value.strategyContext || {}),
+      approvedVideoConcept: approvedConcept.concept,
+      approvedVideoConceptId: approvedConcept.id
+    };
 
     const job = await this.db.createGenerationJob({
       ...validation.value,
@@ -1440,6 +1444,8 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
+    const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
+    await requireApprovedVideoConcept(this.db, approvedConceptId);
     if (this.activeJobs.has(job.id)) {
       const error = new Error('This generation job is already running');
       error.status = 409;
@@ -1568,6 +1574,12 @@ class YouTubeAutomationAgent {
     this.logger.info('Starting content generation pipeline...');
     const { jobId = null, strategyContext: rawStrategyContext = {} } = options;
     const strategyContext = rawStrategyContext || {};
+    const approvedConcept = await requireApprovedVideoConcept(
+      this.db,
+      strategyContext.approvedVideoConceptId
+    );
+    strategyContext.approvedVideoConcept = approvedConcept.concept;
+    strategyContext.approvedVideoConceptId = approvedConcept.id;
     const profile = await this.db.getChannelProfile() || {};
     const lengthLabels = { short: '2-4 minutes', medium: '8-12 minutes', long: '15-20 minutes' };
 
