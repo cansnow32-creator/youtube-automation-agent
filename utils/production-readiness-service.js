@@ -161,12 +161,16 @@ class ProductionReadinessService {
     const dataDirectory = path.resolve(__dirname, '..', 'data');
     await fs.mkdir(dataDirectory, { recursive: true });
     const writableProbe = await fs.mkdtemp(path.join(dataDirectory, '.readiness-write-'));
-    const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-runtime-write-'));
+    let tempDirectory;
     try {
-      const probeFile = path.join(writableProbe, 'write-test.tmp');
-      await fs.writeFile(probeFile, 'AgentTube local runtime write check', { flag: 'wx' });
-      await fs.access(probeFile);
-      await fs.rm(probeFile, { force: true });
+      tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-runtime-write-'));
+      const dataProbeFile = path.join(writableProbe, 'write-test.tmp');
+      const tempProbeFile = path.join(tempDirectory, 'write-test.tmp');
+      await Promise.all([
+        fs.writeFile(dataProbeFile, 'AgentTube local data write check', { flag: 'wx' }),
+        fs.writeFile(tempProbeFile, 'AgentTube temporary directory write check', { flag: 'wx' })
+      ]);
+      await Promise.all([fs.access(dataProbeFile), fs.access(tempProbeFile)]);
       return {
         message: 'Node.js version and local data / temporary directory read-write permissions are valid.',
         details: {
@@ -177,12 +181,13 @@ class ProductionReadinessService {
           dataDirectory,
           dataDirectoryWritable: true,
           temporaryDirectory: os.tmpdir(),
-          temporaryDirectoryWritable: true
+          temporaryDirectoryWritable: true,
+          temporaryDirectoryWriteVerified: true
         }
       };
     } finally {
       await fs.rm(writableProbe, { recursive: true, force: true }).catch(() => {});
-      await fs.rm(tempDirectory, { recursive: true, force: true }).catch(() => {});
+      if (tempDirectory) await fs.rm(tempDirectory, { recursive: true, force: true }).catch(() => {});
     }
   }
 
