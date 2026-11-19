@@ -113,22 +113,35 @@ class AIVideoGenerator {
       : null);
   }
 
-  async generateTTSAudio(text, outputPath) {
+  async generateTTSAudio(text, outputPath, options = {}) {
     this.logger.info('Generating TTS audio...');
     this.lastNarrationResult = null;
     let provider = 'simulation';
     let model = null;
+    const direction = options.direction && typeof options.direction === 'object' ? options.direction : {};
+    const hasVoiceDirection = Boolean(direction.narration || direction.pacing);
+    let directionApplication = {
+      appliedFields: [],
+      unsupportedFields: ['music'],
+      note: 'The selected TTS provider does not expose a supported voice-direction control.'
+    };
 
     try {
       let generatedPath;
       if (this.elevenLabsApiKey && this.elevenLabsVoiceId) {
         provider = 'elevenlabs';
         model = this.elevenLabsModel;
-        generatedPath = await this.generateElevenLabsTTS(text, outputPath);
+        generatedPath = await this.generateElevenLabsTTS(text, outputPath, direction);
+        directionApplication = hasVoiceDirection
+          ? { appliedFields: ['narration', 'pacing'], unsupportedFields: ['music'], method: 'ElevenLabs voice_settings mapped from approved direction' }
+          : { appliedFields: [], unsupportedFields: ['music'], note: 'No narration or pacing direction was supplied.' };
       } else if (this.openai) {
         provider = 'openai';
         model = 'gpt-4o-mini-tts';
-        generatedPath = await this.generateOpenAITTS(text, outputPath);
+        generatedPath = await this.generateOpenAITTS(text, outputPath, direction);
+        directionApplication = hasVoiceDirection
+          ? { appliedFields: ['narration', 'pacing'], unsupportedFields: ['music'], method: 'OpenAI TTS instructions' }
+          : { appliedFields: [], unsupportedFields: ['music'], note: 'No narration or pacing direction was supplied.' };
       } else if (this.gemini) {
         provider = 'gemini';
         model = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts';
@@ -146,6 +159,8 @@ class AIVideoGenerator {
         externalTaskId: null,
         generatedAt: new Date().toISOString(),
         simulated: !usable,
+        directionApplied: usable && directionApplication.appliedFields.length > 0,
+        directionApplication,
         cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
       };
       return generatedPath;
@@ -153,6 +168,7 @@ class AIVideoGenerator {
       this.lastNarrationResult = {
         status: 'failed', path: null, provider, model, externalTaskId: null,
         generatedAt: new Date().toISOString(), simulated: false, error: error.message,
+        directionApplied: false, directionApplication,
         cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
       };
       this.logger.error('TTS generation failed:', error);
@@ -160,16 +176,17 @@ class AIVideoGenerator {
     }
   }
 
-  async generateElevenLabsTTS(text, outputPath) {
+  async generateElevenLabsTTS(text, outputPath, direction = {}) {
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}`;
     
     const data = {
       text: text,
       model_id: this.elevenLabsModel,
       voice_settings: {
-        stability: 0.5,
+        stability: /calm|gentle|soothing|measured|documentary|serious/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.7
+          : /excited|energetic|dramatic|enthusiastic|playful|animated/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.35 : 0.5,
         similarity_boost: 0.8,
-        style: 0.0,
+        style: /excited|energetic|dramatic|enthusiastic|playful|animated/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.55 : 0.15,
         use_speaker_boost: true
       }
     };
@@ -198,12 +215,14 @@ class AIVideoGenerator {
     });
   }
 
-  async generateOpenAITTS(text, outputPath) {
+  async generateOpenAITTS(text, outputPath, direction = {}) {
+    const voiceDirection = [direction.narration, direction.pacing].filter(Boolean).join('. ');
     const response = await this.openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "coral",
       input: text,
-      speed: 1.0
+      speed: 1.0,
+      ...(voiceDirection ? { instructions: `Apply this delivery direction without speaking it aloud: ${voiceDirection}` } : {})
     });
 
     const buffer = Buffer.from(await response.arrayBuffer());
