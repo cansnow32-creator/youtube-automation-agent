@@ -182,6 +182,9 @@ async function run() {
     if (ideaIds.length) {
       await db.executeQuery(`DELETE FROM content_ideas WHERE id IN (${ideaIds.map(() => '?').join(',')})`, ideaIds);
     }
+    await db.executeQuery(
+      "DELETE FROM performance_snapshots WHERE video_id = 'backlog-ranking-performance-video'"
+    );
     if (snapshotIds.length) {
       await db.executeQuery(`DELETE FROM trend_snapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds);
     }
