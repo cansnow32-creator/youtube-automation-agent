@@ -98,7 +98,12 @@ class AutonomousChannelOperator {
         if (record?.status === 'completed') continue;
         let ideaId = record?.ideaId;
         if (!record) {
-          const idea = await this.db.createContentIdea({
+          const existingIdeas = this.db.listContentIdeas ? await this.db.listContentIdeas() : [];
+          const normalizedTopic = String(item.topic || '').trim().toLowerCase();
+          const backlogIdea = existingIdeas.find(idea =>
+            idea.status === 'backlog' && String(idea.topic || '').trim().toLowerCase() === normalizedTopic
+          );
+          const idea = backlogIdea || await this.db.createContentIdea({
             topic: item.topic,
             angle: item.angle,
             style: item.format,
@@ -106,6 +111,9 @@ class AutonomousChannelOperator {
             rationale: item.rationale
           });
           ideaId = idea.id;
+          if (backlogIdea) {
+            await this.db.updateContentIdea(ideaId, { status: 'generating' });
+          }
           record = { jobId: null, ideaId, topic: item.topic, status: 'queued', planIndex: index };
           generatedJobs[index] = record;
         } else if (ideaId) {
@@ -151,9 +159,14 @@ class AutonomousChannelOperator {
           record.productionId = completed.production_id || null;
           record.reviewStatus = completed.details?.reviewStatus || null;
           record.error = completed.error || null;
-          if (ideaId) await this.db.updateContentIdea(ideaId, {
-            status: completed.status === 'completed' ? 'generated' : 'failed'
-          });
+          if (ideaId) {
+            await this.db.updateContentIdea(ideaId, {
+              status: completed.status === 'completed' ? 'generated' : 'failed'
+            });
+            if (completed.status === 'completed' && completed.production_id && this.db.linkContentIdeaToProduction) {
+              await this.db.linkContentIdeaToProduction(ideaId, completed.production_id);
+            }
+          }
         } catch (error) {
           record.status = error.code === 'OPERATOR_CANCELLED' ? 'cancelled' : 'failed';
           record.error = error.message;
