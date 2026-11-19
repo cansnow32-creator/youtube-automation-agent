@@ -140,8 +140,8 @@ async function run() {
       assert.ok(finalStats.size > 0, 'real FFmpeg assembly must produce a final MP4');
       assert.ok((await getMediaDuration(finalPath)) > 0, 'final MP4 must have a readable duration');
       assert.equal(await fs.access(finalPath).then(() => true, () => false), true);
-      assert.equal(await fs.access(finalPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4')).then(() => true, () => false), false);
-      assert.equal(await fs.access(finalPath.replace(/\\.mp4$/i, '_finalizing.mp4')).then(() => true, () => false), false);
+      assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_hybrid_visual.mp4')).then(() => true, () => false), false);
+      assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_finalizing.mp4')).then(() => true, () => false), false);
     } else {
       process.stdout.write('FFmpeg unavailable locally; real render smoke test skipped\\n');
     }
