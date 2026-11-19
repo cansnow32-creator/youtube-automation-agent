@@ -153,6 +153,32 @@ async function testProductionIntegration(directory) {
     await Promise.all([source, music, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
   }
 }
+async function testFailedMixPreservesExistingOutput(directory) {
+  const source = path.join(directory, 'failure-source.mp4');
+  const music = path.join(directory, 'failure-music.wav');
+  const output = path.join(directory, 'existing-output.mp4');
+  const temporary = `${output}.mixing.mp4`;
+  await fs.writeFile(source, 'source');
+  await fs.writeFile(music, 'music');
+  await fs.writeFile(output, 'previous-valid-output');
+
+  await assert.rejects(
+    mixBackgroundMusic(source, output, licensedMusic({ path: music }), {
+      getMediaInfo: async () => ({ duration: 3, hasAudio: true, width: 640, height: 360 }),
+      getAudioInfo: async () => ({ duration: 2 }),
+      runFFmpeg: async args => {
+        await fs.writeFile(args[args.length - 1], 'partial-mix');
+        throw new Error('simulated encoder failure');
+      }
+    }),
+    /simulated encoder failure/
+  );
+
+  assert.equal(await fs.readFile(output, 'utf8'), 'previous-valid-output',
+    'a failed mix must not destroy the previously existing output');
+  await assert.rejects(fs.stat(temporary), { code: 'ENOENT' });
+}
+
 async function testRealFFmpegMix(directory) {
   if (!await checkFFmpeg()) {
     process.stdout.write('Audio mixer FFmpeg smoke test skipped: FFmpeg is unavailable\\n');
@@ -199,6 +225,7 @@ async function run() {
   try {
     await testValidationAndArguments(directory);
     await testProductionIntegration(directory);
+    await testFailedMixPreservesExistingOutput(directory);
     await testRealFFmpegMix(directory);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
