@@ -36,44 +36,28 @@ function validateSrtContent(content) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new Error('SRT captions must contain at least one subtitle cue');
   }
-
-  const blocks = content.trim().split(/\\r?\\n\\s*\\r?\\n/);
-  const timestamp = /^(\\d{2,}):([0-5]\\d):([0-5]\\d),(\\d{3}) --> (\\d{2,}):([0-5]\\d):([0-5]\\d),(\\d{3})$/;
+  const blocks = content.trim().split(/\r?\n\s*\r?\n/);
+  const timestamp = /^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3}) --> (\d{2,}):([0-5]\d):([0-5]\d),(\d{3})$/;
   let previousIndex = 0;
   let validCues = 0;
-
-  const toMs = match => {
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const seconds = Number(match[3]);
-    const millis = Number(match[4]);
-    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
-  };
-
+  const toMs = match => ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000 + Number(match[4]);
   for (const block of blocks) {
-    const lines = block.split(/\\r?\\n/);
+    const lines = block.split(/\r?\n/);
     const indexText = (lines[0] || '').trim();
-    if (!/^\\d+$/.test(indexText) || Number(indexText) <= previousIndex) {
+    if (!/^\d+$/.test(indexText) || Number(indexText) <= previousIndex) {
       throw new Error('SRT captions contain a malformed or out-of-order cue index');
     }
-
-    const timingLine = (lines[1] || '').trim();
-    const match = timestamp.exec(timingLine);
+    const match = timestamp.exec((lines[1] || '').trim());
     const captionText = lines.slice(2).join(' ').trim();
     if (!match || !captionText) {
       throw new Error('SRT captions contain a malformed or empty subtitle cue');
     }
-
-    const startTime = toMs(match.slice(1, 5));
-    const endTime = toMs(match.slice(5, 9));
-    if (endTime <= startTime) {
+    if (toMs(match.slice(5, 9)) <= toMs(match.slice(1, 5))) {
       throw new Error('SRT subtitle cue end time must be after its start time');
     }
-
     previousIndex = Number(indexText);
     validCues++;
   }
-
   if (!validCues) throw new Error('SRT captions must contain at least one valid subtitle cue');
   return { cueCount: validCues };
 }
