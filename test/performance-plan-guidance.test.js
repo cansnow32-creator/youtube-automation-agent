@@ -31,7 +31,7 @@ async function run() {
   assert.equal(insufficient.preferences.length, 0, 'two videos per cohort must not create a planning preference');
 
   const snapshots = [];
-  for ((let i = 1; i <= 3; i++)) {
+  for (let i = 1; i <= 3; i++) {
     snapshots.push(snapshot(`edu-${i}`, 'Education', 'tutorial', '3_to_8m', 90 + i, 1000 + i * 100));
     snapshots.push(snapshot(`news-${i}`, 'News', 'review', '8_to_15m', 60 + i, 500 + i * 50));
   }
