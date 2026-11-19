@@ -1323,7 +1323,7 @@ class YouTubeAutomationAgent {
     });
 
     this.app.post('/api/ideas/:ideaId/generate', protect, async (req, res) => {
-      const idea = await this.db.getContentIdea(req.params.ideaId);
+      const idea = await this.db.getRow('SELECT * FROM content_ideas WHERE id = ?', [req.params.ideaId]);
       if (!idea) return res.status(404).json({ error: 'Idea not found' });
       const approvedConceptId = req.body?.approvedConceptId;
       if (!approvedConceptId) {
