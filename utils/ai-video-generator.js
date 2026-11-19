@@ -68,6 +68,7 @@ class AIVideoGenerator {
     const resolvedCredentials = credentials?.credentials || credentials || {};
     this.db = options.db || null;
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
+    this.runFFmpeg = options.runFFmpeg || runFFmpeg;
     this.lastVideoResult = null;
     this.lastNarrationResult = null;
     
@@ -565,10 +566,31 @@ class AIVideoGenerator {
     if (!segments.length) throw new Error('No usable provider clips or still images were generated');
 
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
-    await this.renderMediaTimeline(segments, visualPath, renderOptions);
-    await this.addAudioToVideo(visualPath, audioPath, outputPath, { loopVideo: true });
-    await fs.unlink(visualPath).catch(() => {});
-    return outputPath;
+    const finalTempPath = outputPath.replace(/\.mp4$/i, '_finalizing.mp4');
+    try {
+      await this.renderMediaTimeline(segments, visualPath, renderOptions);
+      await this.addAudioToVideo(visualPath, audioPath, finalTempPath, { loopVideo: true });
+      await this.validateRenderedVideo(finalTempPath);
+      await fs.rm(outputPath, { force: true });
+      await fs.rename(finalTempPath, outputPath);
+      return outputPath;
+    } finally {
+      await fs.rm(visualPath, { force: true }).catch(() => {});
+      await fs.rm(finalTempPath, { force: true }).catch(() => {});
+    }
+  }
+
+  async validateRenderedVideo(filePath) {
+    const stats = await fs.stat(filePath).catch(() => null);
+    if (!stats?.isFile() || stats.size <= 0) {
+      throw new Error('FFmpeg did not produce a non-empty final video file');
+    }
+    const duration = await this.getMediaDuration(filePath);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error('FFmpeg final video has no valid media duration');
+    }
+    await this.runFFmpeg(['-v', 'error', '-i', filePath, '-f', 'null', '-']);
+    return { path: filePath, size: stats.size, duration };
   }
 
   async renderMediaTimeline(segments, outputPath, renderOptions = {}) {
