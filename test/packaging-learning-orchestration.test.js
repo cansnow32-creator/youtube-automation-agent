@@ -31,11 +31,23 @@ async function run() {
   let strategySeenByWriter;
   let learningSeenByThumbnail;
   let strategySeenBySeo;
+  const approvedConceptRecord = {
+    id: 'approved-packaging-concept',
+    status: 'approved',
+    concept: {
+      name: 'Approved packaging concept',
+      visualDirection: { style: 'clean explainer', palette: 'warm' },
+      audioDirection: { narration: 'clear', pacing: 'measured' },
+      subtitleDirection: { typography: 'clean sans', placement: 'lower safe area' },
+      scenePlan: [{ scene: 1, purpose: 'Hook', visual: 'Opening' }, { scene: 2, purpose: 'Payoff', visual: 'Resolution' }]
+    }
+  };
   agent.logger = { info() {}, warn() {}, error() {} };
   agent.updateJobStage = async () => {};
   agent.runGenerationStage = async (_jobId, _stage, _progress, producer) => producer();
   agent.db = {
     getChannelProfile: async () => ({ target_audience: 'beginner gardeners' }),
+    getVideoConcept: async id => id === approvedConceptRecord.id ? approvedConceptRecord : null,
     listLearningRecommendations: async () => [recommendation],
     saveProductionData: async () => 'content-orchestration-test',
     saveProductionSnapshot: async () => {},
@@ -91,7 +103,7 @@ async function run() {
     notify: async () => {}
   };
 
-  await agent.generateContent('Urban Gardening');
+  await agent.generateContent('Urban Gardening', null, 'medium', { strategyContext: { approvedVideoConceptId: approvedConceptRecord.id } });
   assert.strictEqual(strategySeenByWriter.packagingLearning.recommendationId, learning.recommendationId,
     'the approved learning should be attached to the strategy passed to script generation');
   assert.strictEqual(learningSeenByThumbnail.recommendationId, learning.recommendationId,
