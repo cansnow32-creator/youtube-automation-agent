@@ -82,7 +82,7 @@ class ProductionReadinessService {
     try {
       checks.push(await this.executeCheck('text_provider', 'AI text provider', true, () => this.probeText()));
       if (process.env.QUALITY_PIPELINE_ENABLED === 'true') {
-        checks.push(await this.executeCheck('quality_pipeline', 'Local-first script quality pipeline', true, () => this.probeQualityPipeline()));
+        checks.push(await this.executeCheck('quality_pipeline', 'Local-first script quality pipeline', true, () => this.probes.qualityPipeline ? this.probes.qualityPipeline() : this.probeQualityPipeline()));
       }
       checks.push(await this.executeCheck('image_provider', 'Image provider', false, () => this.probeImage(tempDir, Boolean(options.includePaidMedia))));
       checks.push(await this.executeCheck('video_provider', 'AI video provider', true, () => this.probeVideoProvider(tempDir, Boolean(options.includePaidVideo))));
