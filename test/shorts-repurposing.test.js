@@ -56,6 +56,10 @@ async function run() {
     assert.deepEqual(rendered.renderMetadata, { duration: 30, width: 1080, height: 1920, hasAudio: true });
     await fs.access(rendered.outputPath);
     await assert.rejects(fs.access(rendered.outputPath.replace(/\.mp4$/i, '.rendering.mp4')));
+    const edited = await harness.service.update(harness.productionId, harness.clip.id, { layout: 'blur' });
+    assert.equal(edited.status, 'proposed');
+    assert.equal(edited.outputPath, null);
+    assert.equal(edited.renderMetadata, null);
   } finally {
     await fs.rm(harness.root, { recursive: true, force: true });
   }
