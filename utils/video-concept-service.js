@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs').promises;
 
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'qwen3.5:4b';
@@ -31,13 +32,17 @@ class VideoConceptService {
     this.fetch = options.fetch || globalThis.fetch;
   }
 
-  async requestOllama(prompt) {
+  async requestOllama(prompt, images = []) {
     if (typeof this.fetch !== 'function') throw new Error('Node.js 18 or newer is required for local Ollama requests');
     let response;
     try {
       response = await this.fetch(this.ollamaUrl + '/api/chat', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: prompt }], stream: false, format: 'json', options: { temperature: 0.45 } }),
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: 'user', content: prompt, ...(images.length ? { images } : {}) }],
+          stream: false, format: 'json', options: { temperature: 0.45 }
+        }),
         signal: globalThis.AbortSignal.timeout(this.timeoutMs)
       });
     } catch (error) {
@@ -66,10 +71,65 @@ class VideoConceptService {
     return 'You are a creative director for an original YouTube channel. Propose a distinctive video concept tailored to the channel and topic; avoid generic templates. Never copy another creator\'s footage, audio, script, subtitles or branding. References may inform style only unless reuse rights are explicitly confirmed. Return ONLY valid JSON matching this schema: ' + JSON.stringify(schema) + '\nCHANNEL PROFILE:\n' + JSON.stringify(channel) + '\nTOPIC: ' + input.topic + '\nUSER CREATIVE DIRECTION: ' + (input.direction || 'Independently propose the strongest original concept.') + '\nReference notes (style analysis only): ' + (input.referenceNotes || 'None');
   }
 
+  async analyzeReferenceVideo(referenceId) {
+    const reference = await this.db.getReferenceVideo(referenceId);
+    if (!reference) throw new Error('Reference video not found');
+    if (!Array.isArray(reference.framePaths) || !reference.framePaths.length) {
+      throw new Error('Reference video has no extracted preview frames');
+    }
+    const images = await Promise.all(reference.framePaths.slice(0, 6).map(async framePath =>
+      (await fs.readFile(framePath)).toString('base64')
+    ));
+    const prompt = [
+      'Analyze the supplied sampled frames from one user-provided reference video.',
+      'Return ONLY valid JSON. Do not identify people, infer private traits, or reproduce protected creative expression.',
+      'Extract high-level style guidance only: visual style, palette, composition, camera language, editing rhythm, subtitle treatment, and general audio mood if inferable from the visuals.',
+      'Do not transcribe or recreate dialogue, logos, exact scene content, characters, or distinctive protected designs.',
+      'Schema:',
+      JSON.stringify({
+        visualStyle: 'short description',
+        colorPalette: 'colors and contrast',
+        composition: 'framing and layout',
+        cameraLanguage: 'shot types and camera movement',
+        editingRhythm: 'pacing inferred from sampled frames only; state uncertainty',
+        subtitleTreatment: 'placement and visual treatment, if visible',
+        audioMood: 'visual inference only; state not directly observed',
+        observations: ['grounded visible observations'],
+        limitations: ['what cannot be inferred from still frames']
+      }),
+      `Reference file: ${reference.originalName}. Duration: ${reference.durationSeconds} seconds. Frames are sampled across the clip, not continuous footage.`
+    ].join('\n');
+    const analysis = extractJson(await this.requestOllama(prompt, images));
+    const required = ['visualStyle', 'colorPalette', 'composition', 'cameraLanguage', 'editingRhythm', 'subtitleTreatment', 'audioMood', 'observations', 'limitations'];
+    for (const key of required) {
+      if (analysis?.[key] === undefined || analysis?.[key] === null) {
+        throw new Error('Reference analysis is missing field: ' + key);
+      }
+    }
+    const updated = await this.db.updateReferenceVideoAnalysis(referenceId, analysis, 'complete');
+    return updated;
+  }
+
   async propose(input) {
     const topic = String(input.topic || '').trim().slice(0, 300);
     if (!topic) throw new Error('A topic is required to propose a video concept');
-    const concept = validateConcept(extractJson(await this.requestOllama(this.buildPrompt({ topic, profile: input.profile, direction: input.direction, referenceNotes: input.referenceNotes }))));
+    let referenceNotes = String(input.referenceNotes || '').trim().slice(0, 3000);
+    let referenceContext = null;
+    if (input.referenceVideoId) {
+      let reference = await this.db.getReferenceVideo(input.referenceVideoId);
+      if (!reference) throw new Error('Reference video not found');
+      if (reference.analysisStatus !== 'complete' || !reference.analysis) {
+        reference = await this.analyzeReferenceVideo(reference.id);
+      }
+      referenceContext = {
+        id: reference.id,
+        originalName: reference.originalName,
+        analysis: reference.analysis
+      };
+      referenceNotes = [referenceNotes, 'LOCAL REFERENCE VIDEO STYLE ANALYSIS (STYLE ONLY):', JSON.stringify(reference.analysis)].filter(Boolean).join('\n');
+    }
+    const concept = validateConcept(extractJson(await this.requestOllama(this.buildPrompt({ topic, profile: input.profile, direction: input.direction, referenceNotes }))));
+    if (referenceContext) concept.referenceContext = referenceContext;
     const record = { id: crypto.randomUUID(), topic, concept, status: 'pending', revisionOf: null, feedback: null };
     await this.db.saveVideoConcept(record);
     return record;
