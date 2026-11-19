@@ -137,6 +137,7 @@ Channel constraints: ${strategy.channelConstraints || 'none beyond the factual-s
 Preferred call to action: ${strategy.callToAction || 'invite the viewer to subscribe'}
 Keywords: ${(strategy.keywords || []).join(', ')}
 Approved packaging learning (use as evidence-backed title and thumbnail style guidance only; never copy the winning title verbatim or override this video's topic): ${strategy.packagingLearning ? JSON.stringify(strategy.packagingLearning) : 'None'}
+Approved video concept (follow its premise, story arc, scene plan, narration, pacing, visual language and subtitle direction; do not replace it with a generic format): ${strategy.approvedVideoConcept ? JSON.stringify(strategy.approvedVideoConcept) : 'None'}
 Research sources: ${JSON.stringify(strategy.researchSources || [])}
 Avoid fabricated statistics, unsupported claims, and fake urgency. List every externally verifiable factual claim in claims. Use only exact URLs from Research sources; use an empty sourceUrls array when the supplied sources do not support a claim.`;
 
