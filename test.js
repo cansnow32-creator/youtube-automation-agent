@@ -2194,6 +2194,7 @@ class SystemTest {
 
   async testOpenIssueRegressions() {
     const { ModernAuth } = require('./modern-auth');
+    const { OAuthServer } = require('./oauth-server');
     const { ProductionManagementAgent } = require('./agents/production-management-agent');
     const { YouTubeAutomationAgent } = require('./index');
 
@@ -2212,6 +2213,16 @@ class SystemTest {
       throw new Error('OAuth callback state validation accepted a missing or mismatched state');
     }
     auth.oauthState = null;
+
+    const legacyOAuth = new OAuthServer();
+    legacyOAuth.oauthState = 'legacy-expected-state';
+    if (!legacyOAuth.isValidState('legacy-expected-state') ||
+        legacyOAuth.isValidState('legacy-attacker-state') ||
+        legacyOAuth.isValidState('') ||
+        legacyOAuth.isValidState(null)) {
+      throw new Error('Legacy OAuth callback state validation accepted a missing or mismatched state');
+    }
+    legacyOAuth.oauthState = null;
 
     const visualStyles = [];
     const productionAgent = Object.create(ProductionManagementAgent.prototype);
