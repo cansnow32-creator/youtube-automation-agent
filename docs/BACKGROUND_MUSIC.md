@@ -4,7 +4,7 @@ AgentTube can mix a locally supplied music file under the generated narration du
 
 ## Configure a music asset
 
-Attach the object to the approved concept at `audioDirection.musicAsset` (or `backgroundMusic` on the approved concept). Keep `audioDirection.music` as a descriptive mood only; the concept model must not invent a local file path or copy an existing track.
+In the Video Concept Studio, select a pending concept, choose a local audio file in the Background music section, select its license, confirm usage rights, and upload it before approving the concept. The app stores the file locally and attaches its metadata to `audioDirection.musicAsset`. Keep `audioDirection.music` as a descriptive mood only; the concept model must not invent a local file path or copy an existing track. The JSON structure below documents the stored representation.
 
 ```json
 {
@@ -28,7 +28,7 @@ Attach the object to the approved concept at `audioDirection.musicAsset` (or `ba
 }
 ```
 
-Supported `licenseType` values are `user_owned`, `public_domain`, `cc0`, `cc_by`, `cc_by_sa`, and `commercial_license`. The operator must set `rightsConfirmed: true`; CC BY and CC BY-SA require an attribution string. Commercial licenses should include `licenseName` or `licenseUrl`. Optional record fields include `sourceUrl`, `licenseUrl`, `licenseName`, and `attribution`.
+Supported `licenseType` values are `user_owned`, `public_domain`, `cc0`, `cc_by`, `cc_by_sa`, and `commercial_license`. The operator must set `rightsConfirmed: true`; CC BY and CC BY-SA require an attribution string. Commercial licenses must include `licenseName` or `licenseUrl`. Optional record fields include `sourceUrl`, `licenseUrl`, `licenseName`, and `attribution`.
 
 The default music volume is 0.18 and allowed values are 0.01–0.5. Music loops to cover the video by default. Fade durations default to 2 seconds in and 3 seconds out and must be between 0 and 30 seconds.
 
