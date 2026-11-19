@@ -61,7 +61,7 @@ async function testValidationAndArguments(directory) {
 async function testProductionIntegration(directory) {
   const source = path.join(directory, 'agent-source.mp4');
   const music = path.join(directory, 'agent-music.wav');
-  const mixed = path.join(directory, 'agent-mixed.mp4');
+  const mixed = path.join(__dirname, '..', 'data', 'videos', 'audio-integration-test_music_mixed.mp4');
   const captions = path.join(directory, 'agent-captions.srt');
   const videosDirectory = path.join(__dirname, '..', 'data', 'videos');
   const finalPath = path.join(videosDirectory, 'audio-integration-test_captioned.mp4');
