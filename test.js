@@ -2634,16 +2634,18 @@ class SystemTest {
     }
 
     let thumbnailFailurePersisted = null;
+    let videoUploadCalls = 0;
     const thumbnailFailure = new PublishingSchedulingAgent({
       updateScheduleEntry: async entry => { thumbnailFailurePersisted = { ...entry, metadata: { ...entry.metadata } }; }
     }, {});
     thumbnailFailure.youtube = {
-      videos: { insert: async () => ({ data: { id: 'youtube-thumbnail-failure' } }) },
+      videos: { insert: async () => { videoUploadCalls++; return { data: { id: 'youtube-thumbnail-failure' } }; } },
       thumbnails: { set: async () => { const error = new Error('thumbnail quota unavailable'); error.code = 403; throw error; } }
     };
     thumbnailFailure.getVideoStream = async () => ({ fixture: true });
     const thumbnailFailureEntry = {
-      id: 'schedule-thumbnail-failure', publishTime: new Date().toISOString(), status: 'uploading',
+      id: 'schedule-thumbnail-failure', productionId: 'production-thumbnail-failure',
+      publishTime: new Date().toISOString(), status: 'uploading',
       metadata: {
         seo: { title: 'Thumbnail failure stays visible', description: 'The video must not be uploaded twice.', tags: ['test'] },
         video: { path: 'fixture.mp4' }, thumbnail: { path: 'thumbnail.png' }, privacyStatus: 'private'
@@ -2657,6 +2659,20 @@ class SystemTest {
         thumbnailFailurePersisted.metadata.thumbnailUpload.retryRequired !== true ||
         thumbnailFailurePersisted.youtubeId !== 'youtube-thumbnail-failure') {
       throw new Error('A failed thumbnail upload was not persisted for separate repair');
+    }
+
+    thumbnailFailure.publishQueue = [thumbnailFailureEntry];
+    thumbnailFailure.youtube.thumbnails.set = async request => {
+      if (request.videoId !== 'youtube-thumbnail-failure') throw new Error('Thumbnail retry used the wrong video ID');
+      return { data: { success: true } };
+    };
+    const repairedThumbnail = await thumbnailFailure.retryThumbnailUpload('production-thumbnail-failure');
+    if (repairedThumbnail.metadata.thumbnailUpload.status !== 'uploaded' ||
+        repairedThumbnail.metadata.thumbnailUpload.retryRequired !== false) {
+      throw new Error('Thumbnail-only retry did not persist a successful repair state');
+    }
+    if (videoUploadCalls !== 1) {
+      throw new Error('Thumbnail-only repair attempted to upload the YouTube video again');
     }
 
     this.logger.info('Publishing safety test completed successfully');
