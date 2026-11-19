@@ -3,6 +3,8 @@ const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
+const { runFFmpeg } = require('../utils/ffmpeg');
+const { buildSubtitleFilter, describeSubtitleApplication } = require('../utils/subtitle-renderer');
 
 class ProductionManagementAgent {
   constructor(db, credentials) {
@@ -440,12 +442,15 @@ class ProductionManagementAgent {
       const ttsText = await fs.readFile(productionData.assets.script.ttsPath, 'utf8');
       
       // Generate audio using AI TTS and retain the provider evidence returned by the generator.
-      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath);
+      const audioDirection = productionData.strategy?.approvedVideoConcept?.audioDirection || {};
+      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, { direction: audioDirection });
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
 
       productionData.assets.audio = {
-        direction: productionData.strategy?.approvedVideoConcept?.audioDirection || null,
+        direction: audioDirection,
+        directionApplied: Boolean(evidence.directionApplied),
+        directionApplication: evidence.directionApplication || null,
         path: generatedPath,
         duration: productionData.estimatedDuration,
         format: 'mp3',
@@ -584,7 +589,7 @@ class ProductionManagementAgent {
     this.logger.info('Assembling final AI-generated video...');
     
     try {
-      const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+      const requestedVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
@@ -596,7 +601,7 @@ class ProductionManagementAgent {
         productionData.script,
         productionData.assets.video.visualAssets || [],
         productionData.assets.audio.path,
-        finalVideoPath,
+        requestedVideoPath,
         {
           jobId: productionData.jobId,
           productionId: productionData.id,
@@ -607,6 +612,31 @@ class ProductionManagementAgent {
       // The generator falls back to a placeholder .info file when it cannot render
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
         return await this.simulateVideoAssembly(productionData);
+      }
+
+      let finalVideoPath = producedPath;
+      const captionsPath = productionData.assets.captions?.path;
+      const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
+      if (captionsPath) {
+        const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
+        await runFFmpeg([
+          '-y', '-i', producedPath,
+          '-vf', buildSubtitleFilter(captionsPath, subtitleDirection),
+          '-map', '0:v:0', '-map', '0:a:0?',
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+          '-c:a', 'copy', '-movflags', '+faststart', captionedPath
+        ]);
+        const captionedStats = await fs.stat(captionedPath);
+        if (!captionedStats.isFile() || captionedStats.size <= 0) {
+          throw new Error('Subtitle renderer returned an empty captioned video');
+        }
+        finalVideoPath = captionedPath;
+        productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
+      } else {
+        productionData.assets.captions = {
+          ...(productionData.assets.captions || {}),
+          styleApplication: { typographyApplied: false, placementApplied: false, animationApplied: false, note: 'No SRT captions file was available for styling.' }
+        };
       }
 
       // Get file stats
