@@ -1510,7 +1510,7 @@ class YouTubeAutomationAgent {
       jobId,
       'thumbnail',
       40,
-      () => this.agents.thumbnailDesigner.generateThumbnail(script)
+      () => this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning)
     );
     this.logger.info('Thumbnail generated');
 
