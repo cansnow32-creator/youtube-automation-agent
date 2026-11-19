@@ -445,6 +445,21 @@ function renderLearning(learning = {}) {
     <article class="learning-card">
       <div class="learning-card-heading"><strong>${escapeHTML(item.title)}</strong>${statusChip(item.status)}</div>
       <p>${escapeHTML(item.rationale)}</p>
+      ${(() => {
+        const feedback = item.experimentFeedback || { status: 'not_tested' };
+        const messages = {
+          not_tested: 'Not tested in a controlled experiment yet.',
+          in_progress: 'Controlled experiment is in progress.',
+          awaiting_operator_decision: 'Experiment finished; operator decision is required.',
+          validated_and_adopted: 'Validated by a controlled test and adopted.',
+          inconclusive: 'Experiment was inconclusive; no winner was declared.',
+          cancelled: 'Experiment was cancelled; no result was adopted.',
+          action_required: 'Experiment needs an operator action.'
+        };
+        const detail = feedback.liftPercent !== null && feedback.liftPercent !== undefined
+          ? ` · ${feedback.liftPercent}% measured lift` : '';
+        return `<p class="learning-feedback"><strong>Outcome:</strong> ${escapeHTML(messages[feedback.status] || 'Experiment outcome recorded.')}${escapeHTML(detail)}${feedback.winnerLabel ? ` · Winner: ${escapeHTML(feedback.winnerLabel)}` : ''}</p>`;
+      })()}
       <div class="learning-meta"><span>${escapeHTML(label(item.category))} · ${escapeHTML(label(item.confidence))} confidence</span>
         <span class="learning-actions">
           ${item.status !== 'approved' ? `<button class="text-button approve" data-learning-action="approve" data-learning-id="${escapeHTML(item.id)}">Approve</button>` : ''}
