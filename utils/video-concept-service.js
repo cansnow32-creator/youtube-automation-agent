@@ -1,5 +1,8 @@
 const crypto = require('crypto');
 const fs = require('fs').promises;
+const path = require('path');
+const { getAudioInfo } = require('./ffmpeg');
+const { validateMusicRights } = require('./audio-mixer');
 
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'qwen3.5:4b';
@@ -30,6 +33,8 @@ class VideoConceptService {
     this.model = options.model || process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
     this.timeoutMs = Number(options.timeoutMs || process.env.OLLAMA_TIMEOUT_MS || 120000);
     this.fetch = options.fetch || globalThis.fetch;
+    this.audioDirectory = options.audioDirectory || path.join(__dirname, '..', 'data', 'audio', 'music');
+    this.getAudioInfo = options.getAudioInfo || getAudioInfo;
   }
 
   async requestOllama(prompt, images = []) {
@@ -152,6 +157,77 @@ class VideoConceptService {
     const record = { id: crypto.randomUUID(), topic: current.topic, concept, status: 'pending', revisionOf: current.id, feedback: feedback || direction };
     await this.db.saveVideoConcept(record);
     return record;
+  }
+
+  async attachMusicAsset(conceptId, audioBuffer, metadata = {}) {
+    const current = await this.db.getVideoConcept(conceptId);
+    if (!current) throw new Error('Video concept not found');
+    if (current.status !== 'pending') throw new Error('Music must be attached before concept approval. Approved concepts are immutable.');
+    if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) throw new Error('A non-empty audio file is required');
+    if (audioBuffer.length > 50 * 1024 * 1024) throw new Error('Background music files must be 50 MB or smaller');
+
+    const mimeTypes = {
+      'audio/mpeg': '.mp3',
+      'audio/mp3': '.mp3',
+      'audio/wav': '.wav',
+      'audio/x-wav': '.wav',
+      'audio/wave': '.wav',
+      'audio/mp4': '.m4a',
+      'audio/x-m4a': '.m4a',
+      'audio/aac': '.aac',
+      'audio/ogg': '.ogg',
+      'audio/flac': '.flac',
+      'audio/x-flac': '.flac',
+      'audio/webm': '.webm'
+    };
+    const mimeType = String(metadata.mimeType || '').toLowerCase().split(';')[0].trim();
+    const extension = mimeTypes[mimeType];
+    if (!extension) throw new Error('Unsupported audio format. Use MP3, WAV, M4A, AAC, OGG, FLAC or WebM audio.');
+
+    const musicAsset = {
+      enabled: true,
+      title: String(metadata.title || '').trim().slice(0, 200) || null,
+      creator: String(metadata.creator || '').trim().slice(0, 200) || null,
+      licenseType: String(metadata.licenseType || ''),
+      rightsConfirmed: metadata.rightsConfirmed === true,
+      attribution: String(metadata.attribution || '').trim().slice(0, 1000) || null,
+      licenseName: String(metadata.licenseName || '').trim().slice(0, 200) || null,
+      licenseUrl: String(metadata.licenseUrl || '').trim().slice(0, 1000) || null,
+      sourceUrl: String(metadata.sourceUrl || '').trim().slice(0, 1000) || null,
+      volume: Number(metadata.volume ?? 0.18),
+      loop: metadata.loop !== false,
+      fadeInSeconds: Number(metadata.fadeInSeconds ?? 2),
+      fadeOutSeconds: Number(metadata.fadeOutSeconds ?? 3)
+    };
+    validateMusicRights(musicAsset);
+    if (!Number.isFinite(musicAsset.volume) || musicAsset.volume < 0.01 || musicAsset.volume > 0.5) {
+      throw new Error('Background music volume must be between 0.01 and 0.5');
+    }
+    if (![musicAsset.fadeInSeconds, musicAsset.fadeOutSeconds].every(value => Number.isFinite(value) && value >= 0 && value <= 30)) {
+      throw new Error('Music fade durations must be between 0 and 30 seconds');
+    }
+
+    await fs.mkdir(this.audioDirectory, { recursive: true });
+    const filePath = path.join(this.audioDirectory, `${conceptId}_${crypto.randomUUID()}${extension}`);
+    await fs.writeFile(filePath, audioBuffer, { flag: 'wx' });
+    try {
+      const audioInfo = await this.getAudioInfo(filePath);
+      musicAsset.path = filePath;
+      musicAsset.mimeType = mimeType;
+      musicAsset.fileSize = audioBuffer.length;
+      musicAsset.trackDuration = audioInfo.duration;
+      const concept = {
+        ...current.concept,
+        audioDirection: {
+          ...(current.concept.audioDirection || {}),
+          musicAsset
+        }
+      };
+      return await this.db.updateVideoConcept(conceptId, concept);
+    } catch (error) {
+      await fs.rm(filePath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   async approve(conceptId) {
