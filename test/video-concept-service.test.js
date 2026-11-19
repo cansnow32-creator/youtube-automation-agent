@@ -48,7 +48,17 @@ async function run() {
 
   const approved = await service.approve(revised.id);
   assert.equal(approved.status, 'approved');
+  assert.equal((await service.get(revised.id)).id, revised.id);
   await assert.rejects(() => service.revise({ conceptId: revised.id, feedback: 'Change it' }), /immutable/);
+
+  records.set('reference-concept', {
+    id: 'reference-concept', topic: 'Reference topic', status: 'pending',
+    concept: { ...sampleConcept('Reference concept'), referenceContext: { id: 'reference-1', analysis: { visualStyle: 'cinematic' } } }
+  });
+  const revisedReference = await service.revise({ conceptId: 'reference-concept', feedback: 'Keep the visual style' });
+  assert.deepEqual(revisedReference.concept.referenceContext, {
+    id: 'reference-1', analysis: { visualStyle: 'cinematic' }
+  });
 
   const unavailable = new VideoConceptService(db, { fetch: async () => { throw new Error('ECONNREFUSED'); } });
   await assert.rejects(() => unavailable.propose({ topic: 'Offline test' }), /No cloud or paid fallback was attempted/);
