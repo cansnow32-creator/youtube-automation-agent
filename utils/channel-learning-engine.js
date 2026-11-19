@@ -296,7 +296,7 @@ class ChannelLearningEngine {
 
   durationBucket(duration) {
     if (!duration || typeof duration !== 'string') return 'unknown';
-    const match = duration.match(/^PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?$/);
+    const match = duration.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
     if (!match) return 'unknown';
     const seconds = (Number(match[1] || 0) * 3600) + (Number(match[2] || 0) * 60) + Number(match[3] || 0);
     if (!seconds) return 'unknown';
