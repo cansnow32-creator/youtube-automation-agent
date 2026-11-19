@@ -33,7 +33,12 @@ class MediaGenerationService {
     };
   }
 
-  listProviders() { return this.registry.list(); }
+  listProviders() {
+    return [
+      { id: 'cinecode', name: 'CineCode Local Cinematic Renderer', available: true, model: 'local-ffmpeg-camera-motion', local: true },
+      ...this.registry.list()
+    ];
+  }
 
   buildScenePlan(script = {}, visualAssets = [], settings = {}) {
     const prompts = [];
