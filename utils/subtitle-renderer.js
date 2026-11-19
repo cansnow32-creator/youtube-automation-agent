@@ -34,6 +34,33 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
   return `subtitles='${escapedPath}':force_style='${style}'`;
 }
 
+function validateSrtContent(content) {
+  if (typeof content !== 'string' || !content.trim()) {
+    throw new Error('SRT captions must contain at least one subtitle cue');
+  }
+  const blocks = content.trim().split(/\\r?\\n\\s*\\r?\\n/);
+  const timestamp = /^(\\d{2,}:\\d{2}:\\d{2},\\d{3}) --> (\\d{2,}:\\d{2}:\\d{2},\\d{3})$/;
+  let validCues = 0;
+  for (const block of blocks) {
+    const lines = block.split(/\\r?\\n/);
+    if (!/^\\d+$/.test((lines[0] || '').trim())) continue;
+    const match = timestamp.exec((lines[1] || '').trim());
+    const text = lines.slice(2).join(' ').trim();
+    if (!match || !text) throw new Error('SRT captions contain a malformed or empty subtitle cue');
+    const toMs = value => {
+      const [clock, millis] = value.split(',');
+      const [hours, minutes, seconds] = clock.split(':').map(Number);
+      return ((hours * 60 + minutes) * 60 + seconds) * 1000 + Number(millis);
+    };
+    if (toMs(match[2]) <= toMs(match[1])) {
+      throw new Error('SRT subtitle cue end time must be after its start time');
+    }
+    validCues++;
+  }
+  if (!validCues) throw new Error('SRT captions must contain at least one valid subtitle cue');
+  return { cueCount: validCues };
+}
+
 function describeSubtitleApplication(rawDirection = {}) {
   const direction = normalizeDirection(rawDirection);
   const animation = String(direction.animation || '').trim();
@@ -48,4 +75,4 @@ function describeSubtitleApplication(rawDirection = {}) {
   };
 }
 
-module.exports = { buildSubtitleFilter, describeSubtitleApplication };
+module.exports = { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent };
