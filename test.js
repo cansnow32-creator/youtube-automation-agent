@@ -578,9 +578,9 @@ class SystemTest {
       const titleVariants = workflow.buildTitleExperimentVariants('Automate Your Weekly Reporting');
       const selected = workflow.validateEditorData(
         { selectedTitleVariant: 1, selectedThumbnailVariant: 2 },
-        { packagingExperiment: { titleVariants, thumbnailVariants: [{}, {}, {}] } }
+        { packagingExperiment: { titleVariants, thumbnailVariants: [{}, {}, {}, {}] } }
       );
-      if (titleVariants.length !== 3 || selected.selectedTitleVariant !== 1 || selected.selectedThumbnailVariant !== 2) {
+      if (titleVariants.length !== 4 || selected.selectedTitleVariant !== 1 || selected.selectedThumbnailVariant !== 2) {
         throw new Error('Packaging experiment selections were not validated');
       }
 
