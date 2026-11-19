@@ -71,7 +71,7 @@ class GrowthExperimentService {
       arm.title && arm.thumbnailPath && list.findIndex(candidate =>
         candidate.title === arm.title && candidate.thumbnailPath === arm.thumbnailPath
       ) === index
-    ).slice(0, 3);
+    ).slice(0, 4);
     if (arms.length < 2) {
       throw this.error('At least one complete title and thumbnail variant is required', 409, 'EXPERIMENT_VARIANTS_MISSING');
     }
