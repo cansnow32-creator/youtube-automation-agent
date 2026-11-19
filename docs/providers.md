@@ -14,7 +14,7 @@ The optional quality gate is separate from the app's general text-provider selec
 
 Configure `GEMINI_API_KEY` (or the saved Gemini credential), `GROQ_API_KEY`, and a running local Ollama instance. Optional settings: `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `GEMINI_REVIEW_MODEL`, `GROQ_REVIEW_MODEL`, `OLLAMA_TIMEOUT_MS`, and `QUALITY_MAX_REVISIONS`. The gate never falls back to a paid text provider or template script when enabled. Groq availability and free-tier limits depend on the account and current provider policy; this project does not guarantee unlimited free usage.
 
-The gate is opt-in and disabled by default, so existing installations keep their current provider behavior until explicitly enabled. Review scores are quality heuristics, not proof that factual claims are true; the existing Evidence desk, media-rights checks, and human approval remain required. Publishing is not enabled by this feature.
+The gate is opt-in and disabled by default, so existing installations keep their current provider behavior until explicitly enabled. Review scores are quality heuristics, not proof that factual claims are true; the existing Evidence desk, media-rights checks, and human approval remain required. Publishing is not enabled by this feature. When the gate is enabled, the Production readiness check also verifies that the configured Ollama model is installed and that Gemini and Groq reviewer credentials are present. This preflight does not spend reviewer API tokens or prove that either provider's current quota is available; actual reviewer connectivity is exercised during script generation. A fresh successful readiness check is required before autonomous generation.
 
 
 ## Text
