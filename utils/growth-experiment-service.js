@@ -214,6 +214,13 @@ class GrowthExperimentService {
     const winner = experiment.arms.find(arm => arm.id === experiment.winningArmId);
     const control = experiment.arms.find(arm => arm.isControl);
     await this.applyArm(experiment, winner, control);
+    const sourceBundle = await this.db.getProductionBundle(experiment.productionId);
+    const sourcePackaging = sourceBundle?.editorData?.packagingExperiment;
+    const winningTitleIndex = (sourcePackaging?.titleVariants || [])
+      .findIndex(variant => variant.title === winner.title);
+    const winningThumbnailPattern = winningTitleIndex >= 0
+      ? sourcePackaging.thumbnailVariants?.[winningTitleIndex]?.label || null
+      : null;
     const recommendation = await this.db.saveLearningRecommendation({
       fingerprint: `growth-experiment:${experiment.id}:winner`,
       category: 'packaging_experiment',
@@ -231,6 +238,8 @@ class GrowthExperimentService {
         target: 'future_packaging',
         experiment: 'validated_title_thumbnail_pattern',
         winningTitle: winner.title,
+        winningThumbnailPattern,
+        winningArmLabel: winner.label,
         hypothesis: experiment.hypothesis,
         autoApply: false
       },
