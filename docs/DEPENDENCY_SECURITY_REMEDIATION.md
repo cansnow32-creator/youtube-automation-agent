@@ -24,6 +24,14 @@ This branch updates the runtime dependency baseline and removes an unused Google
 - Render metadata (duration, width, height, and audio presence) is retained with the Short record. Failed renders remove temporary output and remain blocked from approval.
 - FFprobe is preferred; when it is unavailable, FFmpeg's own input metadata is parsed as a local fallback.
 
+## Background music integrity
+
+- Narration and pacing remain TTS directions; background music is mixed locally after video generation.
+- A music asset must be supplied by the operator with explicit rights confirmation and a supported license type. Creative Commons attribution and commercial-license evidence are validated before mixing.
+- FFmpeg validates the music stream, mixes it under narration with bounded volume, fades and a limiter, and writes to a temporary MP4.
+- The mixed MP4 is decoded and checked for a valid audio stream and preserved duration before promotion. License/provenance details are stored in the production asset record.
+- No music file means no change to the narration track. A configured but invalid track blocks final assembly rather than being silently omitted.
+
 ## Lockfile and verification
 
 The CI workflow regenerates `package-lock.json` from the declared dependency ranges before `npm ci`, runs lint and the full test suite, and commits the generated lockfile only from a successful branch-push run. No production publishing or PR merge is performed by this workflow.
