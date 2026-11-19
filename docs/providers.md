@@ -2,6 +2,21 @@
 
 YouTube Automation Agent runs on your own API keys. One text provider is enough to start. Narration, images, and AI video are optional layers on top. Pick providers in `npm run walkthrough`, or set their keys in `.env` ([`.env.example`](../.env.example) documents every setting).
 
+## Local-first script quality gate
+
+The optional quality gate is separate from the app's general text-provider selection. Enable it with `QUALITY_PIPELINE_ENABLED=true` to use this fixed, fail-closed sequence:
+
+1. **Ollama** creates the first structured script draft locally (default model: `qwen3.5:4b`, URL: `http://127.0.0.1:11434`).
+2. **Gemini** reviews the draft and returns a score, blockers, findings, revision instructions, and platform-specific metadata.
+3. **Groq** performs a second independent review after Gemini.
+4. If either reviewer scores below 80, rejects the draft, or reports a blocker, feedback is sent to Ollama for a revision. The default maximum is two revisions.
+5. Only when both reviewers approve at 80 or above with no blockers does the script pass this gate. Otherwise generation stops and the draft is held for human review.
+
+Configure `GEMINI_API_KEY` (or the saved Gemini credential), `GROQ_API_KEY`, and a running local Ollama instance. Optional settings: `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `GEMINI_REVIEW_MODEL`, `GROQ_REVIEW_MODEL`, `OLLAMA_TIMEOUT_MS`, and `QUALITY_MAX_REVISIONS`. The gate never falls back to a paid text provider or template script when enabled. Groq availability and free-tier limits depend on the account and current provider policy; this project does not guarantee unlimited free usage.
+
+The gate is opt-in and disabled by default, so existing installations keep their current provider behavior until explicitly enabled. Review scores are quality heuristics, not proof that factual claims are true; the existing Evidence desk, media-rights checks, and human approval remain required. Publishing is not enabled by this feature.
+
+
 ## Text
 
 Pick one in the walkthrough, or set its key in `.env`. The SDK base URL is configured for you.
