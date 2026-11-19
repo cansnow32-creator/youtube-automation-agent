@@ -161,8 +161,17 @@ class ContentStrategyAgent {
   }
 
   async analyzeCompetitors() {
-    const competitorChannels = (process.env.COMPETITOR_CHANNELS || '').split(',');
+    const competitorChannels = (process.env.COMPETITOR_CHANNELS || '').split(',')
+      .map(channelId => channelId.trim()).filter(Boolean);
     const competitorData = [];
+    let channelStrategy = {};
+    try {
+      channelStrategy = this.db.getChannelStrategy
+        ? (await this.db.getChannelStrategy()) || {}
+        : {};
+    } catch (error) {
+      this.logger.warn(`Could not load channel profile for competitor template ranking: ${error.message}`);
+    }
 
     for (const channelId of competitorChannels) {
       if (!channelId) continue;
@@ -170,10 +179,11 @@ class ContentStrategyAgent {
       try {
         const videos = await this.getChannelVideos(channelId);
         const analysis = this.analyzeVideoPerformance(videos);
+        const { rankTemplatesForNiche } = require('../utils/viral-template-analyzer');
         competitorData.push({
           channelId,
           topPerformingTopics: analysis.topTopics,
-          topPerformingTemplates: analysis.topTemplates,
+          topPerformingTemplates: rankTemplatesForNiche(analysis.topTemplates, channelStrategy),
           averageViews: analysis.avgViews,
           uploadFrequency: analysis.frequency
         });
