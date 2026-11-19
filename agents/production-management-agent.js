@@ -6,6 +6,7 @@ const { SceneRepairService } = require('../utils/scene-repair-service');
 const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
 const { mixBackgroundMusic } = require('../utils/audio-mixer');
 const { buildSubtitleFilter, describeSubtitleApplication } = require('../utils/subtitle-renderer');
+const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
 
 class ProductionManagementAgent {
   constructor(db, credentials, options = {}) {
@@ -59,7 +60,16 @@ class ProductionManagementAgent {
     try {
       this.logger.info('Processing content for production...');
       
-      const { strategy, script, thumbnail, seo, jobId = null } = contentData;
+      const { strategy: inputStrategy, script, thumbnail, seo, jobId = null } = contentData;
+      const requestedConceptId = contentData.approvedConceptId ||
+        inputStrategy?.approvedVideoConceptId ||
+        inputStrategy?.approvedVideoConcept?.id;
+      const approvedConcept = await requireApprovedVideoConcept(this.db, requestedConceptId);
+      const strategy = {
+        ...(inputStrategy || {}),
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      };
       
       // Create production entry
       const productionId = this.generateProductionId();
