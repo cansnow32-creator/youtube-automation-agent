@@ -91,9 +91,11 @@ function rankTemplatesForNiche(templates = [], channelStrategy = {}) {
     const performanceScore = Number.isFinite(relative)
       ? Math.max(0, Math.min(100, Math.round(relative * 50)))
       : 50;
+    // Niche relevance is the primary signal: raw competitor views must not
+    // let an unrelated format outrank a useful format for this channel.
     const rankingScore = nicheFitScore === null
       ? performanceScore
-      : Math.round(nicheFitScore * 0.65 + performanceScore * 0.35);
+      : Math.round(nicheFitScore * 0.8 + performanceScore * 0.2);
 
     return {
       ...template,
