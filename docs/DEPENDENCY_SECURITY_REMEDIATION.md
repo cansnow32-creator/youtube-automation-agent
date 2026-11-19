@@ -11,6 +11,12 @@ This branch updates the runtime dependency baseline and removes an unused Google
 - `googleapis` 190.0.0: updates the YouTube/OAuth client to the current release line. The application uses the stable YouTube Data API v3 surface and Google OAuth2 client.
 - `@google-cloud/local-auth` was removed because repository code uses the OAuth2 flow implemented by `googleapis`; no import or runtime use of the helper was found.
 
+## CineCode render integrity
+
+- Source assets are decoded with Sharp before FFmpeg rendering; extension-only or corrupt image files are rejected.
+- Hybrid assembly writes to temporary files, verifies that the final MP4 has a readable positive duration, and runs an FFmpeg decode pass before promoting it to the final output path.
+- Temporary visual and finalizing files are removed on both success and failure. CineCode errors remain explicit and do not fall back to slideshow rendering.
+
 ## Lockfile and verification
 
 The CI workflow regenerates `package-lock.json` from the declared dependency ranges before `npm ci`, runs lint and the full test suite, and commits the generated lockfile only from a successful branch-push run. No production publishing or PR merge is performed by this workflow.
