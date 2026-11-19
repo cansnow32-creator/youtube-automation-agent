@@ -559,6 +559,17 @@ class Database {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      `CREATE TABLE IF NOT EXISTS content_idea_outcomes (
+        id TEXT PRIMARY KEY,
+        idea_id TEXT NOT NULL,
+        production_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        measurement_window TEXT NOT NULL,
+        metrics TEXT NOT NULL DEFAULT '{}',
+        performance_score REAL,
+        measured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(idea_id, measurement_window)
+      )`,
       `CREATE TABLE IF NOT EXISTS channel_strategies (
         id TEXT PRIMARY KEY,
         objective TEXT NOT NULL,
@@ -1695,6 +1706,76 @@ class Database {
       ]
     );
     return this.getRow('SELECT * FROM content_ideas WHERE id = ?', [id]);
+  }
+
+  async linkContentIdeaToProduction(ideaId, productionId) {
+    if (!ideaId || !productionId) return null;
+    const idea = await this.getRow('SELECT * FROM content_ideas WHERE id = ?', [ideaId]);
+    if (!idea) return null;
+    const rationale = this.parseContentIdeaRationale(idea.rationale);
+    rationale.productionId = productionId;
+    rationale.lifecycle = { ...(rationale.lifecycle || {}), status: 'in_production' };
+    await this.updateContentIdea(ideaId, {
+      status: 'generated',
+      rationale: JSON.stringify(rationale)
+    });
+    return { ideaId, productionId };
+  }
+
+  parseContentIdeaRationale(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return { note: String(value) }; }
+  }
+
+  async recordContentIdeaOutcome(snapshot) {
+    if (!snapshot?.productionId || !snapshot?.videoId || snapshot.simulated) return null;
+    const ideas = await this.getAllRows("SELECT * FROM content_ideas WHERE rationale LIKE ?", [`%"${snapshot.productionId}"%`]);
+    const idea = ideas.find(item => this.parseContentIdeaRationale(item.rationale).productionId === snapshot.productionId);
+    if (!idea) return null;
+    const id = this.generateId('idea_outcome');
+    await this.executeQuery(
+      `INSERT INTO content_idea_outcomes (
+        id, idea_id, production_id, video_id, measurement_window, metrics, performance_score, measured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(idea_id, measurement_window) DO UPDATE SET
+        video_id = excluded.video_id,
+        metrics = excluded.metrics,
+        performance_score = excluded.performance_score,
+        measured_at = excluded.measured_at`,
+      [
+        id, idea.id, snapshot.productionId, snapshot.videoId, snapshot.measurementWindow,
+        JSON.stringify(snapshot.metrics || {}), snapshot.metrics?.performanceScore ?? null,
+        snapshot.measuredAt || new Date().toISOString()
+      ]
+    );
+    const outcomes = await this.getAllRows(
+      'SELECT measurement_window, metrics, performance_score, measured_at FROM content_idea_outcomes WHERE idea_id = ? ORDER BY measured_at DESC',
+      [idea.id]
+    );
+    const rationale = this.parseContentIdeaRationale(idea.rationale);
+    rationale.lifecycle = {
+      ...(rationale.lifecycle || {}),
+      status: 'performance_measured',
+      videoId: snapshot.videoId,
+      latestMeasurementWindow: snapshot.measurementWindow,
+      latestMeasuredAt: snapshot.measuredAt || new Date().toISOString(),
+      latestPerformanceScore: snapshot.metrics?.performanceScore ?? null,
+      outcomeCount: outcomes.length
+    };
+    await this.updateContentIdea(idea.id, {
+      status: 'performance_measured',
+      rationale: JSON.stringify(rationale)
+    });
+    return { ideaId: idea.id, outcomeCount: outcomes.length, performanceScore: snapshot.metrics?.performanceScore ?? null };
+  }
+
+  async listContentIdeaOutcomes(ideaId) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM content_idea_outcomes WHERE idea_id = ? ORDER BY measured_at DESC',
+      [ideaId]
+    );
+    return rows.map(row => ({ ...row, metrics: JSON.parse(row.metrics || '{}') }));
   }
 
   async getChannelStrategy() {
