@@ -58,6 +58,65 @@ function audienceDemandForTopic(topic, audienceDemand = []) {
   };
 }
 
+function historicalPerformanceForIdea(idea, sourceTopic, snapshots = []) {
+  const latestByVideo = new Map();
+  for (const snapshot of snapshots || []) {
+    if (snapshot.simulated || !snapshot.videoId || !snapshot.contentAttributes) continue;
+    const attributes = snapshot.contentAttributes;
+    const topicSimilarity = overlapScore(sourceTopic, attributes.topic);
+    const pillarSimilarity = overlapScore(idea.pillar, attributes.pillar);
+    const formatMatch = Boolean(idea.format && attributes.format &&
+      String(idea.format).toLowerCase() === String(attributes.format).toLowerCase());
+    if (!((topicSimilarity !== null && topicSimilarity >= 20) ||
+      (pillarSimilarity !== null && pillarSimilarity >= 40))) continue;
+
+    const metrics = snapshot.metrics || {};
+    const components = [];
+    const performanceScore = Number(metrics.performanceScore);
+    const ctr = Number(metrics.ctr);
+    const retention = Number(metrics.retention);
+    if (Number.isFinite(performanceScore)) components.push(clamp(performanceScore));
+    if (Number.isFinite(ctr)) components.push(clamp(ctr * 10));
+    if (Number.isFinite(retention)) components.push(clamp(retention));
+    if (!components.length) continue;
+
+    const relevance = (topicSimilarity !== null ? topicSimilarity * 0.65 : 0) +
+      (pillarSimilarity !== null ? pillarSimilarity * 0.25 : 0) +
+      (formatMatch ? 10 : 0);
+    const sample = {
+      videoId: snapshot.videoId,
+      score: components.reduce((sum, value) => sum + value, 0) / components.length,
+      relevance: Math.max(0.1, relevance),
+      topicMatched: topicSimilarity !== null && topicSimilarity >= 20,
+      pillarMatched: pillarSimilarity !== null && pillarSimilarity >= 40,
+      formatMatched: formatMatch,
+      measuredAt: snapshot.measuredAt || snapshot.measured_at || ''
+    };
+    const previous = latestByVideo.get(snapshot.videoId);
+    if (!previous || String(sample.measuredAt) > String(previous.measuredAt)) {
+      latestByVideo.set(snapshot.videoId, sample);
+    }
+  }
+
+  const samples = [...latestByVideo.values()];
+  if (!samples.length) return null;
+  const totalWeight = samples.reduce((sum, item) => sum + item.relevance, 0);
+  const rawScore = samples.reduce((sum, item) => sum + item.score * item.relevance, 0) / totalWeight;
+  // Small samples are deliberately pulled toward neutral so one unusual video
+  // cannot dominate the next weekly batch of ideas.
+  const confidence = samples.length / (samples.length + 2);
+  const adjustedScore = 50 + (rawScore - 50) * confidence;
+  return {
+    score: clamp(Math.round(adjustedScore)),
+    rawScore: clamp(Math.round(rawScore)),
+    sampleSize: samples.length,
+    confidence: Number(confidence.toFixed(2)),
+    topicMatchedCount: samples.filter(item => item.topicMatched).length,
+    pillarMatchedCount: samples.filter(item => item.pillarMatched).length,
+    formatMatchedCount: samples.filter(item => item.formatMatched).length
+  };
+}
+
 function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSnapshots = [], audienceDemand = []) {
   const trends = new Map((trendTopics || []).map(item => [String(item.topic || '').toLowerCase(), item]));
   const maxTrend = Math.max(1, ...(trendTopics || []).map(item => Number(item.score) || 0));
@@ -67,7 +126,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     channelStrategy.value_proposition || channelStrategy.valueProposition,
     ...(channelStrategy.contentPillars || [])
   ].filter(Boolean).join(' ');
-  const snapshots = (performanceSnapshots || []).filter(item => !item.simulated && item.contentAttributes?.topic);
+  const snapshots = (performanceSnapshots || []).filter(item => !item.simulated);
 
   return (ideas || []).map(idea => {
     const sourceTopic = String(idea.sourceTopic || '').trim();
@@ -80,24 +139,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     const fit = overlapScore(`${sourceTopic} ${topic}`, profile);
     const channelFit = fit === null ? 50 : fit;
     const demand = audienceDemandForTopic(`${sourceTopic} ${topic}`, audienceDemand);
-
-    const matchingHistory = snapshots.map(snapshot => ({
-      snapshot,
-      similarity: overlapScore(sourceTopic, snapshot.contentAttributes.topic)
-    })).filter(item => item.similarity !== null && item.similarity >= 20);
-    const performance = matchingHistory.length
-      ? clamp(Math.round(matchingHistory.reduce((sum, item) => {
-        const metrics = item.snapshot.metrics || {};
-        const score = Number(metrics.performanceScore);
-        const ctr = Number(metrics.ctr);
-        const retention = Number(metrics.retention);
-        const components = [];
-        if (Number.isFinite(score)) components.push(clamp(score));
-        if (Number.isFinite(ctr)) components.push(clamp(ctr * 10));
-        if (Number.isFinite(retention)) components.push(clamp(retention));
-        return sum + (components.length ? components.reduce((a, b) => a + b, 0) / components.length : 50);
-      }, 0) / matchingHistory.length))
-      : null;
+    const historical = historicalPerformanceForIdea(idea, sourceTopic, snapshots);
+    const performance = historical?.score ?? null;
 
     let weights;
     let score;
@@ -130,7 +173,12 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
         trend: trendScore,
         channelFit,
         historicalPerformance: performance,
-        historicalSampleSize: matchingHistory.length,
+        historicalRawPerformance: historical?.rawScore ?? null,
+        historicalSampleSize: historical?.sampleSize || 0,
+        historicalConfidence: historical?.confidence ?? 0,
+        historicalTopicMatches: historical?.topicMatchedCount || 0,
+        historicalPillarMatches: historical?.pillarMatchedCount || 0,
+        historicalFormatMatches: historical?.formatMatchedCount || 0,
         audienceDemand: demand?.score ?? null,
         audienceAskCount: demand?.askCount || 0,
         audienceThemeCount: demand?.matchingThemes || 0,
