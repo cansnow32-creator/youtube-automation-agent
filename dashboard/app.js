@@ -1940,6 +1940,48 @@ $('#resume-operator-run').addEventListener('click', async event => {
   }
 });
 
+$('#reference-video-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const file = form.elements.referenceVideo.files?.[0];
+  const button = form.querySelector('button[type="submit"]');
+  const result = $('#reference-video-result');
+  if (!file) return showToast('Choose a reference video first.', 'error');
+  button.disabled = true;
+  result.classList.remove('hidden');
+  result.innerHTML = empty('Uploading and sampling frames locally…');
+  try {
+    const data = await api('/api/concepts/reference-videos', {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Content-Type': file.type,
+        'x-file-name': encodeURIComponent(file.name)
+      }
+    });
+    const reference = data.referenceVideo;
+    $('#concept-propose-form [name="referenceVideoId"]').value = reference.id;
+    const frames = (reference.frameUrls || []).map((url, index) =>
+      `<img src="${escapeHTML(url)}" alt="Reference frame ${index + 1}" loading="lazy" style="width:100%;max-width:180px;border-radius:10px">`
+    ).join('');
+    const analysis = reference.analysis?.error
+      ? `<p class="callout">${escapeHTML(reference.analysis.error)}</p>`
+      : `<pre>${escapeHTML(JSON.stringify(reference.analysis || {}, null, 2))}</pre>`;
+    result.innerHTML = `
+      <div class="callout">Reference saved: ${escapeHTML(reference.originalName)} · ${Math.round(reference.durationSeconds)} sec · ${reference.analysisStatus === 'complete' ? 'local style analysis complete' : 'analysis needs another attempt'}</div>
+      <div class="card-list" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">${frames}</div>
+      ${analysis}
+      <p class="callout">This reference is attached to the next concept proposal as style-only guidance.</p>`;
+    form.reset();
+    showToast(data.analysisError ? 'Video saved; local visual analysis needs another attempt.' : 'Reference video analyzed locally and attached to the concept form.');
+  } catch (error) {
+    result.innerHTML = empty(error.message);
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $('#concept-propose-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
