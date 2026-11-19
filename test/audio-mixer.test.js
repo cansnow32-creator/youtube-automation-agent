@@ -60,6 +60,7 @@ async function testValidationAndArguments(directory) {
 
 async function testProductionIntegration(directory) {
   const source = path.join(directory, 'agent-source.mp4');
+  const music = path.join(directory, 'agent-music.wav');
   const mixed = path.join(directory, 'agent-mixed.mp4');
   const captions = path.join(directory, 'agent-captions.srt');
   const videosDirectory = path.join(__dirname, '..', 'data', 'videos');
@@ -70,6 +71,7 @@ async function testProductionIntegration(directory) {
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', source
   ]);
+  await runFFmpeg(['-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=2', music]);
   await fs.writeFile(captions, '1\n00:00:00,000 --> 00:00:02,000\nIntegration subtitle\n');
   const agent = Object.create(ProductionManagementAgent.prototype);
   agent.logger = { info() {}, warn() {}, error() {} };
@@ -78,11 +80,7 @@ async function testProductionIntegration(directory) {
     isUsableAudioFile: async () => true,
     generateVideo: async () => source
   };
-  agent.audioMixer = async (input, _output, music) => {
-    assert.equal(music.title, 'Approved music');
-    await fs.copyFile(input, mixed);
-    return { status: 'mixed', path: mixed, licenseType: music.licenseType, rightsConfirmed: true };
-  };
+  agent.audioMixer = mixBackgroundMusic;
   agent.audioMixerDependencies = {};
   const production = {
     id: 'audio-integration-test',
@@ -98,7 +96,12 @@ async function testProductionIntegration(directory) {
         audioDirection: {
           narration: 'warm',
           music: 'subtle cinematic ambient',
-          musicAsset: licensedMusic({ path: '/test/music.wav', title: 'Approved music' })
+          musicAsset: licensedMusic({
+            path: music,
+            title: 'Approved music',
+            fadeInSeconds: 0.2,
+            fadeOutSeconds: 0.3
+          })
         }
       }
     }
@@ -108,16 +111,27 @@ async function testProductionIntegration(directory) {
     assert.equal(assembledPath, finalPath);
     assert.equal(production.assets.backgroundMusic.status, 'mixed');
     assert.equal(production.assets.backgroundMusic.direction, 'subtle cinematic ambient');
+    assert.equal(production.assets.backgroundMusic.licenseType, 'user_owned');
     assert.equal(production.assets.finalVideo.path, finalPath);
+    assert.equal(production.assets.finalVideo.cleanPath, source);
+    assert.notEqual(production.assets.finalVideo.cleanPath, production.assets.finalVideo.path);
     assert.ok((await fs.stat(finalPath)).size > 0);
+    assert.ok((await fs.stat(production.assets.finalVideo.cleanPath)).size > 0);
     const info = await getMediaInfo(finalPath);
+    const cleanInfo = await getMediaInfo(production.assets.finalVideo.cleanPath);
     assert.equal(info.hasAudio, true);
+    assert.equal(cleanInfo.hasAudio, true);
+    assert.equal(info.width, 640);
+    assert.equal(info.height, 360);
+    assert.ok(info.duration > 0);
+    assert.equal(production.assets.captions.styleApplication.typographyApplied, true);
+    assert.equal(production.assets.captions.styleApplication.placementApplied, true);
     await runFFmpeg(['-v', 'error', '-i', finalPath, '-f', 'null', '-']);
+    await runFFmpeg(['-v', 'error', '-i', production.assets.finalVideo.cleanPath, '-f', 'null', '-']);
   } finally {
-    await Promise.all([source, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
+    await Promise.all([source, music, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
   }
 }
-
 async function testRealFFmpegMix(directory) {
   if (!await checkFFmpeg()) {
     process.stdout.write('Audio mixer FFmpeg smoke test skipped: FFmpeg is unavailable\\n');
