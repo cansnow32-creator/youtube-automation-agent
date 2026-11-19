@@ -130,24 +130,30 @@ class DailyAutomation {
         return;
       }
 
-      if (this.generateContent) {
-        const job = await this.generateContent({ source: 'scheduler' });
-        await this.db.setSetting('last_content_generation', new Date().toISOString());
-        timer.end();
-        this.logger.success(`Daily content generation queued: ${job.id}`);
-        await this.logAutomationEvent('daily_content_generation', 'queued', { jobId: job.id });
-        return;
-      }
-
-      // The legacy scheduler path must select an approved concept before
-      // invoking any AI strategy, script, thumbnail, or SEO generation.
+      // Every scheduler entry point, including injected queue adapters, must
+      // be bound to an approved concept before it can enqueue or generate work.
       const approvedConcepts = await this.db.listVideoConcepts(100);
-      const approvedConcept = approvedConcepts.find(item => item?.status === 'approved');
+      const approvedConcept = Array.isArray(approvedConcepts)
+        ? approvedConcepts.find(item => item?.status === 'approved')
+        : null;
       if (!approvedConcept) {
         const error = new Error('Daily generation is blocked until a video concept is approved in Concept Studio.');
         error.status = 409;
         error.code = 'APPROVED_CONCEPT_REQUIRED';
         throw error;
+      }
+
+      if (this.generateContent) {
+        const job = await this.generateContent({
+          source: 'scheduler',
+          approvedVideoConcept: approvedConcept.concept,
+          approvedVideoConceptId: approvedConcept.id
+        });
+        await this.db.setSetting('last_content_generation', new Date().toISOString());
+        timer.end();
+        this.logger.success(`Daily content generation queued: ${job.id}`);
+        await this.logAutomationEvent('daily_content_generation', 'queued', { jobId: job.id });
+        return;
       }
 
       // Generate content strategy and bind the approved concept before any
