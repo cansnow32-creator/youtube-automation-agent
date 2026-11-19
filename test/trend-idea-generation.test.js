@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
-const { scoreTrendIdeas } = require('../utils/trend-idea-ranker');
+const { scoreTrendIdeas, buildAudienceDemand } = require('../utils/trend-idea-ranker');
 
 async function run() {
   const db = new Database();
@@ -43,6 +43,34 @@ async function run() {
     assert.equal(ranked.length, 1);
     assert.equal(ranked[0].scoreBreakdown.historicalPerformance, 67);
     assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 1);
+
+    const audienceDemand = buildAudienceDemand([
+      {
+        videoId: 'audience-video-1',
+        analysisMethod: 'ai',
+        themes: [
+          { kind: 'request', title: 'AI video editing tutorials', count: 12, summary: 'Show a beginner workflow' },
+          { kind: 'question', title: 'AI video editing tools', count: 4, summary: 'Compare tools' },
+          { kind: 'praise', title: 'Great editing', count: 50, summary: 'Positive feedback only' }
+        ]
+      },
+      {
+        videoId: 'fallback-video',
+        analysisMethod: 'fallback',
+        themes: [{ kind: 'request', title: 'AI video editing', count: 40 }]
+      }
+    ]);
+    assert.equal(audienceDemand.length, 2, 'only AI-analyzed request/question themes with at least three asks should count');
+    const demandRanked = scoreTrendIdeas([
+      { sourceTopic: 'AI video editing', topic: 'AI video editing workflow for beginner creators', format: 'tutorial' }
+    ], snapshot.topics, {
+      objective: 'Help video creators improve their workflow',
+      audience: 'beginner video creators',
+      contentPillars: ['AI video tools', 'editing tutorials']
+    }, [], audienceDemand);
+    assert.ok(demandRanked[0].scoreBreakdown.audienceDemand > 0);
+    assert.equal(demandRanked[0].scoreBreakdown.audienceAskCount, 16);
+    assert.equal(demandRanked[0].scoreBreakdown.weights.audienceDemand, 0.35);
 
     process.env.OLLAMA_MODEL = 'qwen3.5:4b';
     process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
