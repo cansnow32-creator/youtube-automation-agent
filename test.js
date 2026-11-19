@@ -2865,6 +2865,29 @@ class SystemTest {
       throw new Error('Publish now still sent a stale scheduled publishAt value');
     }
 
+    let invalidPrivacyUploadCalls = 0;
+    const invalidPrivacy = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
+    invalidPrivacy.youtube = {
+      videos: { insert: async () => { invalidPrivacyUploadCalls++; return { data: { id: 'must-not-upload' } }; } }
+    };
+    invalidPrivacy.getVideoStream = async () => ({ fixture: true });
+    let invalidPrivacyBlocked = false;
+    try {
+      await invalidPrivacy.uploadToYouTube({
+        publishTime: new Date().toISOString(),
+        metadata: {
+          seo: { title: 'Invalid privacy', description: 'Must be rejected.', tags: ['test'] },
+          video: { path: 'fixture.mp4' },
+          privacyStatus: 'everyone'
+        }
+      }, { publishNow: true });
+    } catch (error) {
+      invalidPrivacyBlocked = error.code === 'INVALID_PRIVACY_STATUS';
+    }
+    if (!invalidPrivacyBlocked || invalidPrivacyUploadCalls !== 0) {
+      throw new Error('Invalid privacy configuration reached the YouTube upload API');
+    }
+
     let thumbnailFailurePersisted = null;
     let videoUploadCalls = 0;
     const thumbnailFailure = new PublishingSchedulingAgent({
