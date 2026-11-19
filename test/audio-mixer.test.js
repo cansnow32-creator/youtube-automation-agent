@@ -61,7 +61,16 @@ async function testValidationAndArguments(directory) {
 async function testProductionIntegration(directory) {
   const source = path.join(directory, 'agent-source.mp4');
   const mixed = path.join(directory, 'agent-mixed.mp4');
-  await fs.writeFile(source, Buffer.from('source'));
+  const captions = path.join(directory, 'agent-captions.srt');
+  const videosDirectory = path.join(__dirname, '..', 'data', 'videos');
+  const finalPath = path.join(videosDirectory, 'audio-integration-test_captioned.mp4');
+  await fs.mkdir(videosDirectory, { recursive: true });
+  await runFFmpeg([
+    '-y', '-f', 'lavfi', '-i', 'color=c=#203a5f:s=640x360:r=24:d=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', source
+  ]);
+  await fs.writeFile(captions, '1\\n00:00:00,000 --> 00:00:02,000\\nIntegration subtitle\\n');
   const agent = Object.create(ProductionManagementAgent.prototype);
   agent.logger = { info() {}, warn() {}, error() {} };
   agent.aiVideoGenerator = {
@@ -69,9 +78,9 @@ async function testProductionIntegration(directory) {
     isUsableAudioFile: async () => true,
     generateVideo: async () => source
   };
-  agent.audioMixer = async (_input, _output, music) => {
+  agent.audioMixer = async (input, _output, music) => {
     assert.equal(music.title, 'Approved music');
-    await fs.writeFile(mixed, Buffer.from('mixed'));
+    await fs.copyFile(input, mixed);
     return { status: 'mixed', path: mixed, licenseType: music.licenseType, rightsConfirmed: true };
   };
   agent.audioMixerDependencies = {};
@@ -79,7 +88,11 @@ async function testProductionIntegration(directory) {
     id: 'audio-integration-test',
     script: { title: 'Test' },
     estimatedDuration: 5,
-    assets: { audio: { path: 'narration.mp3' }, video: { visualAssets: [] } },
+    assets: {
+      audio: { path: 'narration.mp3' },
+      video: { visualAssets: [] },
+      captions: { path: captions }
+    },
     strategy: {
       approvedVideoConcept: {
         audioDirection: {
@@ -91,14 +104,17 @@ async function testProductionIntegration(directory) {
     }
   };
   try {
-    const finalPath = await agent.assembleVideo(production);
-    assert.equal(finalPath, mixed);
+    const assembledPath = await agent.assembleVideo(production);
+    assert.equal(assembledPath, finalPath);
     assert.equal(production.assets.backgroundMusic.status, 'mixed');
     assert.equal(production.assets.backgroundMusic.direction, 'subtle cinematic ambient');
-    assert.equal(production.assets.finalVideo.path, mixed);
+    assert.equal(production.assets.finalVideo.path, finalPath);
+    assert.ok((await fs.stat(finalPath)).size > 0);
+    const info = await getMediaInfo(finalPath);
+    assert.equal(info.hasAudio, true);
+    await runFFmpeg(['-v', 'error', '-i', finalPath, '-f', 'null', '-']);
   } finally {
-    await fs.rm(source, { force: true });
-    await fs.rm(mixed, { force: true });
+    await Promise.all([source, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
   }
 }
 
