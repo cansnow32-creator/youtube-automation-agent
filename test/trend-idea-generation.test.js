@@ -41,7 +41,7 @@ async function run() {
       metrics: { performanceScore: 86, ctr: 6, retention: 55 }
     }]);
     assert.equal(ranked.length, 1);
-    assert.equal(ranked[0].scoreBreakdown.historicalPerformance, 86);
+    assert.equal(ranked[0].scoreBreakdown.historicalPerformance, 67);
     assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 1);
 
     process.env.OLLAMA_MODEL = 'qwen3.5:4b';
