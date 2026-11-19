@@ -34,6 +34,13 @@ function isLoopbackHost(host) {
   return ['127.0.0.1', '::1', 'localhost'].includes(String(host).toLowerCase()) || /^127\./.test(String(host));
 }
 
+function validateHostConfiguration(host, apiKey) {
+  if (!isLoopbackHost(host) && !String(apiKey || '').trim()) {
+    throw new Error('Refusing to expose the dashboard on a network interface without API_KEY. Set API_KEY in .env or bind HOST to 127.0.0.1.');
+  }
+  return true;
+}
+
 class YouTubeAutomationAgent {
   constructor() {
     this.logger = new Logger('MainAgent');
@@ -1878,11 +1885,9 @@ class YouTubeAutomationAgent {
     // Loopback by default: mutating routes are open whenever API_KEY is unset,
     // so the dashboard must not be reachable from the network unless asked.
     const HOST = process.env.HOST || '127.0.0.1';
+    validateHostConfiguration(HOST, process.env.API_KEY);
     this.app.listen(PORT, HOST, () => {
       console.log(chalk.green(`\n✅ YouTube Automation Agent running on ${HOST}:${PORT}`));
-      if (!isLoopbackHost(HOST) && !process.env.API_KEY) {
-        console.log(chalk.yellow(`⚠️  HOST=${HOST} exposes the dashboard to your network without API_KEY. Set API_KEY in .env to protect generation, approval, and publishing routes.`));
-      }
       console.log(chalk.gray('─'.repeat(50)));
       console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(`http://localhost:${PORT}`));
       console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`http://localhost:${PORT}/health`));
@@ -1907,4 +1912,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { YouTubeAutomationAgent };
+module.exports = { YouTubeAutomationAgent, isLoopbackHost, validateHostConfiguration };
