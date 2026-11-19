@@ -976,7 +976,7 @@ class SystemTest {
     });
     const passed = await service.run({ includePaidMedia: true });
     if (passed.status !== 'passed' || passed.checks.length !== 8 || !savedRun) {
-      throw new Error(`A successful readiness run was not persisted correctly: status=${passed.status}, checks=${passed.checks.length}, localRuntime=${JSON.stringify(passed.checks.find(check => check.id === 'local_runtime') || null)}`);
+      throw new Error(`A successful readiness run was not persisted correctly: status=${passed.status}, checks=${passed.checks.length}, statuses=${JSON.stringify(passed.checks.map(check => ({ id: check.id, status: check.status, message: check.message })))}`);
     }
     await service.assertReady('Test automation');
 
