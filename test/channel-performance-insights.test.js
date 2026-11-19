@@ -7,6 +7,21 @@ async function run() {
   await db.initialize();
   const videoIds = ['cohort-video-1', 'cohort-video-2', 'cohort-video-3', 'cohort-video-simulated'];
   const learning = new ChannelLearningEngine(db);
+  const feedback = learning.attachExperimentFeedback([
+    { id: 'rec-tested', title: 'Improve packaging' },
+    { id: 'rec-untested', title: 'Improve hooks' }
+  ], [
+    {
+      id: 'exp-1', recommendationId: 'rec-tested', status: 'adopted', winningArmId: 'arm-b',
+      result: { reason: 'Variant cleared thresholds.', liftPercent: 12.5, confidence: 'high', guardrails: { passed: true } },
+      arms: [{ id: 'arm-b', label: 'Variant B' }]
+    }
+  ]);
+  assert.equal(feedback[0].experimentFeedback.status, 'validated_and_adopted');
+  assert.equal(feedback[0].experimentFeedback.winnerLabel, 'Variant B');
+  assert.equal(feedback[0].experimentFeedback.liftPercent, 12.5);
+  assert.equal(feedback[1].experimentFeedback.status, 'not_tested',
+    'recommendations without a linked controlled experiment must not be called successful');
 
   try {
     const base = {
