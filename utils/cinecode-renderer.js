@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const sharp = require('sharp');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
 
@@ -50,6 +51,15 @@ class CineCodeRenderer {
       }
       const imageStats = await fs.stat(imagePath);
       if (!imageStats.isFile() || imageStats.size <= 0) throw new Error(`CineCode image asset ${index + 1} is missing or empty`);
+      let imageMetadata;
+      try {
+        imageMetadata = await sharp(imagePath, { failOn: 'error' }).metadata();
+      } catch (error) {
+        throw new Error(`CineCode image asset ${index + 1} is not a decodable image: ${error.message}`);
+      }
+      if (!imageMetadata.width || !imageMetadata.height || !['png', 'jpeg', 'webp'].includes(imageMetadata.format)) {
+        throw new Error(`CineCode image asset ${index + 1} has an unsupported or invalid image format`);
+      }
 
       const scene = scenePlan[index % Math.max(1, scenePlan.length)] || {};
       const duration = durations[index];
