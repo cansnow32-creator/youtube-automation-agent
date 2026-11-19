@@ -1061,7 +1061,7 @@ class SystemTest {
       await persistenceDb.initialize();
       await persistenceDb.saveReadinessRun(passed);
       const persisted = await persistenceDb.getLatestReadinessRun();
-      if (persisted?.id !== passed.id || persisted.checks.length !== 7 || persisted.summary.passed !== 7) {
+      if (persisted?.id !== passed.id || persisted.checks.length !== 8 || persisted.summary.passed !== 8) {
         throw new Error('Readiness evidence did not round-trip through SQLite');
       }
     } finally {
