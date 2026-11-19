@@ -368,6 +368,11 @@ class PublishingSchedulingAgent {
       error.status = 409;
       throw error;
     }
+    if (entry.metadata?.thumbnailUpload?.status !== 'failed' || entry.metadata.thumbnailUpload.retryRequired !== true) {
+      const error = new Error('A recorded thumbnail upload failure is required before retrying this asset');
+      error.status = 409;
+      throw error;
+    }
     const thumbnailPath = entry.metadata?.thumbnail?.path;
     if (!thumbnailPath) {
       const error = new Error('No generated thumbnail file is attached to this video');
