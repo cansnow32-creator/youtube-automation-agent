@@ -135,6 +135,10 @@ class VideoConceptService {
     return record;
   }
 
+  async get(conceptId) {
+    return this.db.getVideoConcept(conceptId);
+  }
+
   async revise(input) {
     const current = await this.db.getVideoConcept(input.conceptId);
     if (!current) throw new Error('Video concept not found');
@@ -144,6 +148,7 @@ class VideoConceptService {
     if (!feedback && !direction) throw new Error('Describe what should change before requesting a revision');
     const profile = await this.db.getChannelProfile();
     const concept = validateConcept(extractJson(await this.requestOllama(this.buildPrompt({ topic: current.topic, profile, direction, previousConcept: current.concept, feedback }))));
+    if (current.concept?.referenceContext) concept.referenceContext = current.concept.referenceContext;
     const record = { id: crypto.randomUUID(), topic: current.topic, concept, status: 'pending', revisionOf: current.id, feedback: feedback || direction };
     await this.db.saveVideoConcept(record);
     return record;
