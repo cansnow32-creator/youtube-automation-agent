@@ -461,7 +461,7 @@ function formatInsightMetric(metric, kind) {
   if (!Number.isFinite(value)) return '—';
   if (kind === 'percent') return `${value.toFixed(1)}%`;
   if (kind === 'score') return `${value.toFixed(0)}/100`;
-  return count(value);
+  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
 function renderPerformanceInsights(report = {}) {
