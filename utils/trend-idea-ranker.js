@@ -1,8 +1,8 @@
 function tokenize(value) {
   return new Set(String(value || '').toLowerCase().normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z0-9]+/i)
-    .filter(token => token.length > 2));
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(token => [...token].length > 2));
 }
 
 function overlapScore(left, right) {
