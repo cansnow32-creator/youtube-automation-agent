@@ -312,7 +312,8 @@ class ProductionManagementAgent {
       const { script } = productionData;
       
       // Generate visual assets using DALL-E
-      const visualPrompts = this.createVisualPromptsFromScript(script);
+      const approvedConcept = productionData.strategy?.approvedVideoConcept || null;
+      const visualPrompts = this.createVisualPromptsFromScript(script, approvedConcept);
       const visualAssets = [];
       const profile = await this.db.getChannelProfile?.() || {};
       const visualStyle = profile.visual_style || 'ethereal';
@@ -669,11 +670,20 @@ class ProductionManagementAgent {
   }
 
   // Helper method to create visual prompts from script content
-  createVisualPromptsFromScript(script) {
+  createVisualPromptsFromScript(script, approvedConcept = null) {
     const prompts = [];
+    const direction = approvedConcept?.visualDirection || {};
+    const scenePlan = Array.isArray(approvedConcept?.scenePlan) ? approvedConcept.scenePlan : [];
+    const conceptPrefix = approvedConcept
+      ? 'Follow approved video concept "' + (approvedConcept.name || '') + '". Visual style: ' +
+        JSON.stringify(direction) + '. Keep palette, composition and background treatment consistent. '
+      : '';
+    for (const scene of scenePlan.slice(0, 5)) {
+      if (scene?.visual) prompts.push(conceptPrefix + scene.visual);
+    }
     
     // Title prompt
-    prompts.push(`${script.title}, clear visual storytelling`);
+    prompts.push(conceptPrefix + `${script.title}, clear visual storytelling`);
     
     // Content-based prompts
     if (script.mainContent && script.mainContent.sections) {
