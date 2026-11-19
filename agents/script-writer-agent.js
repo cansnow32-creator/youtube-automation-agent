@@ -103,7 +103,7 @@ class ScriptWriterAgent {
   }
 
   async generateScriptWithAI(strategy, template) {
-    if (!this.aiTextService.isAvailable()) {
+    if (!this.aiTextService.isAvailable() && !this.qualityPipeline.enabled) {
       this.logger.info('Using template script generation because no AI text provider is configured');
       return null;
     }
