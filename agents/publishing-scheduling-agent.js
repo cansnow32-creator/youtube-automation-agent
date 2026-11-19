@@ -263,6 +263,7 @@ class PublishingSchedulingAgent {
           status: 'failed',
           failedAt: new Date().toISOString(),
           errorCode: error.code || null,
+          errorMessage: String(error.message || 'Thumbnail upload failed').slice(0, 300),
           retryRequired: true
         };
         this.logger.warn(`Video ${videoId} was uploaded, but its thumbnail failed. Repair the thumbnail separately; do not retry the video upload.`);
@@ -351,6 +352,59 @@ class PublishingSchedulingAgent {
     });
     this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
     return { videoId, uploaded: true };
+  }
+
+  async retryThumbnailUpload(contentId) {
+    const entry = this.db.getLatestScheduleEntry
+      ? await this.db.getLatestScheduleEntry(contentId)
+      : this.publishQueue.find(item => item.productionId === contentId || item.id === contentId);
+    if (!entry) {
+      const error = new Error(`Scheduled content not found: ${contentId}`);
+      error.status = 404;
+      throw error;
+    }
+    if (!entry.youtubeId) {
+      const error = new Error('The video has not been uploaded to YouTube; thumbnail repair is not available yet');
+      error.status = 409;
+      throw error;
+    }
+    const thumbnailPath = entry.metadata?.thumbnail?.path;
+    if (!thumbnailPath) {
+      const error = new Error('No generated thumbnail file is attached to this video');
+      error.status = 409;
+      throw error;
+    }
+    if (!this.youtube) {
+      const error = new Error('YouTube API is not initialized');
+      error.status = 503;
+      throw error;
+    }
+
+    entry.metadata = entry.metadata || {};
+    try {
+      await this.uploadThumbnail(entry.youtubeId, thumbnailPath);
+      entry.metadata.thumbnailUpload = {
+        status: 'uploaded',
+        completedAt: new Date().toISOString(),
+        retryRequired: false
+      };
+      await this.db.updateScheduleEntry(entry);
+      const queued = this.publishQueue.find(item => item.id === entry.id);
+      if (queued) Object.assign(queued, entry);
+      return entry;
+    } catch (error) {
+      entry.metadata.thumbnailUpload = {
+        status: 'failed',
+        failedAt: new Date().toISOString(),
+        errorCode: error.code || null,
+        errorMessage: String(error.message || 'Thumbnail upload failed').slice(0, 300),
+        retryRequired: true
+      };
+      await this.db.updateScheduleEntry(entry);
+      error.status = error.status || 502;
+      error.code = 'THUMBNAIL_RETRY_FAILED';
+      throw error;
+    }
   }
 
   async applyVideoPackaging(videoId, packaging = {}, previousPackaging = null) {
