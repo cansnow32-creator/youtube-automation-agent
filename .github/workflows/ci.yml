@@ -26,6 +26,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate safe dependency remediation candidate
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts
+          npm ci
+
       - name: Dependency audit report (non-blocking)
         run: |
           npm audit --json > npm-audit.json || true
@@ -39,11 +44,13 @@ jobs:
           }
           NODE
 
-      - name: Upload dependency audit report
+      - name: Upload dependency remediation candidate
         uses: actions/upload-artifact@v4
         with:
-          name: npm-audit-report
-          path: npm-audit.json
+          name: npm-security-remediation-candidate
+          path: |
+            package-lock.json
+            npm-audit.json
           retention-days: 7
 
       - name: Lint
