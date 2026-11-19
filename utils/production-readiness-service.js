@@ -271,7 +271,7 @@ class ProductionReadinessService {
   async probeYouTube() {
     if (this.probes.youtube) return this.probes.youtube();
     const grantedScopes = new Set(
-      String(this.credentialManager.tokens?.youtube?.scope || '').split(/\\s+/).filter(Boolean)
+      String(this.credentialManager.tokens?.youtube?.scope || '').split(/\s+/).filter(Boolean)
     );
     const missingScopes = YOUTUBE_SCOPES.filter(scope => !grantedScopes.has(scope));
     if (missingScopes.length) {
