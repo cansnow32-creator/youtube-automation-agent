@@ -1,5 +1,6 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
+const { LocalFirstQualityPipeline } = require('../utils/local-first-quality-pipeline');
 
 class ScriptWriterAgent {
   constructor(db, credentials) {
@@ -8,6 +9,7 @@ class ScriptWriterAgent {
     this.logger = new Logger('ScriptWriter');
     this.templates = this.loadTemplates();
     this.aiTextService = new AITextService(credentials?.credentials || credentials || {});
+    this.qualityPipeline = new LocalFirstQualityPipeline(credentials?.credentials || credentials || {});
   }
 
   async initialize() {
@@ -138,10 +140,9 @@ Research sources: ${JSON.stringify(strategy.researchSources || [])}
 Avoid fabricated statistics, unsupported claims, and fake urgency. List every externally verifiable factual claim in claims. Use only exact URLs from Research sources; use an empty sourceUrls array when the supplied sources do not support a claim.`;
 
     try {
-      const response = await this.aiTextService.generateText(prompt, {
-        maxTokens: 1800,
-        temperature: 0.7
-      });
+      const response = this.qualityPipeline.enabled
+        ? await this.qualityPipeline.generateAndReview(prompt)
+        : await this.aiTextService.generateText(prompt, { maxTokens: 1800, temperature: 0.7 });
       const parsed = this.parseAIJsonResponse(response);
       const sections = this.normalizeAISections(parsed.sections, strategy);
 
@@ -169,10 +170,15 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
           strategy,
           generatedAt: new Date().toISOString(),
           version: '1.0',
-          generationSource: 'ai'
+          generationSource: this.qualityPipeline.enabled ? 'ollama_local_first_quality_gated' : 'ai',
+          qualityGate: this.qualityPipeline.enabled ? this.qualityPipeline.lastReport : null
         }
       };
     } catch (error) {
+      if (this.qualityPipeline.enabled) {
+        this.logger.error(`Local-first quality pipeline blocked generation: ${error.message}`);
+        throw error;
+      }
       this.logger.warn(`AI script generation failed; using template fallback: ${error.message}`);
       return null;
     }
