@@ -371,8 +371,26 @@ class SystemTest {
     const previousStrategy = await db.getChannelStrategy();
     let run;
     let recoverableJob;
+    let approvedConceptId = null;
 
     try {
+      const blockedConceptResearch = { called: false };
+      const blockedOperator = new AutonomousChannelOperator({
+        async listVideoConcepts() { return []; },
+        async getVideoConcept() { return null; }
+      }, {
+        researchAndPlan: async () => { blockedConceptResearch.called = true; }
+      });
+      let blockedCode = null;
+      try {
+        await blockedOperator.start({ status: 'active' });
+      } catch (error) {
+        blockedCode = error.code;
+      }
+      if (blockedCode !== 'APPROVED_CONCEPT_REQUIRED' || blockedConceptResearch.called) {
+        throw new Error('Autonomous operator must require approval before paid research begins');
+      }
+
       const strategy = await db.saveChannelStrategy({
         objective: 'Teach small teams to automate useful work',
         audience: 'Small business operators',
@@ -418,11 +436,19 @@ class SystemTest {
         throw new Error('Strategy did not produce an evidence-labeled autonomous plan');
       }
 
-      strategy.approvedVideoConceptId = 'approved-concept-autonomous-test';
-      strategy.approvedVideoConcept = {
+      approvedConceptId = `concept_operator_${Date.now()}`;
+      const approvedConcept = {
         name: 'Approved autonomous test concept',
         scenePlan: [{ scene: 1, visual: 'Opening' }, { scene: 2, visual: 'Payoff' }]
       };
+      await db.saveVideoConcept({
+        id: approvedConceptId,
+        topic: 'Autonomous operator gate test',
+        concept: approvedConcept,
+        status: 'approved'
+      });
+      strategy.approvedVideoConceptId = approvedConceptId;
+      strategy.approvedVideoConcept = approvedConcept;
       const receivedInputs = [];
       let resumedJobs = 0;
       const operator = new AutonomousChannelOperator(db, {
@@ -505,6 +531,7 @@ class SystemTest {
         await db.executeQuery("DELETE FROM channel_strategies WHERE id = 'default'");
       }
       if (recoverableJob) await db.executeQuery('DELETE FROM generation_jobs WHERE id = ?', [recoverableJob.id]);
+      if (approvedConceptId) await db.executeQuery('DELETE FROM video_concepts WHERE id = ?', [approvedConceptId]);
       await db.close();
     }
 
