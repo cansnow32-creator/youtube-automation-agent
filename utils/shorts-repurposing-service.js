@@ -161,6 +161,7 @@ class ShortsRepurposingService {
       changes.status = 'proposed';
       changes.outputPath = null;
       changes.captionsPath = null;
+      changes.renderMetadata = null;
     }
     return this.db.updateShortClip(clipId, changes);
   }
