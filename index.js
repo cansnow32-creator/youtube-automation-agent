@@ -1598,6 +1598,8 @@ class YouTubeAutomationAgent {
       const remaining = Math.max(1, strategy.cadence_per_week - Number(weeklyOutput?.count || 0));
       return this.autonomous.start({
         ...strategy,
+        approvedVideoConcept: input.approvedVideoConcept || null,
+        approvedVideoConceptId: input.approvedVideoConceptId || null,
         videos_per_run: Math.min(strategy.videos_per_run, remaining)
       });
     }
