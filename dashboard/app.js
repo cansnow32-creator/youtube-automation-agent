@@ -907,9 +907,10 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   }
   const selected = providers.find(provider => provider.id === videoMapping.videoProvider);
   $('#video-provider-status').textContent = videoMapping.videoProvider === 'auto'
-    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
+    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow' && provider.id !== 'cinecode').length} paid provider(s) available; local slideshow remains the final fallback.`
     : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
-      : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+      : videoMapping.videoProvider === 'cinecode' ? 'CineCode local cinematic renderer is selected. It uses camera motion, color grading and transitions; no video API is called.'
+        : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
 }
 
 async function loadVideoConcepts() {
