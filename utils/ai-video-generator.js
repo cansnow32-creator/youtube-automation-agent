@@ -7,6 +7,7 @@ const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, getMediaDuration, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
+const { CineCodeRenderer } = require('./cinecode-renderer');
 
 const OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
@@ -111,6 +112,7 @@ class AIVideoGenerator {
     this.mediaGeneration = options.mediaGeneration || (this.db
       ? new MediaGenerationService(this.db, resolvedCredentials, { logger: this.logger })
       : null);
+    this.cineCodeRenderer = options.cineCodeRenderer || new CineCodeRenderer({ logger: this.logger });
   }
 
   async generateTTSAudio(text, outputPath, options = {}) {
@@ -432,7 +434,50 @@ class AIVideoGenerator {
   async generateVideo(script, visualAssets, audioPath, outputPath, options = {}) {
     this.logger.info('Generating video from assets...');
     this.lastVideoResult = null;
+    let selectedProvider = null;
     try {
+      const configuredSettings = this.mediaGeneration && options.productionId
+        ? await this.mediaGeneration.settings()
+        : null;
+      selectedProvider = configuredSettings?.provider || null;
+
+      if (selectedProvider === 'cinecode') {
+        const realImages = await this.filterLocalImageAssets(visualAssets);
+        if (!realImages.length) throw new Error('CineCode requires real image-generation assets. Configure an image provider; placeholder assets are not accepted.');
+        const totalDuration = options.estimatedDuration || this.calculateScriptDuration(script);
+        const rendered = await this.cineCodeRenderer.renderScenes({
+          visualAssets: realImages,
+          concept: options.approvedVideoConcept || {},
+          totalDuration,
+          outputDir: path.dirname(outputPath),
+          outputPrefix: path.basename(outputPath, path.extname(outputPath)),
+          resolution: configuredSettings.resolution,
+          aspectRatio: configuredSettings.aspectRatio
+        });
+        const produced = await this.generateHybridVideo(
+          rendered.clips,
+          realImages,
+          audioPath,
+          outputPath,
+          rendered.totalDuration
+        );
+        this.lastVideoResult = {
+          requestedProvider: 'cinecode',
+          actualProvider: 'cinecode',
+          model: rendered.model,
+          mode: 'local-cinematic',
+          generatedSeconds: rendered.totalDuration,
+          resolution: rendered.resolution,
+          colorGrade: rendered.colorGrade,
+          tasks: [],
+          scenes: rendered.clips.map(clip => ({
+            index: clip.index, label: clip.label, prompt: clip.prompt, duration: clip.duration,
+            path: clip.path, provider: clip.provider, model: clip.model
+          }))
+        };
+        return produced;
+      }
+
       if (this.mediaGeneration && options.productionId) {
         const generated = await this.mediaGeneration.generateClips({
           jobId: options.jobId || null,
@@ -466,18 +511,30 @@ class AIVideoGenerator {
       }
 
       const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
-      this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
+      this.lastVideoResult = { requestedProvider: selectedProvider || 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
-      // The Logger's console line only shows the message string, so put the real
-      // reason inline. Previously the stack alone went to the file transport and
-      // the console printed "Video generation failed:" with no detail.
       const reason = error && error.message ? error.message : String(error);
+      if (selectedProvider === 'cinecode') {
+        this.lastVideoResult = {
+          requestedProvider: 'cinecode',
+          actualProvider: 'failed',
+          model: 'local-ffmpeg-camera-motion',
+          mode: 'failed',
+          generatedSeconds: 0,
+          fallbackReason: reason,
+          tasks: [],
+          scenes: []
+        };
+        this.logger.error(`CineCode rendering failed without fallback: ${reason}`, error);
+        throw error;
+      }
+      // Other configured providers retain the existing explicit fallback behavior.
       this.logger.error(`Video provider generation failed; using the local slideshow: ${reason}`, error);
       try {
         const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
         this.lastVideoResult = {
-          requestedProvider: this.lastVideoResult?.requestedProvider || 'configured-provider',
+          requestedProvider: selectedProvider || 'configured-provider',
           actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'fallback', generatedSeconds: 0,
           fallbackReason: reason, tasks: [], scenes: []
         };
@@ -486,7 +543,7 @@ class AIVideoGenerator {
         this.logger.error(`Local slideshow fallback failed: ${fallbackError.message}`, fallbackError);
         const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath);
         this.lastVideoResult = {
-          requestedProvider: 'configured-provider', actualProvider: 'simulation', model: null,
+          requestedProvider: selectedProvider || 'configured-provider', actualProvider: 'simulation', model: null,
           mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
         };
         return produced;
