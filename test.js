@@ -2719,7 +2719,9 @@ class SystemTest {
     // Concurrent requests for one production share one in-flight upload.
     let concurrentUploadCalls = 0;
     let releaseConcurrentUpload;
+    let signalConcurrentUploadStarted;
     const concurrentUploadGate = new Promise(resolve => { releaseConcurrentUpload = resolve; });
+    const concurrentUploadStarted = new Promise(resolve => { signalConcurrentUploadStarted = resolve; });
     const concurrentDb = {
       getProductionBundle: async () => ({ id: 'prod-concurrent', review_status: 'approved', provenance: { status: 'not_required' } }),
       updateScheduleEntry: async () => {}
@@ -2731,12 +2733,13 @@ class SystemTest {
     }];
     concurrent.uploadToYouTube = async () => {
       concurrentUploadCalls++;
+      signalConcurrentUploadStarted();
       await concurrentUploadGate;
       return { id: 'youtube-concurrent' };
     };
     const firstPublish = concurrent.publishContent('prod-concurrent');
     const secondPublish = concurrent.publishContent('prod-concurrent');
-    await Promise.resolve();
+    await concurrentUploadStarted;
     if (concurrentUploadCalls !== 1) {
       releaseConcurrentUpload();
       throw new Error('Concurrent publish requests started more than one YouTube upload');
