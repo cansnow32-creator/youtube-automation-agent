@@ -6,8 +6,8 @@ const chalk = require('chalk');
 const { Logger } = require('./logger');
 const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./ai-text-service');
 
-// API keys and OAuth tokens are owner-only (0600). writeFile's mode applies only
-// when the file is created, so files written by older versions are tightened too.
+// Apply restrictive POSIX mode bits where supported. Windows access is governed
+// by NTFS ACLs; see the README's Windows credential-folder guidance.
 async function writePrivateFile(filePath, contents) {
   await fs.writeFile(filePath, contents, { mode: 0o600 });
   await fs.chmod(filePath, 0o600).catch(() => {});
