@@ -23,9 +23,9 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
   const margin = alignment === 8 ? 90 : alignment === 5 ? 0 : 110;
 
   const escapedPath = path.resolve(captionsPath)
-    .replaceAll('\\', '/')
-    .replaceAll(':', '\\:')
-    .replaceAll("'", "\\'");
+    .replaceAll('\', '/')
+    .replaceAll(':', '\:')
+    .replaceAll("'", "\'");
   const style = [
     `FontName=${fontName}`, `FontSize=${fontSize}`, `Bold=${bold}`,
     `PrimaryColour=${color}`, 'OutlineColour=&H00000000', 'BorderStyle=1',
@@ -38,12 +38,12 @@ function validateSrtContent(content) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new Error('SRT captions must contain at least one subtitle cue');
   }
-  const blocks = content.trim().split(/\\r?\\n\\s*\\r?\\n/);
-  const timestamp = /^(\\d{2,}:\\d{2}:\\d{2},\\d{3}) --> (\\d{2,}:\\d{2}:\\d{2},\\d{3})$/;
+  const blocks = content.trim().split(/\r?\n\s*\r?\n/);
+  const timestamp = /^(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})$/;
   let validCues = 0;
   for (const block of blocks) {
-    const lines = block.split(/\\r?\\n/);
-    if (!/^\\d+$/.test((lines[0] || '').trim())) continue;
+    const lines = block.split(/\r?\n/);
+    if (!/^\d+$/.test((lines[0] || '').trim())) continue;
     const match = timestamp.exec((lines[1] || '').trim());
     const text = lines.slice(2).join(' ').trim();
     if (!match || !text) throw new Error('SRT captions contain a malformed or empty subtitle cue');
