@@ -174,6 +174,10 @@ function renderReadiness(readiness = {}) {
     <article class="readiness-check ${escapeHTML(check.status)}">
       <div class="readiness-check-heading"><span class="readiness-icon" aria-hidden="true">${check.status === 'passed' ? '✓' : check.status === 'failed' ? '×' : '!'}</span><div><strong>${escapeHTML(check.label)}</strong><div class="meta-line">${escapeHTML(label(check.status))}${check.blocking ? ' · blocking' : ' · optional'} · ${(check.durationMs || 0) / 1000}s</div></div></div>
       <p>${escapeHTML(check.message)}</p>
+      ${Object.entries(check.details || {}).filter(([, value]) => value !== null && value !== undefined && value !== '').map(([key, value]) => {
+        const display = Array.isArray(value) ? value.join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+        return `<div class="readiness-detail"><span>${escapeHTML(label(key))}</span><code>${escapeHTML(display)}</code></div>`;
+      }).join('')}
       ${check.remediation ? `<small><strong>Next:</strong> ${escapeHTML(check.remediation)}</small>` : ''}
     </article>`).join('') : empty('Run the verified check to inspect every production dependency.');
 }
