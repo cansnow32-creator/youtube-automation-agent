@@ -2633,6 +2633,32 @@ class SystemTest {
       throw new Error('Publish now still sent a stale scheduled publishAt value');
     }
 
+    let thumbnailFailurePersisted = null;
+    const thumbnailFailure = new PublishingSchedulingAgent({
+      updateScheduleEntry: async entry => { thumbnailFailurePersisted = { ...entry, metadata: { ...entry.metadata } }; }
+    }, {});
+    thumbnailFailure.youtube = {
+      videos: { insert: async () => ({ data: { id: 'youtube-thumbnail-failure' } }) },
+      thumbnails: { set: async () => { const error = new Error('thumbnail quota unavailable'); error.code = 403; throw error; } }
+    };
+    thumbnailFailure.getVideoStream = async () => ({ fixture: true });
+    const thumbnailFailureEntry = {
+      id: 'schedule-thumbnail-failure', publishTime: new Date().toISOString(), status: 'uploading',
+      metadata: {
+        seo: { title: 'Thumbnail failure stays visible', description: 'The video must not be uploaded twice.', tags: ['test'] },
+        video: { path: 'fixture.mp4' }, thumbnail: { path: 'thumbnail.png' }, privacyStatus: 'private'
+      }
+    };
+    const thumbnailUploadResult = await thumbnailFailure.uploadToYouTube(thumbnailFailureEntry, { publishNow: true });
+    if (thumbnailUploadResult.id !== 'youtube-thumbnail-failure' || thumbnailFailureEntry.status !== 'uploaded') {
+      throw new Error('A thumbnail failure incorrectly converted a successful video upload into a failed video upload');
+    }
+    if (thumbnailFailurePersisted?.metadata?.thumbnailUpload?.status !== 'failed' ||
+        thumbnailFailurePersisted.metadata.thumbnailUpload.retryRequired !== true ||
+        thumbnailFailurePersisted.youtubeId !== 'youtube-thumbnail-failure') {
+      throw new Error('A failed thumbnail upload was not persisted for separate repair');
+    }
+
     this.logger.info('Publishing safety test completed successfully');
   }
 
