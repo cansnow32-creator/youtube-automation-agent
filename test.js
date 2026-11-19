@@ -2716,6 +2716,41 @@ class SystemTest {
       throw new Error('Short publishing accepted a clip without explicit approval and verified source evidence');
     }
 
+    // Concurrent requests for one production share one in-flight upload.
+    let concurrentUploadCalls = 0;
+    let releaseConcurrentUpload;
+    const concurrentUploadGate = new Promise(resolve => { releaseConcurrentUpload = resolve; });
+    const concurrentDb = {
+      getProductionBundle: async () => ({ id: 'prod-concurrent', review_status: 'approved', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const concurrent = new PublishingSchedulingAgent(concurrentDb, {});
+    concurrent.publishQueue = [{
+      id: 'schedule-concurrent', productionId: 'prod-concurrent', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    concurrent.uploadToYouTube = async () => {
+      concurrentUploadCalls++;
+      await concurrentUploadGate;
+      return { id: 'youtube-concurrent' };
+    };
+    const firstPublish = concurrent.publishContent('prod-concurrent');
+    const secondPublish = concurrent.publishContent('prod-concurrent');
+    await Promise.resolve();
+    if (concurrentUploadCalls !== 1) {
+      releaseConcurrentUpload();
+      throw new Error('Concurrent publish requests started more than one YouTube upload');
+    }
+    releaseConcurrentUpload();
+    const [firstConcurrentResult, secondConcurrentResult] = await Promise.all([firstPublish, secondPublish]);
+    if (
+      concurrentUploadCalls !== 1 ||
+      firstConcurrentResult.youtubeId !== 'youtube-concurrent' ||
+      secondConcurrentResult.youtubeId !== 'youtube-concurrent'
+    ) {
+      throw new Error('Concurrent publish requests did not share the same upload result');
+    }
+
     const missingNarration = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
     missingNarration.publishQueue = [{ productionId: 'prod-no-audio', status: 'scheduled', metadata: {} }];
     missingNarration.uploadToYouTube = async () => { throw new Error('Upload must not start without narration'); };
