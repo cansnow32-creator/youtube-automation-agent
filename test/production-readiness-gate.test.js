@@ -134,6 +134,40 @@ async function run() {
     else process.env.QUALITY_PIPELINE_ENABLED = previousEnabled;
   }
 
+  const { PublishingSchedulingAgent } = require('../agents/publishing-scheduling-agent');
+  const recent = new Date().toISOString();
+  const schedule = () => ({
+    id: 'readiness-publish-test', productionId: 'readiness-publish-test',
+    title: 'Readiness publish test', status: 'scheduled',
+    metadata: { audio: { intentionalSilence: true, silenceReason: 'This test fixture is intentionally silent.', silenceConfirmedAt: recent } }
+  });
+  async function verifyPublishGate(readinessRun, expectedBlocked, expectedReason) {
+    let uploadAttempts = 0;
+    const entry = schedule();
+    const publisher = new PublishingSchedulingAgent({
+      getLatestReadinessRun: async () => readinessRun,
+      updateScheduleEntry: async () => {}
+    }, {});
+    publisher.publishQueue = [entry];
+    publisher.uploadToYouTube = async () => { uploadAttempts++; throw new Error('UPLOAD_REACHED'); };
+    let error;
+    try { await publisher.publishContent(entry.productionId); } catch (caught) { error = caught; }
+    if (expectedBlocked) {
+      assert.equal(error?.code, 'READINESS_BLOCKED');
+      assert.match(error.message, expectedReason);
+      assert.equal(uploadAttempts, 0, 'YouTube upload must not start when readiness is not current and valid');
+    } else {
+      assert.match(error?.message || '', /UPLOAD_REACHED/);
+      assert.equal(uploadAttempts, 1, 'A fresh passed/warning readiness result should permit the upload path');
+    }
+  }
+  await verifyPublishGate(null, true, /Run the verified production readiness check/);
+  await verifyPublishGate({ status: 'passed', completed_at: '2026-11-18T00:00:00.000Z', checks: [] }, true, /older than 24 hours/);
+  await verifyPublishGate({ status: 'failed', completed_at: recent, checks: [{ id: 'youtube_access', blocking: true, status: 'failed' }] }, true, /youtube_access/);
+  await verifyPublishGate({ status: 'running', completed_at: recent, checks: [] }, true, /status \(running\)/);
+  await verifyPublishGate({ status: 'passed', completed_at: recent, checks: [] }, false);
+  await verifyPublishGate({ status: 'warning', completed_at: recent, checks: [{ id: 'optional_image', blocking: false, status: 'skipped' }] }, false);
+
   process.stdout.write('Production readiness gate tests passed\\n');
 }
 
