@@ -70,7 +70,7 @@ async function testProductionIntegration(directory) {
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', source
   ]);
-  await fs.writeFile(captions, '1\\n00:00:00,000 --> 00:00:02,000\\nIntegration subtitle\\n');
+  await fs.writeFile(captions, '1\n00:00:00,000 --> 00:00:02,000\nIntegration subtitle\n');
   const agent = Object.create(ProductionManagementAgent.prototype);
   agent.logger = { info() {}, warn() {}, error() {} };
   agent.aiVideoGenerator = {
