@@ -484,6 +484,39 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post(
+      '/api/concepts/:conceptId/music',
+      this.requireAPIKey(),
+      express.raw({
+        type: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/ogg', 'audio/flac', 'audio/x-flac', 'audio/webm'],
+        limit: '50mb'
+      }),
+      async (req, res) => {
+        try {
+          const concept = await this.concepts.attachMusicAsset(req.params.conceptId, req.body, {
+            mimeType: req.get('content-type'),
+            title: req.get('x-music-title'),
+            creator: req.get('x-music-creator'),
+            licenseType: req.get('x-license-type'),
+            rightsConfirmed: req.get('x-rights-confirmed') === 'true',
+            attribution: req.get('x-music-attribution'),
+            licenseName: req.get('x-license-name'),
+            licenseUrl: req.get('x-license-url'),
+            sourceUrl: req.get('x-source-url'),
+            volume: req.get('x-music-volume') === undefined ? 0.18 : Number(req.get('x-music-volume')),
+            loop: req.get('x-music-loop') !== 'false',
+            fadeInSeconds: req.get('x-music-fade-in') === undefined ? 2 : Number(req.get('x-music-fade-in')),
+            fadeOutSeconds: req.get('x-music-fade-out') === undefined ? 3 : Number(req.get('x-music-fade-out'))
+          });
+          return res.json({ success: true, concept });
+        } catch (error) {
+          const status = /not found/i.test(error.message) ? 404
+            : /immutable|before concept approval/i.test(error.message) ? 409 : 400;
+          return res.status(status).json({ success: false, error: error.message });
+        }
+      }
+    );
+
     this.app.post('/api/concepts/:conceptId/revise', this.requireAPIKey(), async (req, res) => {
       try {
         const concept = await this.concepts.revise({
