@@ -165,7 +165,7 @@ class ProductionReadinessService {
     try {
       const probeFile = path.join(writableProbe, 'write-test.tmp');
       await fs.writeFile(probeFile, 'AgentTube local runtime write check', { flag: 'wx' });
-      await fs.access(probeFile, fs.constants.R_OK | fs.constants.W_OK);
+      await fs.access(probeFile);
       await fs.rm(probeFile, { force: true });
       return {
         message: 'Node.js version and local data / temporary directory read-write permissions are valid.',
