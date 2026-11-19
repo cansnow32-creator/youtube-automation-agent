@@ -390,7 +390,7 @@ class ChannelLearningEngine {
         counts[snapshot.measurementWindow] = (counts[snapshot.measurementWindow] || 0) + 1;
         return counts;
       }, {}),
-      recommendations,
+      recommendations: recommendationsWithFeedback,
       approvedCount: recommendations.filter(item => item.status === 'approved').length,
       pendingCount: recommendations.filter(item => item.status === 'pending').length,
       lastMeasuredAt: snapshots[0]?.measuredAt || null,
@@ -430,7 +430,8 @@ class ChannelLearningEngine {
           experimentCount: linked.length,
           experimentId: latest.id,
           reason: latest.result?.reason || null,
-          liftPercent: Number.isFinite(Number(latest.result?.liftPercent)) ? Number(latest.result.liftPercent) : null,
+          liftPercent: latest.result?.liftPercent !== null && latest.result?.liftPercent !== undefined && Number.isFinite(Number(latest.result.liftPercent))
+            ? Number(latest.result.liftPercent) : null,
           winnerLabel: winner?.label || null,
           confidence: latest.result?.confidence || null,
           guardrailsPassed: latest.result?.guardrails?.passed === true
