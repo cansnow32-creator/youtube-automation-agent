@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const sharp = require('sharp');
 const { mixBackgroundMusic, validateMusicRights } = require('../utils/audio-mixer');
 const { checkFFmpeg, runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
 const { ProductionManagementAgent } = require('../agents/production-management-agent');
@@ -129,6 +130,25 @@ async function testProductionIntegration(directory) {
     assert.equal(production.assets.captions.styleApplication.placementApplied, true);
     await runFFmpeg(['-v', 'error', '-i', finalPath, '-f', 'null', '-']);
     await runFFmpeg(['-v', 'error', '-i', production.assets.finalVideo.cleanPath, '-f', 'null', '-']);
+
+    // Compare matching frames: burned-in captions must create visible pixel changes.
+    const finalFrame = path.join(directory, 'captioned-frame.png');
+    const cleanFrame = path.join(directory, 'clean-frame.png');
+    await runFFmpeg(['-y', '-ss', '1', '-i', finalPath, '-frames:v', '1', finalFrame]);
+    await runFFmpeg(['-y', '-ss', '1', '-i', production.assets.finalVideo.cleanPath, '-frames:v', '1', cleanFrame]);
+    const [finalPixels, cleanPixels] = await Promise.all([
+      sharp(finalFrame).removeAlpha().raw().toBuffer(),
+      sharp(cleanFrame).removeAlpha().raw().toBuffer()
+    ]);
+    assert.equal(finalPixels.length, cleanPixels.length);
+    let visiblyChangedPixels = 0;
+    for (let offset = 0; offset < finalPixels.length; offset += 3) {
+      const delta = Math.abs(finalPixels[offset] - cleanPixels[offset]) +
+        Math.abs(finalPixels[offset + 1] - cleanPixels[offset + 1]) +
+        Math.abs(finalPixels[offset + 2] - cleanPixels[offset + 2]);
+      if (delta > 90) visiblyChangedPixels++;
+    }
+    assert.ok(visiblyChangedPixels > 100, 'captioned output must visibly differ from the clean source frame');
   } finally {
     await Promise.all([source, music, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
   }
