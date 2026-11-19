@@ -13,6 +13,10 @@ async function run() {
   await db.initialize();
   assert.equal(require('../utils/trend-idea-ranker').overlapScore('öğrenme alışkanlıkları', 'öğrenme alışkanlıkları geliştirme'), 67,
     'Turkish characters must remain valid tokens during niche matching');
+  const keywordAgent = new ContentStrategyAgent(db, {});
+  assert.deepEqual(keywordAgent.extractKeywords('İçerik üretimi ve yapay zekâ video araçları'), [
+    'içerik', 'üretimi', 'yapay', 'zekâ', 'video', 'araçları'
+  ], 'competitor niche keywords must preserve Turkish letters, including dotted capital İ');
   const ideaIds = [];
   const snapshotIds = [];
   const originalFetch = global.fetch;
