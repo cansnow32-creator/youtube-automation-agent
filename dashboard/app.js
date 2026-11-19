@@ -452,6 +452,60 @@ function renderLearning(learning = {}) {
         </span>
       </div>
     </article>`).join('') : empty('No recommendation yet. YouTube Automation Agent needs at least two real, sufficiently exposed measurements.');
+  renderPerformanceInsights(learning.performanceInsights || {});
+}
+
+function formatInsightMetric(metric, kind) {
+  if (!metric || metric.average === null || metric.average === undefined) return '—';
+  const value = Number(metric.average);
+  if (!Number.isFinite(value)) return '—';
+  if (kind === 'percent') return `${value.toFixed(1)}%`;
+  if (kind === 'score') return `${value.toFixed(0)}/100`;
+  return count(value);
+}
+
+function renderPerformanceInsights(report = {}) {
+  const container = $('#performance-insights');
+  const countNode = $('#performance-insights-count');
+  const policy = $('#performance-insights-policy');
+  if (!container || !countNode || !policy) return;
+
+  countNode.textContent = `${Number(report.independentVideoCount || 0)} independent videos`;
+  policy.textContent = report.evidencePolicy || 'Only real YouTube analytics are included. Each video is counted once.';
+  const dimensions = report.dimensions || {};
+  const definitions = [
+    ['pillar', 'Content pillars'],
+    ['format', 'Formats'],
+    ['durationBucket', 'Actual video length']
+  ];
+  container.innerHTML = definitions.map(([key, heading]) => {
+    const dimension = dimensions[key] || {};
+    const cohorts = Array.isArray(dimension.cohorts) ? dimension.cohorts : [];
+    const rows = cohorts.length ? cohorts.slice(0, 5).map(cohort => {
+      const metrics = cohort.metrics || {};
+      const status = cohort.confidence === 'high' ? 'High confidence'
+        : cohort.confidence === 'moderate' ? 'Moderate confidence' : 'Exploratory';
+      const leader = dimension.leader?.name === cohort.name && cohort.sufficientlySampled;
+      return `<div class="performance-cohort ${leader ? 'leader' : ''}">
+        <div class="performance-cohort-title"><strong>${escapeHTML(label(cohort.name))}</strong><span>${Number(cohort.videoCount || 0)} videos · ${escapeHTML(status)}</span></div>
+        <div class="performance-cohort-metrics">
+          <span><small>Views</small><b>${formatInsightMetric(metrics.views)}</b></span>
+          <span><small>Score</small><b>${formatInsightMetric(metrics.performanceScore, 'score')}</b></span>
+          <span><small>CTR</small><b>${formatInsightMetric(metrics.ctr, 'percent')}</b></span>
+          <span><small>Retention</small><b>${formatInsightMetric(metrics.retention, 'percent')}</b></span>
+        </div>
+        ${leader ? '<small class="performance-leader-note">Current evidence-backed leader</small>' : ''}
+      </div>`;
+    }).join('') : empty('No real measurements for this dimension yet.');
+    const summary = dimension.leader
+      ? `Leader: ${label(dimension.leader.name)} · ${dimension.leader.videoCount} videos`
+      : 'Not enough independent videos to name a leader yet.';
+    return `<section class="performance-dimension">
+      <div class="performance-dimension-heading"><h3>${escapeHTML(heading)}</h3><span class="status ${dimension.leader ? 'active' : ''}">${dimension.leader ? 'Evidence available' : 'Building evidence'}</span></div>
+      <p class="meta-line">${escapeHTML(summary)}</p>
+      <div class="performance-cohort-list">${rows}</div>
+    </section>`;
+  }).join('');
 }
 
 function renderGrowthExperiments(summary = {}) {
