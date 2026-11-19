@@ -63,8 +63,8 @@ On Windows, Node's `chmod(0600)` is not a substitute for NTFS access control. Af
 
 ```powershell
 $principal = (whoami).Trim()
-icacls .\\config /inheritance:r
-icacls .\\config /grant:r "$($principal):(OI)(CI)F"
+icacls .\config /inheritance:r
+icacls .\config /grant:r "$($principal):(OI)(CI)F"
 ```
 
 Keep `config/credentials.json` and `config/tokens.json` out of shared folders and never commit them.
