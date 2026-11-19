@@ -1323,15 +1323,19 @@ class YouTubeAutomationAgent {
     });
 
     this.app.post('/api/ideas/:ideaId/generate', protect, async (req, res) => {
-      const idea = await this.db.updateContentIdea(req.params.ideaId, { status: 'generating' });
+      const idea = await this.db.getContentIdea(req.params.ideaId);
       if (!idea) return res.status(404).json({ error: 'Idea not found' });
       const approvedConceptId = req.body?.approvedConceptId;
       if (!approvedConceptId) {
         return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'Approve a video concept in Video Concept Studio before generating this idea.' });
       }
-      const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea', approvedConceptId });
-      await this.db.updateContentIdea(idea.id, { status: 'generated' });
-      return res.status(202).json({ success: true, result: job });
+      try {
+        const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea', approvedConceptId });
+        await this.db.updateContentIdea(idea.id, { status: 'generated' });
+        return res.status(202).json({ success: true, result: job });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code || null });
+      }
     });
 
     this.app.post('/api/automation/:action', protect, async (req, res) => {
