@@ -33,7 +33,7 @@ async function run() {
   if (seoResult.title !== 'YouTube title' || seoResult.description !== 'YouTube description') {
     throw new Error('Reviewed YouTube metadata was not used by SEO optimization');
   }
-  if (!seoResult.platformMetadata?.instagram_reels?.caption || !seoResult.platformMetadata?.tiktok?.caption) {
+  if (!seoResult.metadata?.platformMetadata?.instagram_reels?.caption || !seoResult.metadata?.platformMetadata?.tiktok?.caption) {
     throw new Error('Reviewed Reels and TikTok metadata was not preserved');
   }
   if (savedSEO !== seoResult) {
