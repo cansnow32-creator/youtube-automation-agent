@@ -290,6 +290,7 @@ class ProductionReadinessService {
   }
 
   async probeVideoAssembly(tempDir) {
+    if (this.probes.videoAssembly) return this.probes.videoAssembly({ tempDir });
     if (!await checkFFmpeg()) throw new Error('FFmpeg is not available');
     const ffmpegPath = getFFmpegPath();
     const ffprobePath = getFFprobePath();
