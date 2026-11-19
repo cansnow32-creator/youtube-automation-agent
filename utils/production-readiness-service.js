@@ -7,6 +7,7 @@ const { checkFFmpeg, runFFmpeg } = require('./ffmpeg');
 const { validateYouTubeMetadata } = require('./youtube-metadata-validator');
 const { Logger } = require('./logger');
 const { MediaGenerationService } = require('./media-generation-service');
+const { YOUTUBE_SCOPES } = require('../modern-auth');
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -269,6 +270,14 @@ class ProductionReadinessService {
 
   async probeYouTube() {
     if (this.probes.youtube) return this.probes.youtube();
+    const grantedScopes = new Set(
+      String(this.credentialManager.tokens?.youtube?.scope || '').split(/\\s+/).filter(Boolean)
+    );
+    const missingScopes = YOUTUBE_SCOPES.filter(scope => !grantedScopes.has(scope));
+    if (missingScopes.length) {
+      const names = missingScopes.map(scope => scope.split('/').pop()).join(', ');
+      throw new Error(`YouTube authorization is missing required OAuth scopes: ${names}. Reconnect the channel and approve the requested permissions.`);
+    }
     const youtube = this.credentialManager.getYouTubeClient();
     const response = await youtube.channels.list({ part: 'snippet,status', mine: true, maxResults: 1 });
     const channel = response.data?.items?.[0];
