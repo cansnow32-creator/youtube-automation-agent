@@ -856,7 +856,8 @@ function renderOperator(strategy, runs, system) {
     return `<article class="plan-card">
       <div class="meta-line">${index + 1} · ${escapeHTML(item.format)} · ${escapeHTML(item.length)} ${job ? `· ${statusChip(job.reviewStatus || job.status)}` : ''}</div>
       <strong>${escapeHTML(item.topic)}</strong>
-      <p>${escapeHTML(item.angle || item.rationale)}</p>
+      ${item.angle ? `<p>${escapeHTML(item.angle)}</p>` : ''}
+      ${item.rationale ? `<p class="plan-rationale"><strong>Planning rationale:</strong> ${escapeHTML(item.rationale)}</p>` : ''}
     </article>`;
   }).join('') : empty('Research and planning will appear here when the run begins.');
 }
