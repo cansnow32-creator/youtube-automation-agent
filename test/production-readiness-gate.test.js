@@ -67,6 +67,73 @@ async function run() {
   assert.equal(warningSummary.status, 'warning');
   assert.deepEqual(warningSummary.blockingFailures, []);
 
+  const originalFetch = global.fetch;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalGroqKey = process.env.GROQ_API_KEY;
+  const originalOllamaModel = process.env.OLLAMA_MODEL;
+  const originalOllamaUrl = process.env.OLLAMA_BASE_URL;
+  try {
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    process.env.GROQ_API_KEY = 'test-groq-key';
+    process.env.OLLAMA_MODEL = 'qwen3.5:4b';
+    process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434/';
+    global.fetch = async url => {
+      assert.equal(url, 'http://127.0.0.1:11434/api/tags');
+      return { ok: true, json: async () => ({ models: [{ name: 'qwen3.5:4b' }] }) };
+    };
+    const quality = new ProductionReadinessService({}, { credentials: { gemini: { apiKey: 'saved-gemini-key' } } });
+    const qualityResult = await quality.probeQualityPipeline();
+    assert.equal(qualityResult.details.ollamaModel, 'qwen3.5:4b');
+    assert.equal(qualityResult.details.geminiConfigured, true);
+    assert.equal(qualityResult.details.groqConfigured, true);
+
+    global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3:latest' }] }) });
+    await assert.rejects(quality.probeQualityPipeline(), /Ollama model qwen3.5:4b is not installed/);
+
+    delete process.env.GROQ_API_KEY;
+    await assert.rejects(quality.probeQualityPipeline(), /Groq reviewer is not configured/);
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries({
+      GEMINI_API_KEY: originalGeminiKey,
+      GROQ_API_KEY: originalGroqKey,
+      OLLAMA_MODEL: originalOllamaModel,
+      OLLAMA_BASE_URL: originalOllamaUrl
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  const previousEnabled = process.env.QUALITY_PIPELINE_ENABLED;
+  try {
+    process.env.QUALITY_PIPELINE_ENABLED = 'true';
+    const runDb = {
+      generateId: () => 'quality_readiness_test',
+      saveReadinessRun: async value => value
+    };
+    const passingProbe = label => async () => ({ message: `${label} verified` });
+    const enabledService = new ProductionReadinessService(runDb, { credentials: {} }, {
+      probes: {
+        text: passingProbe('Text'),
+        qualityPipeline: passingProbe('Quality pipeline'),
+        image: passingProbe('Image'),
+        videoProvider: passingProbe('Video'),
+        narration: passingProbe('Narration'),
+        videoAssembly: passingProbe('Assembly'),
+        youtube: passingProbe('YouTube'),
+        metadata: passingProbe('Metadata')
+      }
+    });
+    const enabledRun = await enabledService.run();
+    const qualityCheck = enabledRun.checks.find(check => check.id === 'quality_pipeline');
+    assert.equal(qualityCheck?.blocking, true);
+    assert.equal(qualityCheck?.status, 'passed');
+  } finally {
+    if (previousEnabled === undefined) delete process.env.QUALITY_PIPELINE_ENABLED;
+    else process.env.QUALITY_PIPELINE_ENABLED = previousEnabled;
+  }
+
   process.stdout.write('Production readiness gate tests passed\\n');
 }
 
