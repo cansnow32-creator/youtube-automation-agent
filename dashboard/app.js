@@ -163,7 +163,7 @@ function renderReadiness(readiness = {}) {
   $('#readiness-title').textContent = titles[status] || titles.unverified;
   const counts = readiness.summary || {};
   $('#readiness-summary').textContent = status === 'unverified'
-    ? 'The check makes small live text and narration requests, verifies channel access, builds a local audio/video MP4, and validates queued metadata. It never creates or uploads a YouTube video.'
+    ? 'The check verifies Node.js and local folder permissions, FFmpeg / FFprobe paths, H.264 and AAC encoders, CineCode motion filters, live text and narration, YouTube channel access, and queued metadata. It never creates or uploads a YouTube video.'
     : `${counts.passed || 0} passed, ${counts.warnings || 0} warning${counts.warnings === 1 ? '' : 's'}, and ${counts.failed || 0} failed.`;
   $('#readiness-meta').textContent = readiness.completed_at
     ? `Last run ${formatDate(readiness.completed_at)}${readiness.stale ? ' · older than 24 hours' : ''}`
