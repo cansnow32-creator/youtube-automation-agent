@@ -102,6 +102,34 @@ async function run() {
   assert.equal(createdJob.strategyContext.approvedVideoConceptId, 'approved-id');
   assert.deepEqual(createdJob.strategyContext.approvedVideoConcept, { name: 'Approved concept' });
 
+  // Recovery must re-check the persisted concept before restarting a failed
+  // job. A concept that is no longer approved must not resume generation.
+  const recoveryAgent = Object.create(YouTubeAutomationAgent.prototype);
+  let recoveryStarted = false;
+  let recoveryPersisted = false;
+  recoveryAgent.setupRequired = false;
+  recoveryAgent.agents = { strategy: {} };
+  recoveryAgent.activeJobs = new Map();
+  recoveryAgent.db = {
+    async getGenerationJob() {
+      return {
+        id: 'failed-job',
+        status: 'failed',
+        source: 'manual',
+        details: { strategyContext: { approvedVideoConceptId: 'pending-id' } }
+      };
+    },
+    async getVideoConcept(id) { return productionRecords.get(id) || null; },
+    async updateGenerationJob() { recoveryPersisted = true; }
+  };
+  recoveryAgent.runGenerationJob = async () => { recoveryStarted = true; };
+  await assert.rejects(
+    () => recoveryAgent.resumeGenerationJob('failed-job'),
+    error => error.status === 409 && error.code === 'APPROVED_CONCEPT_REQUIRED'
+  );
+  assert.equal(recoveryStarted, false, 'Recovery must not start when concept approval is absent');
+  assert.equal(recoveryPersisted, false, 'Blocked recovery must not change the saved job state');
+
   process.stdout.write('Approved video concept gate tests passed\n');
 }
 
