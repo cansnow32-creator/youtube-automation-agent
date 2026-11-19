@@ -2200,7 +2200,19 @@ class SystemTest {
 
   async testOpenIssueRegressions() {
     const fs = require('fs').promises;
-    const { ModernAuth, preserveRefreshToken } = require('./modern-auth');
+    const { ModernAuth, preserveRefreshToken, YOUTUBE_SCOPES } = require('./modern-auth');
+    const requiredScopes = [
+      'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube.readonly',
+      'https://www.googleapis.com/auth/yt-analytics.readonly',
+      'https://www.googleapis.com/auth/youtube.force-ssl'
+    ];
+    if (
+      requiredScopes.some(scope => !YOUTUBE_SCOPES.includes(scope)) ||
+      YOUTUBE_SCOPES.includes('https://www.googleapis.com/auth/youtube')
+    ) {
+      throw new Error('YouTube OAuth scopes are not restricted to the required API permissions');
+    }
     const { OAuthServer } = require('./oauth-server');
     const { ProductionManagementAgent } = require('./agents/production-management-agent');
     const { YouTubeAutomationAgent } = require('./index');
