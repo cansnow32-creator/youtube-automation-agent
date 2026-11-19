@@ -179,6 +179,10 @@ async function run() {
       assert.match(url, /\/api\/chat$/);
       const body = JSON.parse(options.body);
       assert.equal(body.model, 'qwen3.5:4b');
+      assert.match(body.messages[0].content, /Niche-ranked competitor title\/format patterns/,
+        'local idea generation should receive niche-ranked competitor format evidence');
+      assert.match(body.messages[0].content, /numbered_list/,
+        'competitor template guidance should include the ranked pattern metadata');
       return {
         ok: true,
         json: async () => ({
@@ -225,6 +229,16 @@ async function run() {
     });
 
     const strategy = new ContentStrategyAgent(db, {});
+    strategy.competitorData = [{
+      topPerformingTemplates: [{
+        patternId: 'numbered_list',
+        format: 'tutorial',
+        sampleCount: 2,
+        nicheFitScore: 82,
+        rankingBasis: 'niche_fit_and_performance',
+        evidence: [{ title: '7 AI video editing steps for beginners' }]
+      }]
+    }];
     const result = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
     assert.equal(result.status, 'success');
     assert.equal(result.createdCount, 1);
