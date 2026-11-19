@@ -162,8 +162,13 @@ class OAuthServer {
 }
 
 if (require.main === module) {
-  const oauthServer = new OAuthServer();
-  oauthServer.start();
+  // Keep the legacy module export for compatibility, but route direct CLI use
+  // through the same state-validated loopback flow as CredentialManager.
+  const { ModernAuth } = require('./modern-auth');
+  new ModernAuth().authenticate().catch(error => {
+    console.error(chalk.red('Authentication failed:'), error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = { OAuthServer };
