@@ -44,6 +44,8 @@ npm start
 
 Then open `http://localhost:3456`.
 
+**Local security:** the dashboard binds to `127.0.0.1` by default and refuses non-loopback `HOST` values. Keep it local: API-key middleware currently protects write actions, but read-only API routes do not yet have browser session authentication.
+
 1. **`npm run walkthrough`** explains each provider choice, tests your keys, and connects your YouTube channel. For a shorter flow, use `npm run setup`. Every setting is documented in [`.env.example`](.env.example).
 2. **Check readiness.** In the dashboard, open **Production readiness** and choose **Run verified check**. It makes small live text and narration requests, checks access to your channel, and builds and decodes a test MP4, without uploading anything.
 3. **Make videos.** Open **Autonomous operator**, describe the channel you want, and choose **Activate & run now**, or create a single video from the dashboard. Finished videos wait in **Pipeline** for your review and approval.
