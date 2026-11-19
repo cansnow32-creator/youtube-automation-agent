@@ -64,8 +64,9 @@ class CredentialManager {
   // YouTube API Authentication
   async setupYouTubeCredentials() {
     console.log(chalk.cyan('\n🎬 YouTube API Setup'));
-    console.log(chalk.gray('You need to create a YouTube Data API project in Google Cloud Console'));
-    console.log(chalk.gray('Visit: https://console.cloud.google.com/'));
+    console.log(chalk.gray('Create a Google OAuth client with application type Desktop app (not Web application).'));
+    console.log(chalk.gray('The agent uses a temporary 127.0.0.1 loopback port during sign-in.'));
+    console.log(chalk.gray('Google Cloud Console: https://console.cloud.google.com/'));
     
     const answers = await inquirer.prompt([
       {
@@ -83,8 +84,8 @@ class CredentialManager {
       {
         type: 'input',
         name: 'redirectUri',
-        message: 'Enter your redirect URI:',
-        default: 'http://localhost:8080/oauth2callback'
+        message: 'Loopback redirect URI (use a Google OAuth Desktop app client; keep the default):',
+        default: 'http://127.0.0.1'
       }
     ]);
 
