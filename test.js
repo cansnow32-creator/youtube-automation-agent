@@ -2597,6 +2597,76 @@ class SystemTest {
       throw new Error('publishContent removed the wrong publish queue entries');
     }
 
+    // The service-level approval gate must protect every publishing entry point.
+    let approvalUploadCalls = 0;
+    const unapprovedDb = {
+      getProductionBundle: async () => ({ id: 'prod-unapproved', review_status: 'needs_review', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const unapproved = new PublishingSchedulingAgent(unapprovedDb, {});
+    unapproved.publishQueue = [{
+      productionId: 'prod-unapproved', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    unapproved.uploadToYouTube = async () => { approvalUploadCalls++; return { id: 'must-not-upload' }; };
+    let approvalGateBlocked = false;
+    try {
+      await unapproved.publishContent('prod-unapproved');
+    } catch (error) {
+      approvalGateBlocked = error.code === 'CONTENT_NOT_APPROVED';
+    }
+    if (!approvalGateBlocked || approvalUploadCalls !== 0) {
+      throw new Error('Publishing started without explicit production approval');
+    }
+
+    let emergencyApprovalBlocked = false;
+    try {
+      await unapproved.emergencyPublish('prod-unapproved');
+    } catch (error) {
+      emergencyApprovalBlocked = error.code === 'CONTENT_NOT_APPROVED';
+    }
+    if (!emergencyApprovalBlocked || approvalUploadCalls !== 0) {
+      throw new Error('Emergency publish bypassed the service-level approval gate');
+    }
+
+    const approvedDb = {
+      getProductionBundle: async () => ({ id: 'prod-approved', review_status: 'approved', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const approved = new PublishingSchedulingAgent(approvedDb, {});
+    approved.publishQueue = [{
+      productionId: 'prod-approved', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    approved.uploadToYouTube = async () => ({ id: 'youtube-approved' });
+    const approvedResult = await approved.publishContent('prod-approved');
+    if (approvedResult.status !== 'published') {
+      throw new Error('Explicitly approved production was incorrectly blocked');
+    }
+
+    const unapprovedShortDb = {
+      getProductionBundle: async () => null,
+      getShortClip: async () => ({
+        id: 'short-unapproved', status: 'scheduled',
+        inheritedEvidence: { ready: false }
+      }),
+      updateScheduleEntry: async () => {}
+    };
+    const unapprovedShort = new PublishingSchedulingAgent(unapprovedShortDb, {});
+    unapprovedShort.publishQueue = [{
+      productionId: 'short-unapproved', status: 'scheduled',
+      metadata: { contentType: 'short', audio: intentionalAudio }
+    }];
+    let shortApprovalBlocked = false;
+    try {
+      await unapprovedShort.publishContent('short-unapproved');
+    } catch (error) {
+      shortApprovalBlocked = error.code === 'SHORT_NOT_APPROVED';
+    }
+    if (!shortApprovalBlocked) {
+      throw new Error('Short publishing accepted a clip without explicit approval and verified source evidence');
+    }
+
     const missingNarration = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
     missingNarration.publishQueue = [{ productionId: 'prod-no-audio', status: 'scheduled', metadata: {} }];
     missingNarration.uploadToYouTube = async () => { throw new Error('Upload must not start without narration'); };
