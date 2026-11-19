@@ -255,6 +255,12 @@ class PublishingSchedulingAgent {
     
     // Prepare video metadata
     const requestedPrivacy = metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private';
+    if (!['private', 'unlisted', 'public'].includes(requestedPrivacy)) {
+      const error = new Error('Invalid YouTube privacy status. Use private, unlisted, or public.');
+      error.status = 400;
+      error.code = 'INVALID_PRIVACY_STATUS';
+      throw error;
+    }
     const scheduledFor = new Date(scheduleEntry.publishTime);
     const futureSchedule = !options.publishNow && Number.isFinite(scheduledFor.getTime()) && scheduledFor.getTime() > Date.now() + 60000;
     const videoMetadata = {
