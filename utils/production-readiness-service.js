@@ -295,14 +295,14 @@ class ProductionReadinessService {
     const ffprobePath = getFFprobePath();
     const versionResult = await runFFmpeg(['-version']);
     const versionOutput = String(versionResult.stdout || versionResult.stderr || '');
-    const ffmpegVersion = versionOutput.split(/\\r?\\n/)[0].trim() || 'Version not reported';
+    const ffmpegVersion = versionOutput.split('\n')[0].trim() || 'Version not reported';
     const encoderResult = await runFFmpeg(['-hide_banner', '-encoders']);
     const encoderOutput = String(encoderResult.stdout || '') + String(encoderResult.stderr || '');
     const filterResult = await runFFmpeg(['-hide_banner', '-filters']);
     const filterOutput = String(filterResult.stdout || '') + String(filterResult.stderr || '');
 
-    const missingEncoders = ['libx264', 'aac'].filter(name => !new RegExp(`\\\\b${name}\\\\b`).test(encoderOutput));
-    const missingFilters = ['zoompan', 'vignette'].filter(name => !new RegExp(`\\\\b${name}\\\\b`).test(filterOutput));
+    const missingEncoders = ['libx264', 'aac'].filter(name => !encoderOutput.includes(name));
+    const missingFilters = ['zoompan', 'vignette'].filter(name => !filterOutput.includes(name));
     if (missingEncoders.length) throw new Error(`FFmpeg is missing required encoders: ${missingEncoders.join(', ')}. Install a full FFmpeg build with libx264 and AAC support.`);
     if (missingFilters.length) throw new Error(`FFmpeg is missing required CineCode filters: ${missingFilters.join(', ')}. Install a full FFmpeg build with zoompan and vignette filters.`);
 
@@ -310,7 +310,7 @@ class ProductionReadinessService {
     let ffprobeVersion = null;
     try {
       const probe = await execFileAsync(ffprobePath, ['-version'], { timeout: 5000, windowsHide: true });
-      ffprobeVersion = String(probe.stdout || probe.stderr || '').split(/\\r?\\n/)[0].trim() || null;
+      ffprobeVersion = String(probe.stdout || probe.stderr || '').split('\n')[0].trim() || null;
       ffprobeAvailable = true;
     } catch (_error) {
       // The ffmpeg metadata fallback remains supported when ffprobe is not installed.
