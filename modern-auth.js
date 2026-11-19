@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
 const http = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 class ModernAuth {
@@ -10,6 +11,7 @@ class ModernAuth {
     this.credentialsPath = path.join(__dirname, 'config', 'credentials.json');
     this.tokensPath = path.join(__dirname, 'config', 'tokens.json');
     this.server = null;
+    this.oauthState = null;
   }
 
   async authenticate() {
@@ -27,6 +29,8 @@ class ModernAuth {
         credentials.youtube.client_secret,
         redirectUri
       );
+
+      this.oauthState = crypto.randomBytes(32).toString('hex');
 
       const scopes = [
         'https://www.googleapis.com/auth/youtube.upload',
@@ -52,7 +56,8 @@ class ModernAuth {
       const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: scopes,
-        prompt: 'consent'
+        prompt: 'consent',
+        state: this.oauthState
       });
 
       console.log(chalk.cyan('🔗 Please visit this URL to authorize:'));
@@ -109,6 +114,13 @@ class ModernAuth {
     };
   }
 
+  isValidOAuthState(receivedState) {
+    if (typeof receivedState !== 'string' || typeof this.oauthState !== 'string') return false;
+    const expected = Buffer.from(this.oauthState, 'utf8');
+    const received = Buffer.from(receivedState, 'utf8');
+    return expected.length === received.length && crypto.timingSafeEqual(expected, received);
+  }
+
   async startTempServer(redirect, oauth2Client) {
     this.server = http.createServer(async (req, res) => {
       const url = new URL(req.url, redirect.uri);
@@ -116,6 +128,13 @@ class ModernAuth {
       if (url.pathname === redirect.pathname) {
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
+        const state = url.searchParams.get('state');
+
+        if (!this.isValidOAuthState(state)) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Invalid OAuth state. Authorization callback rejected.');
+          return;
+        }
         
         if (error) {
           res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -192,6 +211,7 @@ class ModernAuth {
       this.server.close();
       this.server = null;
     }
+    this.oauthState = null;
   }
 
   async testAuthentication() {
