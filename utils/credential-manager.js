@@ -103,39 +103,11 @@ class CredentialManager {
   }
 
   async authenticateYouTube() {
-    const oauth2Client = new google.auth.OAuth2(
-      this.credentials.youtube.client_id,
-      this.credentials.youtube.client_secret,
-      this.credentials.youtube.redirect_uris[0]
-    );
-
-    const scopes = [
-      'https://www.googleapis.com/auth/youtube.upload',
-      'https://www.googleapis.com/auth/youtube',
-      'https://www.googleapis.com/auth/youtube.readonly',
-      'https://www.googleapis.com/auth/yt-analytics.readonly',
-      'https://www.googleapis.com/auth/youtube.force-ssl'
-    ];
-
-    const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: scopes,
-    });
-
-    console.log(chalk.cyan('\n🔗 Please visit this URL to authorize the application:'));
-    console.log(chalk.blue(authUrl));
-
-    const { code } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'code',
-        message: 'Enter the authorization code:',
-        validate: input => input.length > 0 || 'Authorization code is required'
-      }
-    ]);
-
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    // Use the loopback OAuth flow so the callback state is verified and the
+    // authorization code is exchanged directly instead of being pasted into a prompt.
+    const { ModernAuth } = require('../modern-auth');
+    const auth = new ModernAuth();
+    const tokens = await auth.authenticate();
 
     this.tokens.youtube = tokens;
     await this.saveTokens();
