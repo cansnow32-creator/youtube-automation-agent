@@ -1,9 +1,12 @@
 const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const { AITextService } = require('./ai-text-service');
 const { AIVideoGenerator } = require('./ai-video-generator');
-const { checkFFmpeg, runFFmpeg } = require('./ffmpeg');
+const { checkFFmpeg, runFFmpeg, getFFmpegPath, getFFprobePath, getMediaInfo, getAudioInfo } = require('./ffmpeg');
 const { validateYouTubeMetadata } = require('./youtube-metadata-validator');
 const { Logger } = require('./logger');
 const { MediaGenerationService } = require('./media-generation-service');
@@ -81,6 +84,7 @@ class ProductionReadinessService {
     const checks = [];
 
     try {
+      checks.push(await this.executeCheck('local_runtime', 'Local Windows / Node runtime', true, () => this.probeLocalRuntime()));
       checks.push(await this.executeCheck('text_provider', 'AI text provider', true, () => this.probeText()));
       if (process.env.QUALITY_PIPELINE_ENABLED === 'true') {
         checks.push(await this.executeCheck('quality_pipeline', 'Local-first script quality pipeline', true, () => this.probes.qualityPipeline ? this.probes.qualityPipeline() : this.probeQualityPipeline()));
@@ -145,6 +149,40 @@ class ProductionReadinessService {
         details: {},
         durationMs: Date.now() - started
       };
+    }
+  }
+
+  async probeLocalRuntime() {
+    const [major, minor] = process.versions.node.split('.').map(Number);
+    if (major < 20 || (major === 20 && minor < 17)) {
+      throw new Error(`Node.js 20.17 or newer is required; detected ${process.versions.node}`);
+    }
+
+    const dataDirectory = path.resolve(__dirname, '..', 'data');
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const writableProbe = await fs.mkdtemp(path.join(dataDirectory, '.readiness-write-'));
+    const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-runtime-write-'));
+    try {
+      const probeFile = path.join(writableProbe, 'write-test.tmp');
+      await fs.writeFile(probeFile, 'AgentTube local runtime write check', { flag: 'wx' });
+      await fs.access(probeFile, fs.constants.R_OK | fs.constants.W_OK);
+      await fs.rm(probeFile, { force: true });
+      return {
+        message: 'Node.js version and local data / temporary directory read-write permissions are valid.',
+        details: {
+          nodeVersion: process.versions.node,
+          platform: process.platform,
+          architecture: process.arch,
+          workingDirectory: process.cwd(),
+          dataDirectory,
+          dataDirectoryWritable: true,
+          temporaryDirectory: os.tmpdir(),
+          temporaryDirectoryWritable: true
+        }
+      };
+    } finally {
+      await fs.rm(writableProbe, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(tempDirectory, { recursive: true, force: true }).catch(() => {});
     }
   }
 
@@ -252,20 +290,76 @@ class ProductionReadinessService {
   }
 
   async probeVideoAssembly(tempDir) {
-    if (this.probes.videoAssembly) return this.probes.videoAssembly({ tempDir });
     if (!await checkFFmpeg()) throw new Error('FFmpeg is not available');
+    const ffmpegPath = getFFmpegPath();
+    const ffprobePath = getFFprobePath();
+    const versionResult = await runFFmpeg(['-version']);
+    const versionOutput = String(versionResult.stdout || versionResult.stderr || '');
+    const ffmpegVersion = versionOutput.split(/\\r?\\n/)[0].trim() || 'Version not reported';
+    const encoderResult = await runFFmpeg(['-hide_banner', '-encoders']);
+    const encoderOutput = String(encoderResult.stdout || '') + String(encoderResult.stderr || '');
+    const filterResult = await runFFmpeg(['-hide_banner', '-filters']);
+    const filterOutput = String(filterResult.stdout || '') + String(filterResult.stderr || '');
+
+    const missingEncoders = ['libx264', 'aac'].filter(name => !new RegExp(`\\\\b${name}\\\\b`).test(encoderOutput));
+    const missingFilters = ['zoompan', 'vignette'].filter(name => !new RegExp(`\\\\b${name}\\\\b`).test(filterOutput));
+    if (missingEncoders.length) throw new Error(`FFmpeg is missing required encoders: ${missingEncoders.join(', ')}. Install a full FFmpeg build with libx264 and AAC support.`);
+    if (missingFilters.length) throw new Error(`FFmpeg is missing required CineCode filters: ${missingFilters.join(', ')}. Install a full FFmpeg build with zoompan and vignette filters.`);
+
+    let ffprobeAvailable = false;
+    let ffprobeVersion = null;
+    try {
+      const probe = await execFileAsync(ffprobePath, ['-version'], { timeout: 5000, windowsHide: true });
+      ffprobeVersion = String(probe.stdout || probe.stderr || '').split(/\\r?\\n/)[0].trim() || null;
+      ffprobeAvailable = true;
+    } catch (_error) {
+      // The ffmpeg metadata fallback remains supported when ffprobe is not installed.
+    }
+
     const outputPath = path.join(tempDir, 'readiness-av.mp4');
     await runFFmpeg([
-      '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=320x180:d=1',
+      '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=640x360:d=1',
       '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
-      '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
+      '-vf', "scale=640:360:force_original_aspect_ratio=increase,crop=640:360,zoompan=z='min(zoom+0.00004,1.08)':d=1:s=320x180:fps=30,vignette=PI/5,format=yuv420p",
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+      '-c:a', 'aac', '-shortest', '-movflags', '+faststart', outputPath
     ]);
     const buffer = await fs.readFile(outputPath);
     if (buffer.length < 1000 || buffer.subarray(4, 12).toString('ascii').indexOf('ftyp') === -1) {
       throw new Error('FFmpeg did not produce a valid MP4 container');
     }
     await runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
-    return { message: 'FFmpeg created and decoded a local MP4 containing audio and video.', details: { bytes: buffer.length } };
+    const [videoInfo, audioInfo] = await Promise.all([
+      getMediaInfo(outputPath),
+      getAudioInfo(outputPath)
+    ]);
+    if (!videoInfo.hasAudio || !audioInfo.duration) throw new Error('The test MP4 is missing a readable audio stream');
+    if (videoInfo.width !== 320 || videoInfo.height !== 180) {
+      throw new Error(`FFmpeg returned unexpected test dimensions: ${videoInfo.width}x${videoInfo.height}`);
+    }
+
+    return {
+      status: ffprobeAvailable ? 'passed' : 'warning',
+      message: ffprobeAvailable
+        ? 'FFmpeg, FFprobe, CineCode motion filters, H.264 and AAC all rendered and decoded a real local MP4.'
+        : 'FFmpeg rendered and decoded the real MP4. FFprobe is unavailable; the built-in FFmpeg metadata fallback was verified.',
+      remediation: ffprobeAvailable ? null : 'Install FFprobe or configure FFPROBE_PATH alongside FFmpeg for faster and more reliable media inspection.',
+      details: {
+        ffmpegPath,
+        ffmpegVersion,
+        ffprobePath,
+        ffprobeAvailable,
+        ffprobeVersion,
+        videoEncoder: 'libx264',
+        audioEncoder: 'aac',
+        filters: ['zoompan', 'vignette'],
+        outputBytes: buffer.length,
+        outputWidth: videoInfo.width,
+        outputHeight: videoInfo.height,
+        outputDurationSeconds: Number(videoInfo.duration.toFixed(3)),
+        audioCodec: audioInfo.codec
+      }
+    };
   }
 
   async probeYouTube() {
@@ -328,7 +422,8 @@ class ProductionReadinessService {
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
-      video_assembly: 'Run npm install to restore ffmpeg-static, or configure FFMPEG_PATH to a working binary.',
+      local_runtime: 'Install Node.js 20.17 or newer, close apps that may lock the data folder, verify write permissions, and rerun the check.',
+      video_assembly: 'Install a full FFmpeg build with libx264, AAC, zoompan and vignette support. On Windows, run winget install Gyan.FFmpeg, restart the terminal, and configure FFMPEG_PATH / FFPROBE_PATH if needed.',
       youtube_access: 'Reconnect YouTube in npm run walkthrough and ensure the Google account owns a channel.',
       upload_metadata: 'Edit the queued title, description, category, language, and tags before publishing.'
     };
