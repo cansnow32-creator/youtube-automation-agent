@@ -413,6 +413,8 @@ label:has(input:disabled) > span { color: var(--muted); }
 .plan-card strong { display: block; line-height: 1.35; font-size: 13.5px; }
 .plan-card p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 7px 0 0; }
 .plan-card .meta-line { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+.plan-card .plan-rationale { border-top: 1px solid var(--line); padding-top: 8px; }
+.plan-card .plan-rationale strong { display: inline; color: var(--text); font-size: inherit; }
 
 .run-summary { display: grid; gap: 12px; }
 .run-summary-row { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; align-items: center; }
