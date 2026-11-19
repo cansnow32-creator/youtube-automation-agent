@@ -1,6 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
-const { runFFmpeg } = require('./ffmpeg');
+const { runFFmpeg, getMediaInfo } = require('./ffmpeg');
 const { Logger } = require('./logger');
 
 const LAYOUTS = new Set(['blur', 'crop', 'stacked']);
@@ -37,6 +37,7 @@ class ShortsRepurposingService {
     this.width = Number(options.width || 1080);
     this.height = Number(options.height || 1920);
     this.runFFmpeg = options.runFFmpeg || runFFmpeg;
+    this.getMediaInfo = options.getMediaInfo || getMediaInfo;
   }
 
   async propose(productionId, input = {}) {
@@ -180,6 +181,7 @@ class ShortsRepurposingService {
     const directory = path.join(this.dataRoot, productionId);
     await fs.mkdir(directory, { recursive: true });
     const outputPath = path.join(directory, `${clip.id}.mp4`);
+    const temporaryOutputPath = path.join(directory, `${clip.id}.rendering.mp4`);
     const captionsPath = path.join(directory, `${clip.id}.srt`);
     await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), 'utf8');
     await this.db.updateShortClip(clip.id, { status: 'rendering', error: null });
@@ -190,16 +192,28 @@ class ShortsRepurposingService {
         '-y', '-ss', String(clip.startSeconds), '-i', sourceVideo, '-t', String(clip.duration),
         '-filter_complex', filter, '-map', '[shortv]', '-map', '0:a:0?',
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
-        '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-shortest', outputPath
+        '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-shortest', temporaryOutputPath
       ]);
-      await this.runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
-      const stats = await fs.stat(outputPath);
+      await this.runFFmpeg(['-v', 'error', '-i', temporaryOutputPath, '-f', 'null', '-']);
+      const stats = await fs.stat(temporaryOutputPath);
       if (!stats.isFile() || stats.size <= 0) throw new Error('FFmpeg returned an empty Short');
+      const media = await this.getMediaInfo(temporaryOutputPath);
+      const expectedDuration = Number(clip.duration);
+      const durationTolerance = Math.max(1.5, expectedDuration * 0.03);
+      if (!Number.isFinite(media.duration) || media.duration < expectedDuration - durationTolerance || media.duration > expectedDuration + 1) {
+        throw new Error(`Rendered Short duration ${Number(media.duration || 0).toFixed(2)}s does not match the requested ${expectedDuration}s`);
+      }
+      if (!Number.isFinite(media.width) || !Number.isFinite(media.height) || media.width <= 0 || media.height <= 0 || Math.abs((media.width / media.height) - (9 / 16)) > 0.01) {
+        throw new Error(`Rendered Short must be 9:16 portrait video; received ${media.width || 'unknown'}x${media.height || 'unknown'}`);
+      }
+      await fs.rename(temporaryOutputPath, outputPath);
       return this.db.updateShortClip(clip.id, {
         status: 'rendered', outputPath, captionsPath, error: null,
-        renderedAt: new Date().toISOString()
+        renderedAt: new Date().toISOString(),
+        renderMetadata: { duration: media.duration, width: media.width, height: media.height, hasAudio: media.hasAudio === true }
       });
     } catch (error) {
+      await fs.rm(temporaryOutputPath, { force: true }).catch(() => {});
       await this.db.updateShortClip(clip.id, { status: 'failed', error: error.message });
       throw error;
     }
