@@ -41,8 +41,18 @@ class ProductionReadinessService {
 
   async assertReady(action) {
     const summary = await this.getSummary();
-    if (summary.status === 'failed') {
-      const error = new Error(`${action} is blocked by the production readiness gate. Fix ${summary.blockingFailures.join(', ')} and run the check again.`);
+    let reason = null;
+    if (summary.status === 'unverified') {
+      reason = 'Run the verified production readiness check before continuing';
+    } else if (summary.stale) {
+      reason = 'The production readiness check is older than 24 hours; run it again';
+    } else if (summary.status === 'failed') {
+      reason = `Fix ${summary.blockingFailures.join(', ')} and run the check again`;
+    } else if (!['passed', 'warning'].includes(summary.status)) {
+      reason = `Resolve the readiness status (${summary.status || 'unknown'}) and run the check again`;
+    }
+    if (reason) {
+      const error = new Error(`${action} is blocked by the production readiness gate. ${reason}.`);
       error.status = 409;
       error.readiness = summary;
       throw error;
