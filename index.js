@@ -34,9 +34,9 @@ function isLoopbackHost(host) {
   return ['127.0.0.1', '::1', 'localhost'].includes(String(host).toLowerCase()) || /^127\./.test(String(host));
 }
 
-function validateHostConfiguration(host, apiKey) {
-  if (!isLoopbackHost(host) && !String(apiKey || '').trim()) {
-    throw new Error('Refusing to expose the dashboard on a network interface without API_KEY. Set API_KEY in .env or bind HOST to 127.0.0.1.');
+function validateHostConfiguration(host) {
+  if (!isLoopbackHost(host)) {
+    throw new Error('Refusing to expose the dashboard beyond loopback: read-only API routes do not yet have session authentication. Bind HOST to 127.0.0.1.');
   }
   return true;
 }
@@ -1885,7 +1885,7 @@ class YouTubeAutomationAgent {
     // Loopback by default: mutating routes are open whenever API_KEY is unset,
     // so the dashboard must not be reachable from the network unless asked.
     const HOST = process.env.HOST || '127.0.0.1';
-    validateHostConfiguration(HOST, process.env.API_KEY);
+    validateHostConfiguration(HOST);
     this.app.listen(PORT, HOST, () => {
       console.log(chalk.green(`\n✅ YouTube Automation Agent running on ${HOST}:${PORT}`));
       console.log(chalk.gray('─'.repeat(50)));
