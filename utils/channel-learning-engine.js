@@ -373,13 +373,15 @@ class ChannelLearningEngine {
   }
 
   async getSummary() {
-    const [snapshots, recommendations, retentionSnapshots, strategy] = await Promise.all([
+    const [snapshots, recommendations, retentionSnapshots, strategy, experiments] = await Promise.all([
       this.db.listPerformanceSnapshots({ reliableOnly: true }),
       this.db.listLearningRecommendations({ limit: 50 }),
       this.db.listRetentionSnapshots ? this.db.listRetentionSnapshots({ limit: 12 }) : Promise.resolve([]),
-      this.db.getChannelStrategy ? this.db.getChannelStrategy() : Promise.resolve(null)
+      this.db.getChannelStrategy ? this.db.getChannelStrategy() : Promise.resolve(null),
+      this.db.listGrowthExperiments ? this.db.listGrowthExperiments({ limit: 100 }) : Promise.resolve([])
     ]);
     const preferred = this.preferredSnapshotPerVideo(snapshots);
+    const recommendationsWithFeedback = this.attachExperimentFeedback(recommendations, experiments);
     return {
       measuredVideos: preferred.length,
       snapshotCount: snapshots.length,
@@ -402,6 +404,39 @@ class ChannelLearningEngine {
         snapshots: retentionSnapshots
       }
     };
+  }
+
+  attachExperimentFeedback(recommendations = [], experiments = []) {
+    const byRecommendation = new Map();
+    for (const experiment of experiments) {
+      if (!experiment.recommendationId) continue;
+      if (!byRecommendation.has(experiment.recommendationId)) byRecommendation.set(experiment.recommendationId, []);
+      byRecommendation.get(experiment.recommendationId).push(experiment);
+    }
+    return recommendations.map(recommendation => {
+      const linked = byRecommendation.get(recommendation.id) || [];
+      const latest = linked[0] || null;
+      if (!latest) return { ...recommendation, experimentFeedback: { status: 'not_tested', experimentCount: 0 } };
+      const winner = (latest.arms || []).find(arm => arm.id === latest.winningArmId);
+      const status = latest.status === 'adopted' ? 'validated_and_adopted'
+        : latest.status === 'awaiting_winner' ? 'awaiting_operator_decision'
+          : ['inconclusive', 'cancelled'].includes(latest.status) ? latest.status
+            : ['running', 'approved', 'draft', 'action_required'].includes(latest.status) ? 'in_progress'
+              : latest.status || 'unknown';
+      return {
+        ...recommendation,
+        experimentFeedback: {
+          status,
+          experimentCount: linked.length,
+          experimentId: latest.id,
+          reason: latest.result?.reason || null,
+          liftPercent: Number.isFinite(Number(latest.result?.liftPercent)) ? Number(latest.result.liftPercent) : null,
+          winnerLabel: winner?.label || null,
+          confidence: latest.result?.confidence || null,
+          guardrailsPassed: latest.result?.guardrails?.passed === true
+        }
+      };
+    });
   }
 
   outcomeGoal(strategy = {}) {
