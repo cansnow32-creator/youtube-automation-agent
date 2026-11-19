@@ -55,7 +55,7 @@ async function run() {
     assert.equal(rendered.status, 'rendered');
     assert.deepEqual(rendered.renderMetadata, { duration: 30, width: 1080, height: 1920, hasAudio: true });
     await fs.access(rendered.outputPath);
-    await assert.rejects(fs.access(rendered.outputPath.replace(/\\.mp4$/i, '.rendering.mp4')));
+    await assert.rejects(fs.access(rendered.outputPath.replace(/\.mp4$/i, '.rendering.mp4')));
   } finally {
     await fs.rm(harness.root, { recursive: true, force: true });
   }
