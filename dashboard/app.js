@@ -5,7 +5,8 @@ const ui = {
   toastTimer: null,
   retentionSnapshotId: null,
   engagementVideoId: null,
-  engagementDetail: null
+  engagementDetail: null,
+  currentConceptId: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -911,6 +912,54 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
       : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
 }
 
+async function loadVideoConcepts() {
+  const container = $('#concept-list');
+  if (!container) return;
+  container.innerHTML = empty('Loading concepts…');
+  try {
+    const data = await api('/api/concepts');
+    const concepts = data.concepts || [];
+    container.innerHTML = concepts.length ? concepts.map(item => `
+      <article class="idea-card">
+        <div class="idea-meta"><strong>${escapeHTML(item.concept?.name || item.topic)}</strong><div class="meta-line">${escapeHTML(item.topic)} · ${statusChip(item.status)}${item.revisionOf ? ' · revised' : ''}</div></div>
+        <button type="button" class="button secondary small" data-select-concept="${escapeHTML(item.id)}">Review</button>
+      </article>`).join('') : empty('No concepts yet. Start by proposing one above.');
+    if (ui.currentConceptId && concepts.some(item => item.id === ui.currentConceptId)) {
+      const selected = concepts.find(item => item.id === ui.currentConceptId);
+      renderVideoConcept(selected);
+    } else if (concepts[0]) {
+      ui.currentConceptId = concepts[0].id;
+      renderVideoConcept(concepts[0]);
+    }
+  } catch (error) {
+    container.innerHTML = empty(error.message);
+  }
+}
+
+function renderVideoConcept(record) {
+  if (!record) return;
+  ui.currentConceptId = record.id;
+  $('#concept-status').textContent = label(record.status);
+  const concept = record.concept || {};
+  const sceneRows = Array.isArray(concept.scenePlan) ? concept.scenePlan.map(scene => `
+    <article class="idea-card"><strong>Scene ${escapeHTML(scene.scene)}</strong><div class="meta-line">${escapeHTML(scene.purpose || '')}</div><p>${escapeHTML(scene.visual || '')}</p><small>${escapeHTML(scene.narrationIntent || '')} · ${escapeHTML(scene.durationSeconds || '?')} sec</small></article>`).join('') : '';
+  $('#concept-detail').innerHTML = `
+    <h3>${escapeHTML(concept.name || record.topic)}</h3>
+    <p>${escapeHTML(concept.premise || '')}</p>
+    <p><strong>Audience:</strong> ${escapeHTML(concept.audience || '')}</p>
+    <p><strong>Emotional objective:</strong> ${escapeHTML(concept.emotionalObjective || '')}</p>
+    <h4>Story arc</h4><p>${escapeHTML(Array.isArray(concept.storyArc) ? concept.storyArc.join(' → ') : concept.storyArc || '')}</p>
+    <h4>Visual direction</h4><pre>${escapeHTML(JSON.stringify(concept.visualDirection || {}, null, 2))}</pre>
+    <h4>Audio & subtitles</h4><pre>${escapeHTML(JSON.stringify({ audio: concept.audioDirection || {}, subtitles: concept.subtitleDirection || {}, transitions: concept.transitions || '' }, null, 2))}</pre>
+    <h4>Scene plan</h4><div class="card-list">${sceneRows}</div>
+    <div class="form-actions">
+      ${record.status === 'pending' ? '<button type="button" class="button secondary" data-concept-revise>Revise concept</button><button type="button" class="button primary" data-concept-approve>Approve concept</button>' : ''}
+      ${record.status === 'approved' ? '<button type="button" class="button primary" data-concept-generate>Start production</button>' : ''}
+    </div>
+    ${record.status === 'approved' ? '<p class="callout">Approved. Production can now start using this creative brief.</p>' : '<p class="callout">Production is locked until you approve this concept.</p>'}`;
+  $('#concept-revision-form').classList.toggle('hidden', record.status !== 'pending');
+}
+
 function switchView(view) {
   ui.currentView = view;
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
@@ -923,13 +972,15 @@ function switchView(view) {
     analytics: ['PERFORMANCE', 'Turn results into the next move.'],
     engagement: ['AUDIENCE ENGAGEMENT', 'Talk with the people watching.'],
     readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
-    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
+    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.'],
+    concepts: ['CREATIVE DIRECTION', 'Approve the concept before production begins.']
   };
   $('#view-eyebrow').textContent = titles[view][0];
   $('#view-title').textContent = titles[view][1];
   location.hash = view;
   // Loaded on demand rather than in the 8-second dashboard poll to spare API quota.
   if (view === 'analytics') loadChannelSnapshot();
+  if (view === 'concepts') loadVideoConcepts();
 }
 
 function selectOptions(options, selected) {
@@ -1331,6 +1382,42 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  const conceptSelect = event.target.closest('[data-select-concept]');
+  if (conceptSelect) {
+    ui.currentConceptId = conceptSelect.dataset.selectConcept;
+    try {
+      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId));
+      renderVideoConcept(data.concept);
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+  if (event.target.closest('#concept-refresh-button')) return loadVideoConcepts();
+  if (event.target.closest('[data-concept-revise]')) {
+    $('#concept-revision-form').classList.remove('hidden');
+    $('#concept-revision-form textarea').focus();
+    return;
+  }
+  if (event.target.closest('[data-concept-approve]')) {
+    if (!confirm('Approve this concept? Production will use this approved creative direction.')) return;
+    try {
+      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/approve', { method: 'POST', body: '{}' });
+      renderVideoConcept(data.concept);
+      showToast('Concept approved. Production is now unlocked.');
+      await loadVideoConcepts();
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+  if (event.target.closest('[data-concept-generate]')) {
+    if (!confirm('Start production using this approved concept?')) return;
+    try {
+      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/generate', { method: 'POST', body: JSON.stringify({ length: 'medium' }) });
+      showToast('Production job started.');
+      await refreshDashboard(true);
+      switchView('pipeline');
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+
   const nav = event.target.closest('[data-view]');
   if (nav) return switchView(nav.dataset.view);
   const go = event.target.closest('[data-go]');
@@ -1847,6 +1934,41 @@ $('#resume-operator-run').addEventListener('click', async event => {
   }
 });
 
+$('#concept-propose-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const data = await api('/api/concepts/propose', { method: 'POST', body: JSON.stringify(values) });
+    ui.currentConceptId = data.concept.id;
+    renderVideoConcept(data.concept);
+    event.currentTarget.reset();
+    showToast('Concept proposed by local Ollama. Review it before production.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally { button.disabled = false; }
+});
+
+$('#concept-revision-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!ui.currentConceptId) return;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/revise', { method: 'POST', body: JSON.stringify(values) });
+    ui.currentConceptId = data.concept.id;
+    event.currentTarget.reset();
+    renderVideoConcept(data.concept);
+    showToast('New concept revision created. Review it again.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally { button.disabled = false; }
+});
+
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -1890,6 +2012,6 @@ $('#api-key-button').addEventListener('click', () => {
 });
 
 const initialView = location.hash.slice(1);
-if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'engagement', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
+if (['overview', 'concepts', 'operator', 'pipeline', 'calendar', 'analytics', 'engagement', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
 refreshDashboard();
 setInterval(() => refreshDashboard(true), 8000);
