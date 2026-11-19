@@ -122,6 +122,44 @@ async function getMediaInfo(filePath) {
   throw new Error(`Could not determine video dimensions and duration for ${filePath}`);
 }
 
+async function getAudioInfo(filePath) {
+  try {
+    const { stdout } = await execFileAsync(getFFprobePath(), [
+      '-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,sample_rate,channels',
+      '-of', 'json', filePath
+    ]);
+    const parsed = JSON.parse(stdout || '{}');
+    const audio = (Array.isArray(parsed.streams) ? parsed.streams : [])
+      .find(stream => stream.codec_type === 'audio');
+    const duration = Number(parsed.format?.duration);
+    if (audio && Number.isFinite(duration) && duration > 0) {
+      return {
+        duration,
+        codec: audio.codec_name || null,
+        sampleRate: Number(audio.sample_rate) || null,
+        channels: Number(audio.channels) || null
+      };
+    }
+  } catch (_error) {
+    // Fall back to FFmpeg input metadata when ffprobe is unavailable.
+  }
+
+  try {
+    await runFFmpeg(['-i', filePath]);
+  } catch (error) {
+    const output = String(error.stderr || '');
+    const durationMatch = output.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i);
+    const audioMatch = output.match(/Stream #\d+:\d+[^\n]*Audio:\s*([^,\s]+)/i);
+    if (durationMatch && audioMatch) {
+      const duration = Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3]);
+      if (Number.isFinite(duration) && duration > 0) {
+        return { duration, codec: audioMatch[1], sampleRate: null, channels: null };
+      }
+    }
+  }
+  throw new Error(`Could not determine audio stream metadata for ${filePath}`);
+}
+
 function ffmpegInstallHint() {
   const hints = {
     win32: 'winget install Gyan.FFmpeg (then restart your terminal)',
@@ -133,4 +171,4 @@ function ffmpegInstallHint() {
   return `FFmpeg not found. Install it with: ${platformHint} — or run "npm install" again to fetch the bundled ffmpeg-static binary, or set FFMPEG_PATH to your ffmpeg executable.`;
 }
 
-module.exports = { getFFmpegPath, getFFprobePath, getMediaDuration, getMediaInfo, checkFFmpeg, runFFmpeg, ffmpegInstallHint };
+module.exports = { getFFmpegPath, getFFprobePath, getMediaDuration, getMediaInfo, getAudioInfo, checkFFmpeg, runFFmpeg, ffmpegInstallHint };
