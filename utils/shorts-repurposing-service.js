@@ -172,7 +172,7 @@ class ShortsRepurposingService {
       error.status = 409;
       throw error;
     }
-    const sourceVideo = bundle.assets?.finalVideo?.path;
+    const sourceVideo = bundle.assets?.finalVideo?.cleanPath || bundle.assets?.finalVideo?.path;
     await this.requireFile(sourceVideo, 'The approved source MP4 is missing');
     const sourceScenes = (bundle.scenes || []).filter(scene => clip.sourceSceneIds.includes(scene.id));
     if (!sourceScenes.length) throw new Error('The selected source scenes no longer exist');
