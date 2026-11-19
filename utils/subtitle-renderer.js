@@ -25,11 +25,11 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
     .replaceAll(':', '\\:')
     .replaceAll("'", "\\'");
   const style = [
-    \`FontName=\${fontName}\`, \`FontSize=\${fontSize}\`, \`Bold=\${bold}\`,
-    \`PrimaryColour=\${color}\`, 'OutlineColour=&H00000000', 'BorderStyle=1',
-    'Outline=2', 'Shadow=1', \`Alignment=\${alignment}\`, \`MarginV=\${margin}\`
+    `FontName=${fontName}`, `FontSize=${fontSize}`, `Bold=${bold}`,
+    `PrimaryColour=${color}`, 'OutlineColour=&H00000000', 'BorderStyle=1',
+    'Outline=2', 'Shadow=1', `Alignment=${alignment}`, `MarginV=${margin}`
   ].join(',');
-  return \`subtitles='\${escapedPath}':force_style='\${style}'\`;
+  return `subtitles='${escapedPath}':force_style='${style}'`;
 }
 
 function validateSrtContent(content) {
