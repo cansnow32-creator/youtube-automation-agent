@@ -1410,7 +1410,7 @@ document.addEventListener('click', async event => {
   if (event.target.closest('[data-concept-generate]')) {
     if (!confirm('Start production using this approved concept?')) return;
     try {
-      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/generate', { method: 'POST', body: JSON.stringify({ length: 'medium' }) });
+      await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/generate', { method: 'POST', body: JSON.stringify({ length: 'medium' }) });
       showToast('Production job started.');
       await refreshDashboard(true);
       switchView('pipeline');
