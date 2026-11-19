@@ -11,7 +11,7 @@ The `cinecode` video-provider option is implemented as a native local renderer i
 5. The normal subtitle pass burns approved typography and placement into the final MP4.
 6. The production manifest records the requested and actual provider as `cinecode`, plus scene paths and renderer metadata.
 
-The renderer is local and does not call a paid video-generation API. It still depends on real image assets and a working FFmpeg installation. If those prerequisites are missing, CineCode fails closed and is **not** silently replaced by the slideshow provider.
+The renderer is local and does not call a video-generation API. It still depends on real image assets from the configured image-generation provider; that image provider may incur charges. FFmpeg must also be installed and working. If those prerequisites are missing, CineCode fails closed and is **not** silently replaced by the slideshow provider.
 
 ## Current boundaries
 
