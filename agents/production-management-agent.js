@@ -499,6 +499,7 @@ class ProductionManagementAgent {
     
     // Generate SRT captions based on script timing
     const captions = await this.createSRTCaptions(productionData);
+    validateSrtContent(captions);
     
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
     await fs.writeFile(captionsPath, captions);
@@ -652,6 +653,9 @@ class ProductionManagementAgent {
       }
 
       const captionsPath = productionData.assets.captions?.path;
+      if (!captionsPath) throw new Error('A generated SRT captions file is required before production can be marked ready');
+      const captionsContent = await fs.readFile(captionsPath, 'utf8');
+      validateSrtContent(captionsContent);
       const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
       if (captionsPath) {
         const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
@@ -668,11 +672,6 @@ class ProductionManagementAgent {
         }
         finalVideoPath = captionedPath;
         productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
-      } else {
-        productionData.assets.captions = {
-          ...(productionData.assets.captions || {}),
-          styleApplication: { typographyApplied: false, placementApplied: false, animationApplied: false, note: 'No SRT captions file was available for styling.' }
-        };
       }
 
       // Get file stats
