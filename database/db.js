@@ -616,7 +616,18 @@ class Database {
         completed_at TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
-            // System Settings
+            // Weekly trend snapshots preserve research history for strategy decisions.
+      `CREATE TABLE IF NOT EXISTS trend_snapshots (
+        id TEXT PRIMARY KEY,
+        region_code TEXT NOT NULL,
+        topics TEXT NOT NULL,
+        source_counts TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_trend_snapshots_captured_at
+        ON trend_snapshots(captured_at DESC)`,
+      // System Settings
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
@@ -710,6 +721,69 @@ class Database {
         'Clean, high-contrast, and readable',
         process.env.CHANNEL_TIMEZONE || 'America/Chicago'
       ]
+    );
+  }
+
+  // Trend research snapshots
+  async saveTrendSnapshot(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.topics) || snapshot.topics.length === 0) {
+      throw new Error('A trend snapshot requires at least one topic');
+    }
+    const record = {
+      id: this.generateId('trend'),
+      regionCode: String(snapshot.regionCode || 'US').toUpperCase(),
+      topics: snapshot.topics,
+      sourceCounts: snapshot.sourceCounts || {},
+      capturedAt: snapshot.capturedAt || new Date().toISOString()
+    };
+    await this.executeQuery(
+      `INSERT INTO trend_snapshots (id, region_code, topics, source_counts, captured_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [record.id, record.regionCode, JSON.stringify(record.topics),
+        JSON.stringify(record.sourceCounts), record.capturedAt]
+    );
+    await this.pruneTrendSnapshots(52);
+    return record;
+  }
+
+  async getLatestTrendSnapshot() {
+    const row = await this.getRow(
+      'SELECT * FROM trend_snapshots ORDER BY captured_at DESC, created_at DESC LIMIT 1'
+    );
+    if (!row) return null;
+    return {
+      id: row.id,
+      regionCode: row.region_code,
+      topics: JSON.parse(row.topics || '[]'),
+      sourceCounts: JSON.parse(row.source_counts || '{}'),
+      capturedAt: row.captured_at
+    };
+  }
+
+  async getTrendSnapshots(limit = 52) {
+    const safeLimit = Math.max(1, Math.min(104, Number.parseInt(limit, 10) || 52));
+    const rows = await this.getAllRows(
+      'SELECT * FROM trend_snapshots ORDER BY captured_at DESC, created_at DESC LIMIT ?',
+      [safeLimit]
+    );
+    return rows.map(row => ({
+      id: row.id,
+      regionCode: row.region_code,
+      topics: JSON.parse(row.topics || '[]'),
+      sourceCounts: JSON.parse(row.source_counts || '{}'),
+      capturedAt: row.captured_at
+    }));
+  }
+
+  async pruneTrendSnapshots(retain = 52) {
+    const safeRetain = Math.max(1, Math.min(104, Number.parseInt(retain, 10) || 52));
+    await this.executeQuery(
+      `DELETE FROM trend_snapshots
+       WHERE id NOT IN (
+         SELECT id FROM trend_snapshots
+         ORDER BY captured_at DESC, created_at DESC LIMIT ?
+       )`,
+      [safeRetain]
     );
   }
 
