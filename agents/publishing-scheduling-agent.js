@@ -252,9 +252,22 @@ class PublishingSchedulingAgent {
     scheduleEntry.error = null;
     await this.db.updateScheduleEntry(scheduleEntry);
     
-    // Upload thumbnail
+    // Upload the thumbnail without turning a successful video upload into a retryable video failure.
+    // Persist the result so a failed thumbnail is visible and can be repaired separately.
     if (metadata.thumbnail && metadata.thumbnail.path) {
-      await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+      try {
+        await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+        scheduleEntry.metadata.thumbnailUpload = { status: 'uploaded', completedAt: new Date().toISOString() };
+      } catch (error) {
+        scheduleEntry.metadata.thumbnailUpload = {
+          status: 'failed',
+          failedAt: new Date().toISOString(),
+          errorCode: error.code || null,
+          retryRequired: true
+        };
+        this.logger.warn(`Video ${videoId} was uploaded, but its thumbnail failed. Repair the thumbnail separately; do not retry the video upload.`);
+      }
+      await this.db.updateScheduleEntry(scheduleEntry);
     }
     
     // Upload captions
@@ -331,20 +344,13 @@ class PublishingSchedulingAgent {
     }
   }
   async uploadThumbnail(videoId, thumbnailPath) {
-    try {
-      const thumbnailBuffer = await fs.readFile(thumbnailPath);
-      
-      await this.youtube.thumbnails.set({
-        videoId: videoId,
-        media: {
-          body: thumbnailBuffer
-        }
-      });
-      
-      this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
-    } catch (error) {
-      this.logger.error(`Failed to upload thumbnail: ${error.message}`);
-    }
+    const thumbnailBuffer = await fs.readFile(thumbnailPath);
+    await this.youtube.thumbnails.set({
+      videoId,
+      media: { body: thumbnailBuffer }
+    });
+    this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
+    return { videoId, uploaded: true };
   }
 
   async applyVideoPackaging(videoId, packaging = {}, previousPackaging = null) {
