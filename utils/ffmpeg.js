@@ -105,8 +105,8 @@ async function getMediaInfo(filePath) {
     await runFFmpeg(['-i', filePath]);
   } catch (error) {
     const output = String(error.stderr || '');
-    const durationMatch = output.match(/Duration:\\s*(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)/i);
-    const videoMatch = output.match(/Stream #\\d+:\\d+[^\\n]*Video:[^\\n]*?(\\d{2,5})x(\\d{2,5})/i);
+    const durationMatch = output.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i);
+    const videoMatch = output.match(/Stream #\d+:\d+[^\n]*Video:[^\n]*?(\d{2,5})x(\d{2,5})/i);
     if (durationMatch && videoMatch) {
       const duration = Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3]);
       if (Number.isFinite(duration) && duration > 0) {
@@ -114,7 +114,7 @@ async function getMediaInfo(filePath) {
           duration,
           width: Number(videoMatch[1]),
           height: Number(videoMatch[2]),
-          hasAudio: /Stream #\\d+:\\d+[^\\n]*Audio:/i.test(output)
+          hasAudio: /Stream #\d+:\d+[^\n]*Audio:/i.test(output)
         };
       }
     }
