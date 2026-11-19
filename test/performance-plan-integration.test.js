@@ -36,7 +36,7 @@ function strategy() {
   };
 }
 
-function makeAgent(rows, recommendations = []) {
+function makeAgent(rows, recommendations = [], ideas = []) {
   const calls = { snapshotOptions: null, recommendationOptions: null, promptResearch: null };
   const db = {
     listPerformanceSnapshots: async options => {
@@ -48,7 +48,7 @@ function makeAgent(rows, recommendations = []) {
       return recommendations;
     },
     getAllRows: async () => [],
-    listContentIdeas: async () => []
+    listContentIdeas: async () => ideas
   };
   const agent = new ContentStrategyAgent(db, {});
   agent.analyzeTrends = async () => {
@@ -91,6 +91,25 @@ async function run() {
   assert.match(result.plan[0].rationale, /Performance evidence \(advisory\):/);
   assert.equal(calls.promptResearch.performanceGuidance.status, 'evidence_backed',
     'the same evidence guidance must be passed into AI plan generation');
+
+
+  const backlogIdeas = [
+    { topic: 'News backlog idea', angle: 'Review angle', style: 'review', status: 'backlog',
+      rationale: JSON.stringify({ source: 'weekly_trend_snapshot', score: 92, pillar: 'News', explanation: 'Strong trend signal.' }) },
+    { topic: 'Neutral backlog idea', angle: 'Story angle', style: 'story', status: 'backlog',
+      rationale: JSON.stringify({ source: 'weekly_trend_snapshot', score: 85, pillar: 'Other', explanation: 'Broad audience fit.' }) },
+    { topic: 'Education backlog idea', angle: 'Tutorial angle', style: 'tutorial', status: 'backlog',
+      rationale: JSON.stringify({ source: 'weekly_trend_snapshot', score: 80, pillar: 'Education', explanation: 'Useful learning topic.' }) }
+  ];
+  const backlog = makeAgent(makeSnapshots(), [], backlogIdeas);
+  const backlogResult = await backlog.agent.researchAndPlanChannel(strategy());
+  assert.equal(backlog.calls.promptResearch, null,
+    'a full scored backlog should not trigger unnecessary AI plan generation');
+  assert.deepEqual(backlogResult.plan.map(item => item.topic),
+    ['Education backlog idea', 'Neutral backlog idea', 'News backlog idea'],
+    'performance evidence must re-rank scored backlog ideas too, without discarding them');
+  assert.equal(backlogResult.research.prioritizedBacklogIdeas.length, 3,
+    'the original trend-scored backlog evidence must remain visible after re-ranking');
 
   const sparseRows = [
     snapshot('edu-1', 'Education', 'tutorial', '3_to_8m', 90, 1000),
