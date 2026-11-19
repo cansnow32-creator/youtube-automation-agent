@@ -75,6 +75,33 @@ async function run() {
   assert.equal(persistedStrategy.approvedVideoConceptId, 'approved-id');
   assert.deepEqual(persistedStrategy.approvedVideoConcept, { name: 'Approved concept' });
 
+  // The scheduled queue passes approvedVideoConceptId at the top level.
+  // startGenerationJob must recognize it and persist the verified concept
+  // inside strategyContext for the later pipeline and recovery paths.
+  const { YouTubeAutomationAgent } = require('../index');
+  const agent = Object.create(YouTubeAutomationAgent.prototype);
+  let createdJob = null;
+  agent.setupRequired = false;
+  agent.agents = { strategy: {} };
+  agent.activeJobs = new Map();
+  agent.readiness = { async assertReady() {} };
+  agent.db = {
+    async getVideoConcept(id) { return productionRecords.get(id) || null; },
+    async createGenerationJob(input) {
+      createdJob = { id: 'scheduled-job', ...input };
+      return createdJob;
+    }
+  };
+  agent.runGenerationJob = async () => {};
+  const queuedJob = await agent.startGenerationJob({
+    topic: 'Scheduled concept test',
+    source: 'scheduler',
+    approvedVideoConceptId: 'approved-id'
+  });
+  assert.equal(queuedJob.id, 'scheduled-job');
+  assert.equal(createdJob.strategyContext.approvedVideoConceptId, 'approved-id');
+  assert.deepEqual(createdJob.strategyContext.approvedVideoConcept, { name: 'Approved concept' });
+
   process.stdout.write('Approved video concept gate tests passed\n');
 }
 
