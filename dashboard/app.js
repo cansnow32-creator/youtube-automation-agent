@@ -1434,7 +1434,13 @@ document.addEventListener('click', async event => {
 
   const idea = event.target.closest('[data-generate-idea]');
   if (idea) {
-    await mutate(`/api/ideas/${encodeURIComponent(idea.dataset.generateIdea)}/generate`, 'POST', { length: 'medium' }, 'Idea queued for generation.').catch(() => {});
+    const record = (ui.state?.ideas || []).find(item => item.id === idea.dataset.generateIdea);
+    if (!record) return showToast('Idea not found. Refresh the dashboard and try again.', 'error');
+    const topicInput = $('#concept-propose-form [name="topic"]');
+    if (topicInput) topicInput.value = record.topic || '';
+    switchView('concepts');
+    showToast('Idea added to the concept studio. Review and approve its creative direction before production.');
+    return;
   }
 
   const resume = event.target.closest('[data-resume-job]');
@@ -1853,7 +1859,7 @@ document.addEventListener('change', event => {
   }
 });
 
-$('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#generate-button').addEventListener('click', () => switchView('concepts'));
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
 $('#channel-snapshot-refresh').addEventListener('click', () => loadChannelSnapshot(true));
