@@ -1028,6 +1028,16 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/content/:productionId/retry-thumbnail', protect, async (req, res) => {
+      try {
+        if (!this.agents.publishing) return res.status(503).json({ error: 'YouTube publishing is not configured' });
+        const result = await this.agents.publishing.retryThumbnailUpload(req.params.productionId);
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
     this.app.delete('/api/content/:productionId/schedule', protect, async (req, res) => {
       try {
         if (!this.agents.publishing) return res.status(503).json({ error: 'Publishing requires completed setup' });
