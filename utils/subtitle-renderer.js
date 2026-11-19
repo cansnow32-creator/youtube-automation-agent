@@ -40,7 +40,8 @@ function validateSrtContent(content) {
   const timestamp = /^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3}) --> (\d{2,}):([0-5]\d):([0-5]\d),(\d{3})$/;
   let previousIndex = 0;
   let validCues = 0;
-  const toMs = match => ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000 + Number(match[4]);
+  const toMs = ([hours, minutes, seconds, millis]) =>
+    ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000 + Number(millis);
   for (const block of blocks) {
     const lines = block.split(/\r?\n/);
     const indexText = (lines[0] || '').trim();
