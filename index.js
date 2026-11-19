@@ -443,7 +443,7 @@ class YouTubeAutomationAgent {
         }
       }
     );
-    this.app.get('/api/concepts/reference-videos/:referenceId/frames/:frameIndex', async (req, res) => {
+    this.app.get('/api/concepts/reference-videos/:referenceId/frames/:frameIndex', this.requireAPIKey(), async (req, res) => {
       try {
         const framePath = await this.references.getFrame(req.params.referenceId, req.params.frameIndex);
         if (!framePath) return res.status(404).json({ success: false, error: 'Reference frame not found' });
