@@ -2193,10 +2193,19 @@ class SystemTest {
   }
 
   async testOpenIssueRegressions() {
-    const { ModernAuth } = require('./modern-auth');
+    const { ModernAuth, preserveRefreshToken } = require('./modern-auth');
     const { OAuthServer } = require('./oauth-server');
     const { ProductionManagementAgent } = require('./agents/production-management-agent');
     const { YouTubeAutomationAgent } = require('./index');
+
+    const preservedRefresh = preserveRefreshToken({ refresh_token: 'existing-refresh' }, { access_token: 'new-access' });
+    if (preservedRefresh.refresh_token !== 'existing-refresh' || preservedRefresh.access_token !== 'new-access') {
+      throw new Error('OAuth reauthorization must preserve an existing refresh token when Google omits it');
+    }
+    const rotatedRefresh = preserveRefreshToken({ refresh_token: 'old-refresh' }, { refresh_token: 'new-refresh' });
+    if (rotatedRefresh.refresh_token !== 'new-refresh') {
+      throw new Error('OAuth reauthorization must prefer a newly issued refresh token');
+    }
 
     const auth = new ModernAuth();
     const fixedRedirect = auth.resolveRedirect({
