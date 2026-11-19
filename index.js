@@ -26,6 +26,7 @@ const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service
 const { AudienceEngagementService } = require('./utils/audience-engagement-service');
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
+const { VideoConceptService } = require('./utils/video-concept-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
@@ -407,6 +408,62 @@ class YouTubeAutomationAgent {
         uptime: process.uptime(),
         timestamp: new Date().toISOString()
       });
+    });
+
+    // Local-first video concept proposal, revision and approval.
+    this.concepts = new VideoConceptService(this.db);
+    this.app.get('/api/concepts', this.requireAPIKey(), async (_req, res) => {
+      try {
+        return res.json({ success: true, concepts: await this.db.listVideoConcepts(30) });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/propose', this.requireAPIKey(), async (req, res) => {
+      try {
+        const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+        const direction = typeof req.body?.direction === 'string' ? req.body.direction.trim() : '';
+        const referenceNotes = typeof req.body?.referenceNotes === 'string' ? req.body.referenceNotes.trim().slice(0, 3000) : '';
+        if (!topic) return res.status(400).json({ success: false, error: 'Topic is required' });
+        const profile = await this.db.getChannelProfile();
+        const concept = await this.concepts.propose({ topic, direction, profile, referenceNotes });
+        return res.status(201).json({ success: true, concept });
+      } catch (error) {
+        return res.status(503).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/concepts/:conceptId', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.get(req.params.conceptId);
+        return concept ? res.json({ success: true, concept }) : res.status(404).json({ success: false, error: 'Video concept not found' });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/:conceptId/revise', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.revise({
+          conceptId: req.params.conceptId,
+          feedback: req.body?.feedback,
+          direction: req.body?.direction
+        });
+        return res.status(201).json({ success: true, concept });
+      } catch (error) {
+        const status = /not found/i.test(error.message) ? 404 : /Approved concepts|Describe what/i.test(error.message) ? 409 : 503;
+        return res.status(status).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/:conceptId/approve', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.approve(req.params.conceptId);
+        return concept ? res.json({ success: true, concept }) : res.status(404).json({ success: false, error: 'Video concept not found' });
+      } catch (error) {
+        return res.status(409).json({ success: false, error: error.message });
+      }
     });
 
     // Manual content generation
