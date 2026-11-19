@@ -47,6 +47,7 @@ async function run() {
 
   let scheduledProduction;
   let savedReview;
+  let updatedSchedule;
   agent.db = {
     getProductionBundle: async id => {
       assert.equal(id, bundle.id);
@@ -57,6 +58,7 @@ async function run() {
       savedReview = { id, ...review };
       return savedReview;
     },
+    updateScheduleEntry: async entry => { updatedSchedule = { ...entry, metadata: { ...entry.metadata } }; return updatedSchedule; },
     updateProductionStatus: async (id, status) => {
       assert.equal(id, bundle.id);
       assert.equal(status, 'scheduled');
@@ -64,6 +66,7 @@ async function run() {
   };
   agent.agents = {
     publishing: {
+      loadPublishQueue: async () => {},
       scheduleContent: async production => {
         scheduledProduction = production;
         return {
@@ -106,6 +109,24 @@ async function run() {
   assert.equal(savedReview.editorData.selectedTitleVariant, 1);
   assert.equal(savedReview.editorData.selectedThumbnailVariant, 1);
   assert.equal(savedReview.editorData.title, 'The Hidden Cost of Fast Fashion');
+
+  bundle.schedule = {
+    id: 'existing-schedule', productionId: bundle.id, title: 'Previously selected title',
+    publishTime: '2026-11-22T12:00:00.000Z', status: 'paused',
+    metadata: { preservedField: 'keep-me', seo: { title: 'Previously selected title' }, thumbnail: { path: '/assets/old-thumbnail.png' } }
+  };
+  const rescheduled = await agent.approveContent(bundle.id, {
+    selectedTitleVariant: 1, selectedThumbnailVariant: 1,
+    factChecked: true, rightsConfirmed: true,
+    publishTime: '2026-11-23T12:00:00.000Z'
+  });
+  assert.equal(rescheduled.schedule.id, 'existing-schedule');
+  assert.equal(updatedSchedule.title, 'The Hidden Cost of Fast Fashion');
+  assert.equal(updatedSchedule.metadata.seo.title, 'The Hidden Cost of Fast Fashion');
+  assert.equal(updatedSchedule.metadata.thumbnail.path, '/assets/centered-thumbnail.png');
+  assert.equal(updatedSchedule.metadata.preservedField, 'keep-me');
+  assert.equal(updatedSchedule.publishTime, '2026-11-23T12:00:00.000Z');
+  assert.equal(updatedSchedule.status, 'scheduled');
 
   process.stdout.write('Packaging variant approval tests passed\\n');
 }
