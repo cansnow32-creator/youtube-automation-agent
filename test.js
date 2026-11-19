@@ -975,7 +975,7 @@ class SystemTest {
       }
     });
     const passed = await service.run({ includePaidMedia: true });
-    if (passed.status !== 'passed' || passed.checks.length !== 7 || !savedRun) {
+    if (passed.status !== 'passed' || passed.checks.length !== 8 || !savedRun) {
       throw new Error('A successful readiness run was not persisted correctly');
     }
     await service.assertReady('Test automation');
