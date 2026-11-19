@@ -12,6 +12,8 @@ class PublishingSchedulingAgent {
     this.logger = new Logger('PublishingScheduling');
     this.youtube = null;
     this.publishQueue = [];
+    // Prevent overlapping publish requests for the same item in this process.
+    this.activePublishes = new Map();
   }
 
   async initialize() {
@@ -99,6 +101,22 @@ class PublishingSchedulingAgent {
   }
 
   async publishContent(contentId, options = {}) {
+    const key = String(contentId);
+    const active = this.activePublishes.get(key);
+    if (active) return active;
+
+    const operation = this.publishContentOnce(contentId, options);
+    this.activePublishes.set(key, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.activePublishes.get(key) === operation) {
+        this.activePublishes.delete(key);
+      }
+    }
+  }
+
+  async publishContentOnce(contentId, options = {}) {
     try {
       let productionBundle = null;
       if (this.db.getProductionBundle) {
