@@ -19,7 +19,7 @@ class LocalFirstQualityPipeline {
   constructor(credentials = {}, options = {}) {
     this.credentials = credentials || {};
     this.enabled = options.enabled ?? process.env.QUALITY_PIPELINE_ENABLED === 'true';
-    this.maxRevisions = options.maxRevisions ?? Number(process.env.QUALITY_MAX_REVISIONS || MAX_REVISIONS);
+    this.maxRevisions = Math.max(0, Math.min(5, Number.isInteger(options.maxRevisions) ? options.maxRevisions : Number.parseInt(process.env.QUALITY_MAX_REVISIONS || MAX_REVISIONS, 10) || MAX_REVISIONS));
     this.minimumScore = options.minimumScore ?? MINIMUM_SCORE;
     this.lastReport = null;
     this.ollamaUrl = String(process.env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_URL).replace(/\/$/, '');
@@ -83,10 +83,8 @@ class LocalFirstQualityPipeline {
 
   async reviewDraft(draft) {
     const prompt = this.buildReviewPrompt(draft, 'YouTube');
-    const [gemini, groq] = await Promise.all([
-      this.requestGemini(prompt),
-      this.requestGroq(prompt)
-    ]);
+    const gemini = await this.requestGemini(prompt);
+    const groq = await this.requestGroq(prompt);
     for (const [name, result] of [['Gemini', gemini], ['Groq', groq]]) {
       if (!Number.isFinite(Number(result.score)) || Number(result.score) < 0 || Number(result.score) > 100) {
         throw new Error(`${name} reviewer returned an invalid score`);
