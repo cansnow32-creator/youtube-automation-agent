@@ -73,4 +73,44 @@ function analyzeVideoTemplates(videos = []) {
     .sort((a, b) => b.averageViews - a.averageViews);
 }
 
-module.exports = { classifyTitlePattern, classifyVideoFormat, analyzeVideoTemplates };
+function rankTemplatesForNiche(templates = [], channelStrategy = {}) {
+  const { overlapScore } = require('./trend-idea-ranker');
+  const profile = [
+    channelStrategy.objective,
+    channelStrategy.audience,
+    channelStrategy.value_proposition || channelStrategy.valueProposition,
+    ...(Array.isArray(channelStrategy.contentPillars) ? channelStrategy.contentPillars : [])
+  ].filter(Boolean).join(' ').trim();
+
+  return (templates || []).map(template => {
+    const evidenceTitles = (template.evidence || []).map(item => item.title || '').filter(Boolean).join(' ');
+    const nicheFitScore = profile && evidenceTitles
+      ? overlapScore(evidenceTitles, profile)
+      : null;
+    const relative = Number(template.relativeToChannelAverage);
+    const performanceScore = Number.isFinite(relative)
+      ? Math.max(0, Math.min(100, Math.round(relative * 50)))
+      : 50;
+    const rankingScore = nicheFitScore === null
+      ? performanceScore
+      : Math.round(nicheFitScore * 0.65 + performanceScore * 0.35);
+
+    return {
+      ...template,
+      nicheFitScore,
+      performanceScore,
+      rankingScore,
+      rankingBasis: nicheFitScore === null ? 'performance_only' : 'niche_fit_and_performance'
+    };
+  }).sort((left, right) =>
+    right.rankingScore - left.rankingScore ||
+    right.averageViews - left.averageViews
+  );
+}
+
+module.exports = {
+  classifyTitlePattern,
+  classifyVideoFormat,
+  analyzeVideoTemplates,
+  rankTemplatesForNiche
+};
