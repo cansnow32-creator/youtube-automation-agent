@@ -177,6 +177,7 @@ async function run() {
   assert.equal(runtime.details.nodeVersion, process.versions.node);
   assert.equal(runtime.details.dataDirectoryWritable, true);
   assert.equal(runtime.details.temporaryDirectoryWritable, true);
+  assert.equal(runtime.details.temporaryDirectoryWriteVerified, true);
 
   if (await checkFFmpeg()) {
     const mediaDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-readiness-ffmpeg-'));
