@@ -146,8 +146,18 @@ class AIVideoGenerator {
         provider = 'gemini';
         model = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts';
         generatedPath = await this.generateGeminiTTS(text, outputPath);
+        directionApplication = {
+          appliedFields: [],
+          unsupportedFields: ['narration', 'pacing', 'music'],
+          note: 'Gemini TTS currently uses the configured voice only; approved delivery direction is retained but not applied.'
+        };
       } else {
         generatedPath = await this.simulateTTSGeneration(text, outputPath);
+        directionApplication = {
+          appliedFields: [],
+          unsupportedFields: ['narration', 'pacing', 'music'],
+          note: 'Simulation does not apply audio direction.'
+        };
       }
 
       const usable = await this.isUsableAudioFile(generatedPath);
@@ -183,10 +193,10 @@ class AIVideoGenerator {
       text: text,
       model_id: this.elevenLabsModel,
       voice_settings: {
-        stability: /calm|gentle|soothing|measured|documentary|serious/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.7
-          : /excited|energetic|dramatic|enthusiastic|playful|animated/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.35 : 0.5,
+        stability: /calm|gentle|soothing|measured|documentary|serious|sakin|yumuşak|belgesel|ölçülü|ciddi/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.7
+          : /excited|energetic|dramatic|enthusiastic|playful|animated|heyecanlı|enerjik|dramatik|coşkulu|oyuncu|canlı/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.35 : 0.5,
         similarity_boost: 0.8,
-        style: /excited|energetic|dramatic|enthusiastic|playful|animated/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.55 : 0.15,
+        style: /excited|energetic|dramatic|enthusiastic|playful|animated|heyecanlı|enerjik|dramatik|coşkulu|oyuncu|canlı/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.55 : 0.15,
         use_speaker_boost: true
       }
     };
