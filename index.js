@@ -1676,6 +1676,8 @@ class YouTubeAutomationAgent {
           rationale: recommendation.rationale || '',
           confidence: recommendation.confidence || 'unknown',
           winningTitle: recommendation.proposedChange?.winningTitle || null,
+          winningThumbnailPattern: recommendation.proposedChange?.winningThumbnailPattern || null,
+          winningArmLabel: recommendation.proposedChange?.winningArmLabel || null,
           evidence: recommendation.evidence || {}
         },
         status: 'draft',
