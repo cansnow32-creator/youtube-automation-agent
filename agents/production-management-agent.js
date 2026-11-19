@@ -5,7 +5,7 @@ const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
 const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
 const { mixBackgroundMusic } = require('../utils/audio-mixer');
-const { buildSubtitleFilter, describeSubtitleApplication } = require('../utils/subtitle-renderer');
+const { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent } = require('../utils/subtitle-renderer');
 const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
 
 class ProductionManagementAgent {
