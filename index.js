@@ -915,14 +915,18 @@ class YouTubeAutomationAgent {
       if (!approvedConceptId) {
         return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'This production has no approved concept linked to it. Create and approve a concept before retrying.' });
       }
-      const job = await this.startGenerationJob({
-        topic: bundle.strategy.topic || bundle.editorData.title || null,
-        style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
-        length: bundle.strategy.requestedLengthKey || 'medium',
-        source: 'retry',
-        approvedConceptId
-      });
-      return res.status(202).json({ success: true, result: job });
+      try {
+        const job = await this.startGenerationJob({
+          topic: bundle.strategy.topic || bundle.editorData.title || null,
+          style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
+          length: bundle.strategy.requestedLengthKey || 'medium',
+          source: 'retry',
+          approvedConceptId
+        });
+        return res.status(202).json({ success: true, result: job });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code || null });
+      }
     });
 
     this.app.get('/api/content/:productionId/asset/:kind', async (req, res) => {
