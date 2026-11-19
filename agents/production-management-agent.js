@@ -674,12 +674,33 @@ class ProductionManagementAgent {
         productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
       }
 
-      // Get file stats
+      // Validate the actual encoded output, not only the existence of a non-empty file.
       const stats = await fs.stat(finalVideoPath);
-      
+      if (!stats.isFile() || stats.size <= 0) {
+        throw new Error('Final video assembly returned an empty output file');
+      }
+      const finalMediaInfo = await getMediaInfo(finalVideoPath);
+      if (!finalMediaInfo.width || !finalMediaInfo.height || !Number.isFinite(finalMediaInfo.duration) || finalMediaInfo.duration <= 0) {
+        throw new Error('Final video is missing a valid video stream or duration');
+      }
+      if (!finalMediaInfo.hasAudio && productionData.assets.audio?.intentionalSilence !== true) {
+        throw new Error('Final video is missing the required narration/audio stream');
+      }
+
+      // Preserve and independently validate the clean, subtitle-free source for Shorts.
+      const cleanStats = await fs.stat(producedPath);
+      if (!cleanStats.isFile() || cleanStats.size <= 0 || path.resolve(producedPath) === path.resolve(finalVideoPath)) {
+        throw new Error('Clean source video was not preserved separately from the final captioned video');
+      }
+      const cleanMediaInfo = await getMediaInfo(producedPath);
+      if (!cleanMediaInfo.width || !cleanMediaInfo.height || !Number.isFinite(cleanMediaInfo.duration) || cleanMediaInfo.duration <= 0) {
+        throw new Error('Clean source video is missing a valid video stream or duration');
+      }
+
       productionData.assets.finalVideo = {
         path: finalVideoPath,
         cleanPath: producedPath,
+        cleanFileSize: cleanStats.size,
         fileSize: stats.size,
         duration: productionData.estimatedDuration,
         generatedWith: 'AI',
