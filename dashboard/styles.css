@@ -553,6 +553,9 @@ label:has(input:disabled) > span { color: var(--muted); }
 .readiness-check.warning .readiness-icon, .readiness-check.skipped .readiness-icon { color: var(--amber); background: var(--amber-soft); }
 .readiness-check p { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 14px 0 12px; }
 .readiness-check > small { display: block; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.readiness-detail { display: grid; grid-template-columns: minmax(88px, .42fr) minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 10px; }
+.readiness-detail span { color: var(--muted); }
+.readiness-detail code { color: var(--text-2); font-family: var(--font-mono); overflow-wrap: anywhere; white-space: normal; }
 .readiness-policy { margin-top: 18px; }
 
 /* ============ Timeline / activation ============ */
