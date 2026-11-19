@@ -6,6 +6,14 @@ const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
 
+function preserveRefreshToken(previousTokens, receivedTokens) {
+  const next = { ...(receivedTokens || {}) };
+  if (!next.refresh_token && previousTokens?.refresh_token) {
+    next.refresh_token = previousTokens.refresh_token;
+  }
+  return next;
+}
+
 class ModernAuth {
   constructor() {
     this.credentialsPath = path.join(__dirname, 'config', 'credentials.json');
@@ -147,8 +155,18 @@ class ModernAuth {
           try {
             const { tokens } = await oauth2Client.getToken(code);
             
+            // Google may omit refresh_token on later authorizations. Keep the existing
+            // one so a re-consent cannot silently break unattended access.
+            let previousTokens = {};
+            try {
+              previousTokens = JSON.parse(fs.readFileSync(this.tokensPath, 'utf8')).youtube || {};
+            } catch (_error) {
+              // First authorization: there is no prior token file to preserve.
+            }
+            const savedTokens = preserveRefreshToken(previousTokens, tokens);
+
             // Save tokens
-            const tokenData = { youtube: tokens };
+            const tokenData = { youtube: savedTokens };
             fs.writeFileSync(this.tokensPath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
             fs.chmodSync(this.tokensPath, 0o600);
             
@@ -166,7 +184,7 @@ class ModernAuth {
             
             console.log(chalk.green('\n✅ Authentication successful!'));
             this.cleanup();
-            this.resolveAuth(tokens);
+            this.resolveAuth(savedTokens);
             
           } catch (tokenError) {
             res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -274,4 +292,4 @@ if (require.main === module) {
   runAuth();
 }
 
-module.exports = { ModernAuth };
+module.exports = { ModernAuth, preserveRefreshToken };
