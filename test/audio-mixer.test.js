@@ -45,6 +45,8 @@ async function testValidationAndArguments(directory) {
   assert.equal(result.licenseType, 'user_owned');
   assert.equal(result.rightsConfirmed, true);
   assert.equal(result.trackDuration, 8);
+  assert.equal(result.sourcePath, musicPath);
+  assert.ok(result.sourceFileSize > 0);
   assert.ok(capturedArgs.includes('-stream_loop'));
   assert.ok(capturedArgs.some(value => String(value).includes('amix=inputs=2')));
   await fs.access(outputPath);
