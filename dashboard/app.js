@@ -827,6 +827,20 @@ function renderOperator(strategy, runs, system) {
 
   $('#operator-run-title').textContent = `${label(run.stage)} · ${run.progress || 0}%`;
   const sources = Array.isArray(run.research?.sources) ? run.research.sources.join(', ') : 'Research pending';
+  const guidance = run.research?.performanceGuidance || {};
+  const preferences = Array.isArray(guidance.preferences) ? guidance.preferences : [];
+  const guidanceSummary = preferences.length
+    ? `<section class="operator-performance-guidance">
+        <div class="operator-guidance-heading"><strong>Evidence-backed planning guidance</strong><span>${escapeHTML(guidance.independentVideoCount || 0)} independent videos</span></div>
+        ${preferences.map(preference => `<article class="operator-guidance-item">
+          <strong>Prefer ${escapeHTML(label(preference.prefer))} · ${escapeHTML(label(preference.dimension))}</strong>
+          <p>${escapeHTML(preference.rationale)}</p>
+          <small>Compared with ${escapeHTML(preference.comparisonSampleSize || 0)} videos · ${escapeHTML(preference.metric || 'performance')}</small>
+        </article>`).join('')}
+      </section>`
+    : `<p class="operator-guidance-empty">${guidance.status === 'insufficient_evidence'
+      ? `No planning preference applied. Need at least ${escapeHTML(guidance.minimumSamplesPerGroup || 3)} independent videos in each compared group.`
+      : 'No performance-based planning preference was available for this run. The original plan order was preserved.'}</p>`;
   $('#operator-run-summary').innerHTML = `<div class="run-summary">
     <div class="progress"><i style="width:${Math.max(0, Math.min(100, run.progress || 0))}%"></i></div>
     <div class="run-summary-row"><span>Status</span><strong>${statusChip(run.status)}</strong></div>
@@ -834,6 +848,7 @@ function renderOperator(strategy, runs, system) {
     <div class="run-summary-row"><span>Produced</span><strong>${escapeHTML(run.summary?.generated || 0)} / ${escapeHTML(run.summary?.planned || run.plan?.length || 0)}</strong></div>
     <div class="run-summary-row"><span>Needs review</span><strong>${escapeHTML(run.summary?.needsReview || 0)}</strong></div>
     ${run.error ? `<p class="callout">${escapeHTML(run.error)}</p>` : ''}
+    ${guidanceSummary}
   </div>`;
   const plan = Array.isArray(run.plan) ? run.plan : [];
   $('#operator-plan').innerHTML = plan.length ? plan.map((item, index) => {
