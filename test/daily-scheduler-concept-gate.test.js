@@ -60,10 +60,10 @@ async function run() {
     event.data.jobId === 'queued-job-1'
   ), 'Approved scheduler run must be recorded as queued');
 
-  process.stdout.write('Daily scheduler approved-concept gate tests passed\\n');
+  process.stdout.write('Daily scheduler approved-concept gate tests passed\n');
 }
 
 run().catch(error => {
-  process.stderr.write('Daily scheduler approved-concept gate tests failed: ' + (error.stack || error.message) + '\\n');
+  process.stderr.write('Daily scheduler approved-concept gate tests failed: ' + (error.stack || error.message) + '\n');
   process.exitCode = 1;
 });
