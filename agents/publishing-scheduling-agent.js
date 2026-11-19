@@ -101,24 +101,32 @@ class PublishingSchedulingAgent {
   async publishContent(contentId, options = {}) {
     try {
       let productionBundle = null;
-      if (this.db.getLatestReadinessRun) {
-        const readiness = await this.db.getLatestReadinessRun();
-        if (readiness?.status === 'failed') {
-          const failures = readiness.checks
-            .filter(check => check.blocking && check.status === 'failed')
-            .map(check => check.id);
-          const error = new Error(`Publishing is blocked by the production readiness gate. Fix ${failures.join(', ')} and run the check again.`);
-          error.status = 409;
-          error.code = 'READINESS_BLOCKED';
-          throw error;
-        }
-      }
       if (this.db.getProductionBundle) {
         productionBundle = await this.db.getProductionBundle(contentId);
         if (productionBundle && !['verified', 'not_required'].includes(productionBundle.provenance?.status || 'not_required')) {
           const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
           error.status = 409;
           error.code = 'PROVENANCE_BLOCKED';
+          throw error;
+        }
+      }
+      if (this.db.getLatestReadinessRun) {
+        const readiness = await this.db.getLatestReadinessRun();
+        const completedAt = readiness?.completed_at || readiness?.completedAt || readiness?.created_at;
+        const ageMs = completedAt ? Date.now() - new Date(completedAt).getTime() : NaN;
+        const stale = !Number.isFinite(ageMs) || ageMs < 0 || ageMs > 24 * 60 * 60 * 1000;
+        const blockingFailures = (readiness?.checks || [])
+          .filter(check => check.blocking && check.status === 'failed')
+          .map(check => check.id);
+        let reason = null;
+        if (!readiness) reason = 'Run the verified production readiness check before publishing';
+        else if (stale) reason = 'The production readiness check is missing a valid timestamp or is older than 24 hours; run it again';
+        else if (readiness.status === 'failed') reason = `Fix ${blockingFailures.join(', ') || 'the blocking readiness checks'} and run the check again`;
+        else if (!['passed', 'warning'].includes(readiness.status)) reason = `Resolve the readiness status (${readiness.status || 'unknown'}) and run the check again`;
+        if (reason) {
+          const error = new Error(`Publishing is blocked by the production readiness gate. ${reason}.`);
+          error.status = 409;
+          error.code = 'READINESS_BLOCKED';
           throw error;
         }
       }
