@@ -445,6 +445,7 @@ class ProductionManagementAgent {
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
 
       productionData.assets.audio = {
+        direction: productionData.strategy?.approvedVideoConcept?.audioDirection || null,
         path: generatedPath,
         duration: productionData.estimatedDuration,
         format: 'mp3',
@@ -481,6 +482,7 @@ class ProductionManagementAgent {
     await fs.writeFile(captionsPath, captions);
     
     productionData.assets.captions = {
+      designDirection: productionData.strategy?.approvedVideoConcept?.subtitleDirection || null,
       path: captionsPath,
       format: 'srt',
       language: 'en',
