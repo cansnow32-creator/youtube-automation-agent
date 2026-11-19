@@ -1404,7 +1404,7 @@ class YouTubeAutomationAgent {
       }
       const provider = req.body?.video_provider;
       if (provider !== undefined) {
-        const supported = ['slideshow', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
+        const supported = ['slideshow', 'cinecode', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
         if (!supported.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
         await this.db.setSetting('video_provider', provider);
       }
