@@ -1786,6 +1786,14 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
+    if (['uploading', 'uploaded', 'reconciliation_required'].includes(bundle.schedule?.status)) {
+      const error = new Error(
+        'This content may already have reached YouTube. Reconcile the existing upload before changing its approval or schedule state.'
+      );
+      error.status = 409;
+      error.code = 'UPLOAD_OUTCOME_UNKNOWN';
+      throw error;
+    }
 
     const editorData = this.validateEditorData(input, bundle.editorData);
     const packagingExperiment = editorData.packagingExperiment;
