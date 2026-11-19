@@ -2163,8 +2163,14 @@ class SystemTest {
         await server.start();
         if (listenArgs?.host !== '127.0.0.1') throw new Error(`Dashboard server bound to ${listenArgs?.host} instead of loopback by default`);
         process.env.HOST = '0.0.0.0';
-        await server.start();
-        if (listenArgs?.host !== '0.0.0.0') throw new Error('HOST did not override the dashboard bind address');
+        let unsafeHostRejected = false;
+        try {
+          await server.start();
+        } catch (error) {
+          unsafeHostRejected = /loopback/.test(error.message);
+        }
+        if (!unsafeHostRejected) throw new Error('Dashboard allowed a non-loopback bind without full read-route authentication');
+        if (listenArgs?.host !== '127.0.0.1') throw new Error('Unsafe HOST unexpectedly reached app.listen');
       } finally {
         console.log = quietLog;
         delete process.env.HOST;
