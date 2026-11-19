@@ -89,9 +89,17 @@
           <div><h2>Video concept studio</h2><p>Propose with local Ollama, revise until it matches your direction, then approve before production.</p></div>
           <span class="status">Local-first · qwen3.5:4b</span>
         </div>
+        <form id="reference-video-form" class="panel settings-form">
+          <div class="panel-heading"><div><p class="eyebrow">REFERENCE VIDEO</p><h2>Analyze a video’s style locally</h2></div><span class="status">Ollama vision · local only</span></div>
+          <label><span>Reference file <small>MP4, MOV or WebM · maximum 200 MB</small></span><input name="referenceVideo" type="file" accept="video/mp4,video/quicktime,video/webm" required></label>
+          <div class="form-actions"><button type="submit" class="button secondary">Upload & analyze style</button></div>
+          <div id="reference-video-result" class="hidden"></div>
+          <p class="callout">The app samples frames and analyzes high-level style, pacing cues and subtitle layout. It does not copy footage, audio, dialogue, characters or branding.</p>
+        </form>
         <form id="concept-propose-form" class="panel settings-form">
           <div class="panel-heading"><div><p class="eyebrow">PRE-PRODUCTION</p><h2>What video should we create?</h2></div></div>
           <label><span>Topic</span><input name="topic" maxlength="300" placeholder="e.g. GTA 6 launch: what makes the open world different?" required></label>
+          <input type="hidden" name="referenceVideoId" value="">
           <label><span>Your creative direction <small>Optional — leave blank for an independent proposal</small></span><textarea name="direction" rows="3" maxlength="2000" placeholder="Tell the AI what should stay, what should change, mood, audience, format..."></textarea></label>
           <label><span>Reference video notes <small>Style analysis only; do not paste or reuse copyrighted footage/audio</small></span><textarea name="referenceNotes" rows="2" maxlength="3000" placeholder="Describe the pacing, visual language or subtitle treatment you want to learn from."></textarea></label>
           <div class="form-actions"><button type="submit" class="button primary">Propose concept with Ollama</button></div>
