@@ -49,6 +49,12 @@ assert.equal(context.winningTitle, 'A proven title pattern');
 assert.equal(context.winningThumbnailPattern, 'Centered composition');
 assert.equal(context.winningArmLabel, 'Curiosity / Centered composition');
 assert.equal(context.evidence.liftPercent, 18.5);
+const missingEvidence = getApprovedPackagingLearning([{
+  ...adoptedWinner,
+  evidence: { liftPercent: null, zScore: null }
+}]);
+assert.equal(missingEvidence.evidence.liftPercent, null);
+assert.equal(missingEvidence.evidence.zScore, null);
 assert.equal(context.confidence, 'high');
 assert.equal(getApprovedPackagingLearning([]), null);
 assert.equal(getApprovedPackagingLearning(null), null);
