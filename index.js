@@ -466,6 +466,25 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/concepts/:conceptId/generate', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.db.getVideoConcept(req.params.conceptId);
+        if (!concept) return res.status(404).json({ success: false, error: 'Video concept not found' });
+        if (concept.status !== 'approved') return res.status(409).json({ success: false, error: 'Approve the video concept before production can start' });
+        const result = await this.startGenerationJob({
+          topic: concept.topic,
+          style: req.body?.style || null,
+          length: req.body?.length || 'medium',
+          source: 'manual',
+          requireApprovedConcept: true,
+          approvedConceptId: concept.id
+        });
+        return res.status(202).json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
     // Manual content generation
     this.app.post('/generate', this.requireAPIKey(), async (req, res) => {
       try {
@@ -1378,6 +1397,20 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
+    if (input.requireApprovedConcept === true) {
+      const approvedConcept = await this.db.getVideoConcept(input.approvedConceptId);
+      if (!approvedConcept || approvedConcept.status !== 'approved') {
+        const error = new Error('An approved video concept is required before production');
+        error.status = 409;
+        throw error;
+      }
+      validation.value.strategyContext = {
+        ...(validation.value.strategyContext || {}),
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      };
+    }
+
     const job = await this.db.createGenerationJob({
       ...validation.value,
       source: input.source || 'manual'
@@ -1546,6 +1579,10 @@ class YouTubeAutomationAgent {
         ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
         : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
+      if (strategyContext.approvedVideoConcept) {
+        generated.approvedVideoConcept = strategyContext.approvedVideoConcept;
+        generated.approvedVideoConceptId = strategyContext.approvedVideoConceptId || null;
+      }
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
