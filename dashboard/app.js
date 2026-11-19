@@ -2043,14 +2043,14 @@ $('#concept-detail').addEventListener('submit', async event => {
   try {
     const headers = {
       'Content-Type': file.type,
-      'X-Music-Title': values.title || '',
-      'X-Music-Creator': values.creator || '',
+      'X-Music-Title': encodeURIComponent(values.title || ''),
+      'X-Music-Creator': encodeURIComponent(values.creator || ''),
       'X-License-Type': values.licenseType,
       'X-Rights-Confirmed': form.elements.rightsConfirmed.checked ? 'true' : 'false',
-      'X-Music-Attribution': values.attribution || '',
-      'X-License-Name': values.licenseName || '',
-      'X-License-Url': values.licenseUrl || '',
-      'X-Source-Url': values.sourceUrl || '',
+      'X-Music-Attribution': encodeURIComponent(values.attribution || ''),
+      'X-License-Name': encodeURIComponent(values.licenseName || ''),
+      'X-License-Url': encodeURIComponent(values.licenseUrl || ''),
+      'X-Source-Url': encodeURIComponent(values.sourceUrl || ''),
       'X-Music-Volume': values.volume || '0.18'
     };
     const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/music', {
