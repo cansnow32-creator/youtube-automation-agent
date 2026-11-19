@@ -48,18 +48,23 @@ async function run() {
 
   const byDimension = Object.fromEntries(guidance.preferences.map(item => [item.dimension, item]));
   assert.equal(byDimension.pillar.prefer, 'Education');
+  assert.equal(byDimension.pillar.deprioritize, 'News');
   assert.equal(byDimension.format.prefer, 'tutorial');
+  assert.equal(byDimension.format.deprioritize, 'review');
   assert.equal(byDimension.length.prefer, 'medium', '3-to-8-minute winning cohort maps to medium planning length');
+  assert.equal(byDimension.length.deprioritize, 'long');
   assert.ok(guidance.preferences.every(item => item.sampleSize >= 3 && item.comparisonSampleSize >= 3));
 
   const plan = [
     { topic: 'News story', pillar: 'News', format: 'review', length: 'long', rationale: 'Original rationale.' },
+    { topic: 'Neutral topic', pillar: 'Other', format: 'story', length: 'short', rationale: 'Neutral rationale.' },
     { topic: 'Education guide', pillar: 'Education', format: 'tutorial', length: 'medium', rationale: 'Useful guide.' }
   ];
   const ranked = agent.applyPerformanceGuidance(plan, guidance);
   assert.equal(ranked[0].topic, 'Education guide', 'evidence-matching plan should rank first');
-  assert.match(ranked[0].rationale, /Performance evidence:/);
-  assert.equal(ranked[1].topic, 'News story');
+  assert.match(ranked[0].rationale, /Performance evidence \(advisory\):/);
+  assert.equal(ranked[1].topic, 'Neutral topic', 'neutral options should remain ahead of clearly weaker cohorts');
+  assert.equal(ranked[2].topic, 'News story', 'well-sampled weaker cohorts should be deprioritized, not excluded');
   assert.equal(plan[0].topic, 'News story', 'ranking must not mutate the caller plan');
 
   const noGuidance = agent.applyPerformanceGuidance(plan, { preferences: [] });
