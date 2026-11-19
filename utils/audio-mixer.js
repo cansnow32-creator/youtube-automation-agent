@@ -118,6 +118,8 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     return {
       status: 'mixed',
       path: outputPath,
+      sourcePath: musicPath,
+      sourceFileSize: musicStats.size,
       duration: outputInfo.duration,
       fileSize: outputStats.size,
       volume,
