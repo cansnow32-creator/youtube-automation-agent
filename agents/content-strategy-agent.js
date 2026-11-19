@@ -363,6 +363,101 @@ class ContentStrategyAgent {
     }
   }
 
+  async generateTrendIdeasFromSnapshot(options = {}) {
+    if (!this.db.createContentIdea || !this.db.listContentIdeas || !this.db.listPerformanceSnapshots) {
+      return { status: 'skipped', reason: 'Content idea or performance history storage is unavailable', created: 0 };
+    }
+    const snapshot = options.snapshot || (this.db.getLatestTrendSnapshot
+      ? await this.db.getLatestTrendSnapshot()
+      : null);
+    if (!snapshot?.topics?.length) {
+      return { status: 'skipped', reason: 'No saved trend topics are available', created: 0 };
+    }
+
+    const channelStrategy = options.channelStrategy ||
+      (this.db.getChannelStrategy ? await this.db.getChannelStrategy() : null) || {};
+    const trendTopics = snapshot.topics.slice(0, 12).map(item => ({
+      topic: String(item.topic || '').trim(),
+      score: Number(item.score) || 0,
+      sources: item.sources || [],
+      evidence: (item.evidence || []).slice(0, 3)
+    })).filter(item => item.topic);
+    if (!trendTopics.length) {
+      return { status: 'skipped', reason: 'Saved trend snapshot contains no usable topic names', created: 0 };
+    }
+
+    const ollamaUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const model = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
+    let response;
+    try {
+      response = await fetch(`${ollamaUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          format: 'json',
+          messages: [{
+            role: 'user',
+            content: `Create concise, audience-specific YouTube video ideas from these verified trend topics. Return ONLY JSON: {"ideas":[{"sourceTopic":"exact topic from input","topic":"specific video idea title","angle":"distinct useful angle","pillar":"matching supplied content pillar or empty string","format":"explainer|tutorial|list|review|story","rationale":"why this idea helps the stated audience"}]}. Do not invent trends, facts, statistics, evidence or URLs. Each sourceTopic MUST exactly match one input topic. Avoid these recent topics: ${JSON.stringify(options.recentTopics || [])}. Channel objective: ${channelStrategy.objective || 'Build a useful channel'}. Audience: ${channelStrategy.audience || 'General audience'}. Value proposition: ${channelStrategy.value_proposition || ''}. Content pillars: ${JSON.stringify(channelStrategy.contentPillars || [])}. Trend topics: ${JSON.stringify(trendTopics)}`
+          }],
+          options: { temperature: 0.4 }
+        }),
+        signal: globalThis.AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 120000))
+      });
+      if (!response.ok) throw new Error(`Ollama request failed: HTTP ${response.status}`);
+      const data = await response.json();
+      const raw = data?.message?.content;
+      if (typeof raw !== 'string' || !raw.trim()) throw new Error('Ollama returned an empty idea draft');
+      const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+      const parsed = JSON.parse(cleaned);
+      response = Array.isArray(parsed) ? parsed : parsed.ideas;
+      if (!Array.isArray(response)) throw new Error('Ollama idea response must contain an ideas array');
+    } catch (error) {
+      this.logger.warn(`Local Ollama trend ideation skipped without remote fallback: ${error.message}`);
+      return { status: 'skipped', reason: error.message, created: 0, model };
+    }
+
+    const existing = await this.db.listContentIdeas();
+    const existingTopics = new Set(existing.map(item => String(item.topic || '').trim().toLowerCase()));
+    const history = await this.db.listPerformanceSnapshots({ reliableOnly: true });
+    const { scoreTrendIdeas } = require('../utils/trend-idea-ranker');
+    const scored = scoreTrendIdeas(response, trendTopics, channelStrategy, history)
+      .filter(item => item.topic && !existingTopics.has(item.topic.toLowerCase()))
+      .slice(0, Math.max(1, Math.min(10, Number(options.limit || 8))));
+    const created = [];
+    for (const idea of scored) {
+      const stored = await this.db.createContentIdea({
+        topic: idea.topic,
+        angle: idea.angle,
+        style: idea.format,
+        status: 'backlog',
+        rationale: JSON.stringify({
+          source: 'weekly_trend_snapshot',
+          sourceTopic: idea.sourceTopic,
+          score: idea.score,
+          scoreBreakdown: idea.scoreBreakdown,
+          explanation: idea.rationale,
+          evidence: trendTopics.find(item => item.topic === idea.sourceTopic)?.evidence || [],
+          generatedBy: 'ollama',
+          model,
+          snapshotId: snapshot.id
+        })
+      });
+      created.push({ id: stored.id, topic: stored.topic, score: idea.score, scoreBreakdown: idea.scoreBreakdown });
+      existingTopics.add(idea.topic.toLowerCase());
+    }
+
+    return {
+      status: 'success',
+      model,
+      snapshotId: snapshot.id,
+      candidates: response.length,
+      createdCount: created.length,
+      ideas: created
+    };
+  }
+
   async researchAndPlanChannel(channelStrategy) {
     const targetCount = Math.max(1, Math.min(5, Number(channelStrategy.videos_per_run || 1)));
     await this.analyzeTrends();
