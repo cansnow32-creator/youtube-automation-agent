@@ -269,7 +269,8 @@ class ContentStrategyAgent {
     ]);
 
     return String(text || '')
-      .toLocaleLowerCase()
+      .toLowerCase()
+      .replace(/i\u0307/g, 'i')
       .normalize('NFKC')
       .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
