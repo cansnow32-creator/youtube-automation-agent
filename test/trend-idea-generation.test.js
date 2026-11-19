@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
 const { scoreTrendIdeas, buildAudienceDemand } = require('../utils/trend-idea-ranker');
+const { rankTemplatesForNiche } = require('../utils/viral-template-analyzer');
 
 async function run() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trend-idea-generation-'));
@@ -55,6 +56,37 @@ async function run() {
     assert.equal(templateAnalysis[0].relativeToChannelAverage, 1.2);
     assert.equal(templateAnalysis[0].evidence.length, 2);
     assert.ok(templateAnalysis.some(item => item.patternId === 'question'));
+
+    const nicheRankedTemplates = rankTemplatesForNiche([
+      {
+        patternId: 'numbered_list',
+        format: 'tutorial',
+        averageViews: 100000,
+        relativeToChannelAverage: 1,
+        evidence: [{ title: 'AI video editing workflow for beginners' }]
+      },
+      {
+        patternId: 'curiosity_reveal',
+        format: 'story',
+        averageViews: 300000,
+        relativeToChannelAverage: 2,
+        evidence: [{ title: 'The hidden history of ancient Rome' }]
+      }
+    ], {
+      objective: 'Teach AI video editing',
+      audience: 'beginner video creators',
+      contentPillars: ['AI video tools', 'editing tutorials']
+    });
+    assert.equal(nicheRankedTemplates[0].patternId, 'numbered_list',
+      'strong niche relevance should outrank a higher-view unrelated template');
+    assert.ok(nicheRankedTemplates[0].nicheFitScore > nicheRankedTemplates[1].nicheFitScore);
+    assert.equal(nicheRankedTemplates[0].rankingBasis, 'niche_fit_and_performance');
+    const performanceOnlyTemplates = rankTemplatesForNiche([
+      { averageViews: 100, relativeToChannelAverage: 1, evidence: [{ title: 'Generic video' }] },
+      { averageViews: 200, relativeToChannelAverage: 2, evidence: [{ title: 'Another video' }] }
+    ], {});
+    assert.equal(performanceOnlyTemplates[0].rankingBasis, 'performance_only',
+      'missing channel profile must preserve performance-only ranking without inventing niche fit');
 
     const snapshot = await db.saveTrendSnapshot({
       regionCode: 'US',
