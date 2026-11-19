@@ -1656,8 +1656,9 @@ class YouTubeAutomationAgent {
     const withoutPunctuation = control.replace(/[.!?]+$/, '');
     return [
       { label: 'Control', title: control },
-      { label: 'Step-by-step', title: `${withoutPunctuation}: Step-by-Step`.slice(0, 100) },
-      { label: 'Curiosity', title: `${withoutPunctuation}: What Most People Miss`.slice(0, 100) }
+      { label: 'Step-by-step + Color contrast', title: `${withoutPunctuation}: Step-by-Step`.slice(0, 100) },
+      { label: 'Curiosity + Alternate promise', title: `${withoutPunctuation}: What Most People Miss`.slice(0, 100) },
+      { label: 'Benefit + Centered composition', title: `${withoutPunctuation}: What You Can Achieve`.slice(0, 100) }
     ];
   }
 
