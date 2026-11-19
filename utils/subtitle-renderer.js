@@ -23,9 +23,9 @@ function buildSubtitleFilter(captionsPath, rawDirection = {}) {
   const margin = alignment === 8 ? 90 : alignment === 5 ? 0 : 110;
 
   const escapedPath = path.resolve(captionsPath)
-    .replaceAll('\\\\', '/')
-    .replaceAll(':', '\\\\:')
-    .replaceAll("'", "\\\\'");
+    .replaceAll('\\', '/')
+    .replaceAll(':', '\\:')
+    .replaceAll("'", "\\'");
   const style = [
     `FontName=${fontName}`, `FontSize=${fontSize}`, `Bold=${bold}`,
     `PrimaryColour=${color}`, 'OutlineColour=&H00000000', 'BorderStyle=1',
