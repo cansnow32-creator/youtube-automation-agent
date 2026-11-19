@@ -539,30 +539,35 @@ class ContentStrategyAgent {
       if (ranked.length < 2) continue;
 
       const leader = ranked[0];
-      const alternative = ranked[1];
+      const weakest = ranked[ranked.length - 1];
       const leaderValue = leader.metrics[metric].average;
-      const alternativeValue = alternative.metrics[metric].average;
-      const difference = leaderValue - alternativeValue;
+      const weakestValue = weakest.metrics[metric].average;
+      const difference = leaderValue - weakestValue;
       const meaningful = metric === 'performanceScore'
         ? difference >= 5
-        : alternativeValue > 0 ? difference / Math.abs(alternativeValue) >= 0.2 : difference > 0;
+        : weakestValue > 0 ? difference / Math.abs(weakestValue) >= 0.2 : difference > 0;
       if (!meaningful) continue;
 
       const preferredValue = dimension.key === 'durationBucket'
         ? this.lengthForDurationBucket(leader.name)
         : leader.name;
+      const deprioritizedValue = dimension.key === 'durationBucket'
+        ? this.lengthForDurationBucket(weakest.name)
+        : weakest.name;
       if (!preferredValue || preferredValue === 'unknown') continue;
       preferences.push({
         dimension: dimension.target,
         sourceDimension: dimension.key,
         prefer: preferredValue,
+        deprioritize: deprioritizedValue && deprioritizedValue !== preferredValue ? deprioritizedValue : null,
         sourceValue: leader.name,
+        deprioritizedSourceValue: weakest.name,
         metric,
         sampleSize: leader.videoCount,
-        comparisonSampleSize: alternative.videoCount,
+        comparisonSampleSize: weakest.videoCount,
         average: leaderValue,
-        comparisonAverage: alternativeValue,
-        rationale: `${leader.name} led ${alternative.name} on ${metric} (${leaderValue} vs ${alternativeValue}) across ${leader.videoCount} vs ${alternative.videoCount} independent videos.`
+        comparisonAverage: weakestValue,
+        rationale: `${leader.name} led ${weakest.name} on ${metric} (${leaderValue} vs ${weakestValue}) across ${leader.videoCount} vs ${weakest.videoCount} independent videos.`
       });
     }
 
@@ -586,22 +591,32 @@ class ContentStrategyAgent {
     if (!preferences.length) return plan;
 
     return plan.map((item, index) => {
-      const matched = preferences.filter(preference =>
-        String(item[preference.dimension] || '').trim().toLowerCase() ===
-        String(preference.prefer || '').trim().toLowerCase()
-      );
+      let score = 0;
+      const evidenceNotes = [];
+      for (const preference of preferences) {
+        const actual = String(item[preference.dimension] || '').trim().toLowerCase();
+        const preferred = String(preference.prefer || '').trim().toLowerCase();
+        const deprioritized = String(preference.deprioritize || '').trim().toLowerCase();
+        if (preferred && actual === preferred) {
+          score += 1;
+          evidenceNotes.push(preference.rationale);
+        } else if (deprioritized && actual === deprioritized) {
+          score -= 1;
+          evidenceNotes.push(`Lower-priority historical cohort: ${preference.deprioritizedSourceValue || preference.deprioritize} (${preference.metric}: ${preference.comparisonAverage}; ${preference.comparisonSampleSize} independent videos).`);
+        }
+      }
       return {
         ...item,
-        _performanceGuidanceMatches: matched.length,
-        rationale: matched.length
-          ? `${item.rationale || ''}${item.rationale ? ' ' : ''}Performance evidence: ${matched.map(item => item.rationale).join(' ')}`
+        _performanceGuidanceScore: score,
+        rationale: evidenceNotes.length
+          ? `${item.rationale || ''}${item.rationale ? ' ' : ''}Performance evidence (advisory): ${[...new Set(evidenceNotes)].join(' ')}`
           : item.rationale,
         _originalPlanOrder: index
       };
     }).sort((a, b) =>
-      b._performanceGuidanceMatches - a._performanceGuidanceMatches ||
+      b._performanceGuidanceScore - a._performanceGuidanceScore ||
       a._originalPlanOrder - b._originalPlanOrder
-    ).map(({ _performanceGuidanceMatches, _originalPlanOrder, ...item }) => item);
+    ).map(({ _performanceGuidanceScore, _originalPlanOrder, ...item }) => item);
   }
 
   async researchAndPlanChannel(channelStrategy) {
@@ -714,7 +729,7 @@ Research signals: ${JSON.stringify(research.signals)}
 Allowed source catalog: ${JSON.stringify(research.sourceCatalog)}
 Recent topics to avoid repeating: ${JSON.stringify(research.recentTopics)}
 Operator-approved performance learnings to apply: ${JSON.stringify(research.approvedLearnings)}
-Evidence-backed performance preferences (advisory ranking only; do not force an unsuitable topic or invent evidence): ${JSON.stringify(research.performanceGuidance || {})}
+Evidence-backed performance preferences (advisory ranking only; prefer well-performing cohorts and give lower priority to clearly weaker cohorts only when each has at least three independent videos; never hard-exclude a format or force an unsuitable topic): ${JSON.stringify(research.performanceGuidance || {})}
 
 Do not invent trend data, statistics, sources, URLs, or factual claims. Use only exact URLs from the supplied source catalog. Apply only the supplied approved learnings; pending or rejected recommendations are not authorized. Use performance preferences only to rank otherwise suitable plan options; never override the channel objective, invent evidence, or change the channel strategy. Prefer evergreen topics when the supplied signals are weak. Learnings with category "audience_demand" are audience-requested topics mined from real comments on published videos; prefer planning a video that directly answers one when it fits the channel objective, and cite it in the rationale.`;
 
