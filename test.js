@@ -401,7 +401,16 @@ class SystemTest {
         }];
         this.competitorData = [];
       };
-      const planned = await strategyAgent.researchAndPlanChannel(strategy);
+      // Keep this deterministic planning assertion independent of user-created backlog ideas.
+      // Restore the real database method immediately after planning; no user data is changed.
+      const originalListContentIdeas = db.listContentIdeas;
+      let planned;
+      try {
+        db.listContentIdeas = async () => [];
+        planned = await strategyAgent.researchAndPlanChannel(strategy);
+      } finally {
+        db.listContentIdeas = originalListContentIdeas;
+      }
       if (
         planned.plan.length !== 2 || !planned.research.sources.includes('YouTube most-popular videos') ||
         planned.research.sourceCatalog.length !== 1 || planned.plan[0].sourceUrls.length !== 1
