@@ -160,6 +160,23 @@ async function run() {
     assert.ok(refreshedRationale.rankingUpdatedAt);
     assert.equal(result.ideas[0].topic, 'A beginner workflow for AI video editing');
 
+    strategy.analyzeTrends = async () => {};
+    strategy.trendingTopics = snapshot.topics;
+    strategy.competitorData = [];
+    const autonomousPlan = await strategy.researchAndPlanChannel({
+      videos_per_run: 1,
+      objective: 'Help video creators improve their workflow',
+      audience: 'beginner video creators',
+      value_proposition: 'Practical editing education',
+      contentPillars: ['editing tutorials'],
+      default_format: 'tutorial',
+      default_length: 'medium',
+      primary_kpi: 'views'
+    });
+    assert.equal(autonomousPlan.plan[0].topic, backlogIdea.topic,
+      'highest-scoring eligible backlog idea should be prioritized for production');
+    assert.equal(autonomousPlan.research.prioritizedBacklogIdeas[0].topic, backlogIdea.topic);
+
     const savedIdeas = await db.listContentIdeas();
     const created = savedIdeas.find(item => item.topic === result.ideas[0].topic);
     assert.ok(created, 'generated idea should be persisted in the existing content ideas table');
