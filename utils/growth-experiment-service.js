@@ -20,86 +20,12 @@ class GrowthExperimentService {
     return error;
   }
 
-  async create(input = {}) {
+  async create(_input = {}) {
     throw this.error(
       'Automated packaging experiments are paused. The current integration cannot randomize viewers or verify per-variant exposure; use YouTube Studio native Test & Compare manually until a supported results integration exists.',
       409,
       'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
     );
-    const productionId = String(input.productionId || '').trim();
-    if (!productionId) throw this.error('Choose a published production to test');
-    const armDurationHours = Number(input.armDurationHours || 48);
-    const minImpressions = Number(input.minImpressions || 1000);
-    if (!Number.isInteger(armDurationHours) || armDurationHours < 24 || armDurationHours > 168) {
-      throw this.error('Each experiment arm must run for 24 to 168 hours');
-    }
-    if (!Number.isInteger(minImpressions) || minImpressions < 100 || minImpressions > 1000000) {
-      throw this.error('Minimum impressions must be an integer from 100 to 1,000,000');
-    }
-
-    const existing = await this.db.listGrowthExperiments({ productionId, limit: 20 });
-    if (existing.some(experiment => ACTIVE_STATUSES.has(experiment.status))) {
-      throw this.error('This production already has an unfinished growth experiment', 409, 'EXPERIMENT_EXISTS');
-    }
-    const bundle = await this.db.getProductionBundle(productionId);
-    const schedule = bundle?.schedule;
-    if (!bundle || schedule?.status !== 'published' || !schedule.youtube_id) {
-      throw this.error('Growth experiments require a published YouTube production', 409, 'EXPERIMENT_NOT_PUBLISHED');
-    }
-    const packaging = bundle.editorData?.packagingExperiment;
-    if (!packaging?.titleVariants?.length || !packaging?.thumbnailVariants?.length) {
-      throw this.error('This production has no approved-learning packaging variants to test', 409, 'EXPERIMENT_VARIANTS_MISSING');
-    }
-    const sourceRecommendation = packaging.sourceRecommendationId
-      ? await this.db.getLearningRecommendation(packaging.sourceRecommendationId)
-      : null;
-    if (!sourceRecommendation || sourceRecommendation.status !== 'approved') {
-      throw this.error('The source packaging recommendation is no longer approved', 409, 'EXPERIMENT_LEARNING_NOT_APPROVED');
-    }
-
-    const control = {
-      label: 'Control',
-      title: schedule.metadata?.seo?.title || schedule.title || bundle.seo?.title || bundle.script?.title,
-      thumbnailPath: schedule.metadata?.thumbnail?.path || bundle.assets?.thumbnail?.path || bundle.thumbnail?.path,
-      isControl: true
-    };
-    const variants = packaging.titleVariants
-      .map((variant, index) => ({
-        label: variant.label === 'Control' ? 'Original package' : (variant.label || `Variant ${index + 1}`),
-        title: variant.title,
-        thumbnailPath: packaging.thumbnailVariants[index]?.path,
-        isControl: false
-      }))
-      .filter(arm => arm.title && arm.thumbnailPath)
-      .filter(arm => arm.title !== control.title || arm.thumbnailPath !== control.thumbnailPath);
-    const arms = [control, ...variants].filter((arm, index, list) =>
-      arm.title && arm.thumbnailPath && list.findIndex(candidate =>
-        candidate.title === arm.title && candidate.thumbnailPath === arm.thumbnailPath
-      ) === index
-    ).slice(0, 4);
-    if (arms.length < 2) {
-      throw this.error('At least one complete title and thumbnail variant is required', 409, 'EXPERIMENT_VARIANTS_MISSING');
-    }
-    for (const arm of arms) {
-      if (arm.title.length > 100) throw this.error(`${arm.label} title exceeds YouTube's 100-character limit`);
-      await this.requireFile(arm.thumbnailPath, `${arm.label} thumbnail is missing from disk`);
-    }
-
-    return this.db.createGrowthExperiment({
-      productionId,
-      videoId: schedule.youtube_id,
-      recommendationId: packaging.sourceRecommendationId || null,
-      title: `Packaging test: ${control.title}`,
-      hypothesis: packaging.hypothesis || 'A new title and thumbnail package will improve qualified click-through rate.',
-      armDurationHours,
-      minImpressions,
-      guardrails: {
-        maximumRetentionDropPoints: 5,
-        maximumTrafficSourceShiftPoints: 20,
-        simulatedEvidenceAllowed: false,
-        automaticWinnerAdoption: false
-      }
-    }, arms);
   }
 
   async approve(id, input = {}) {
@@ -109,40 +35,13 @@ class GrowthExperimentService {
     return this.db.updateGrowthExperiment(id, { status: 'approved', approvedAt: this.isoNow() });
   }
 
-  async start(id, input = {}) {
-    const experiment = await this.requireExperiment(id);
+  async start(id, _input = {}) {
+    await this.requireExperiment(id);
     throw this.error(
       'This legacy sequential experiment cannot be started because it changes live packaging without randomized viewer assignment.',
       409,
       'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
     );
-    if (experiment.status !== 'approved' || !experiment.approvedAt) {
-      throw this.error('Approve the experiment plan before starting it', 409, 'EXPERIMENT_APPROVAL_REQUIRED');
-    }
-    if (input.confirmed !== true) throw this.error('Confirm activation before changing live YouTube packaging', 409, 'EXPERIMENT_CONFIRMATION_REQUIRED');
-    const baseline = await this.captureMetrics(experiment.videoId);
-    const arm = experiment.arms[0];
-    const startedAt = this.isoNow();
-    await this.db.updateExperimentArm(arm.id, {
-      status: 'running', baselineMetrics: baseline.metrics, startedAt
-    });
-    await this.db.saveExperimentSample({
-      experimentId: experiment.id, armId: arm.id,
-      metrics: baseline.metrics, trafficSources: baseline.trafficSources, capturedAt: startedAt
-    });
-    try {
-      await this.applyArm(experiment, arm, arm);
-    } catch (error) {
-      await this.db.updateExperimentArm(arm.id, { status: 'failed' });
-      await this.db.updateGrowthExperiment(id, {
-        status: 'action_required', currentArmId: arm.id, startedAt,
-        result: { activationError: error.message }
-      });
-      throw error;
-    }
-    return this.db.updateGrowthExperiment(id, {
-      status: 'running', currentArmId: arm.id, startedAt
-    });
   }
 
   async refresh(id, options = {}) {
