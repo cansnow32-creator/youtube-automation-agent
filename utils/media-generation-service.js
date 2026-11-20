@@ -197,13 +197,43 @@ class MediaGenerationService {
     let outputPublished = false;
     try {
       await assertLease();
-      if (task.external_task_id && [
+      const resumeExistingRemoteTask = Boolean(task.external_task_id && [
         'queued', 'running', 'submitting', 'submission_unknown',
-        'reconciliation_required', 'downloading', 'download_pending'
-      ].includes(task.status)) {
+        'reconciliation_required', 'downloading', 'download_pending', 'succeeded'
+      ].includes(task.status));
+
+      if (resumeExistingRemoteTask) {
         remote = await provider.getTask(task.external_task_id, task.providerData || {});
       } else {
         await this.assertNotCancelled(jobId, provider, task);
+
+        // Write-ahead intent: once this row is reset to "submitting" with no
+        // remote ID, a crash at any point around provider.createTask() becomes
+        // an explicit ambiguous outcome. A retry will reconcile, never resubmit.
+        if (!taskCreatedThisInvocation) {
+          const previousTasks = Array.isArray(task.providerData?.previousTasks)
+            ? task.providerData.previousTasks.slice(-9)
+            : [];
+          if (task.external_task_id) {
+            previousTasks.push({
+              externalTaskId: task.external_task_id,
+              status: task.status,
+              outputPath: task.output_path || null,
+              completedAt: task.completed_at || null
+            });
+          }
+          task = await this.updateTask(task, {
+            status: 'submitting',
+            externalTaskId: null,
+            providerData: { previousTasks },
+            outputPath: null,
+            error: null,
+            completedAt: null
+          });
+          await assertLease();
+        }
+
+        remoteTaskId = null;
         remoteSubmissionAttempted = true;
         remote = await provider.createTask(request);
       }
@@ -218,7 +248,7 @@ class MediaGenerationService {
       task = await this.updateTask(task, {
         status: remote.status === 'succeeded' ? 'downloading' : remote.status,
         model: remote.model || task.model,
-        externalTaskId: remote.externalTaskId,
+        externalTaskId: remoteTaskId,
         providerData: this.providerData(remote),
         error: remote.error || null
       });
@@ -283,11 +313,18 @@ class MediaGenerationService {
           ? 'submission_unknown'
           : (remote?.status === 'succeeded')
             ? 'download_pending'
-            : (remoteTaskId && remote && !TERMINAL.has(remote.status))
+            : (remoteTaskId && (!remote || !TERMINAL.has(remote.status)))
               ? 'reconciliation_required'
               : 'failed';
+      if (recoveryStatus === 'download_pending' && outputPublished) {
+        await fs.unlink(outputPath).catch(() => {});
+      }
       await this.updateTask(task, {
         status: recoveryStatus,
+        externalTaskId: recoveryStatus === 'submission_unknown' ? null : undefined,
+        outputPath: ['submission_unknown', 'reconciliation_required', 'download_pending'].includes(recoveryStatus)
+          ? null
+          : undefined,
         error: safeModelError(error),
         completedAt: ['failed', 'cancelled', 'submission_unknown'].includes(recoveryStatus)
           ? new Date().toISOString()
@@ -336,7 +373,13 @@ class MediaGenerationService {
   }
 
   async updateTask(task, changes) {
-    if (!this.db?.updateMediaGenerationTask) return { ...task, ...changes, external_task_id: changes.externalTaskId || task.external_task_id, providerData: changes.providerData || task.providerData };
+    if (!this.db?.updateMediaGenerationTask) return {
+      ...task,
+      ...changes,
+      external_task_id: changes.externalTaskId === undefined ? task.external_task_id : changes.externalTaskId,
+      output_path: changes.outputPath === undefined ? task.output_path : changes.outputPath,
+      providerData: changes.providerData === undefined ? task.providerData : changes.providerData
+    };
     return this.db.updateMediaGenerationTask(task.id, changes);
   }
 
