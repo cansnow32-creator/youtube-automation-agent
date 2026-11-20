@@ -215,6 +215,14 @@ class GrowthExperimentService {
     if (experiment.status !== 'awaiting_winner' || !experiment.winningArmId) {
       throw this.error('This experiment has no evidence-backed winner to adopt', 409);
     }
+    if (experiment.result?.comparisonMethod !== 'randomized_arm_level' ||
+        experiment.result?.exposureAttribution !== 'verified_randomized') {
+      throw this.error(
+        'This experiment has no verified randomized arm-level exposure data; sequential observations cannot be adopted as a winner.',
+        409,
+        'EXPERIMENT_CAUSAL_EVIDENCE_REQUIRED'
+      );
+    }
     if (input.confirmed !== true) throw this.error('Confirm the winner before changing live YouTube packaging', 409, 'EXPERIMENT_CONFIRMATION_REQUIRED');
     const winner = experiment.arms.find(arm => arm.id === experiment.winningArmId);
     const control = experiment.arms.find(arm => arm.isControl);
@@ -315,7 +323,7 @@ class GrowthExperimentService {
       candidates,
       activeCount: experiments.filter(item => item.status === 'running').length,
       awaitingDecisionCount: experiments.filter(item => item.status === 'awaiting_winner').length,
-      evidencePolicy: 'Only real YouTube evidence counts. Plan approval authorizes bounded arm rotations; adopting a winner always requires a separate confirmation.'
+      evidencePolicy: 'Current same-video sequential rotations are observational only because YouTube Analytics does not expose randomized arm-level impressions/clicks. They cannot select or adopt a causal winner.'
     };
   }
 
