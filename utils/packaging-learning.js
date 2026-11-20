@@ -29,4 +29,32 @@ function getApprovedPackagingLearning(recommendations = []) {
   };
 }
 
-module.exports = { isApprovedPackagingLearning, getApprovedPackagingLearning };
+function getApprovedScriptLearnings(recommendations = []) {
+  const allowedCategories = new Set(['format', 'length', 'hookLength', 'retention']);
+  return (Array.isArray(recommendations) ? recommendations : [])
+    .filter(item => item?.status === 'approved' &&
+      allowedCategories.has(String(item.category || '')) &&
+      ['future_plans', 'future_scripts'].includes(item.proposedChange?.target))
+    .slice(0, 8)
+    .map(item => ({
+      recommendationId: item.id || null,
+      category: String(item.category).slice(0, 40),
+      title: String(item.title || '').slice(0, 160),
+      rationale: String(item.rationale || '').slice(0, 400),
+      confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'unknown',
+      evidence: item.evidence && typeof item.evidence === 'object' ? {
+        metric: String(item.evidence.metric || '').slice(0, 40),
+        sampleSize: Number.isFinite(Number(item.evidence.best?.count))
+          ? Number(item.evidence.best.count)
+          : Number.isFinite(Number(item.evidence.sampleSize)) ? Number(item.evidence.sampleSize) : null
+      } : null,
+      proposedChange: {
+        dimension: String(item.proposedChange.dimension || item.category).slice(0, 40),
+        prefer: String(item.proposedChange.prefer || '').slice(0, 100),
+        deprioritize: String(item.proposedChange.deprioritize || '').slice(0, 100)
+      }
+    }))
+    .filter(item => item.proposedChange.prefer || item.rationale);
+}
+
+module.exports = { isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings };
