@@ -2425,6 +2425,31 @@ class Database {
     return this.getScheduleEntry(id);
   }
 
+  async updateScheduleEntryUploadVerification(id, expectedStatus, videoId, status, error = null, publishedAt = null) {
+    if (!['uploading', 'reconciliation_required', 'failed'].includes(expectedStatus) ||
+        !['published', 'reconciliation_required'].includes(status) ||
+        !videoId) return null;
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule
+       SET status = ?, error_message = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END,
+           youtube_url = CASE WHEN ? = 'published' THEN COALESCE(youtube_url, ?) ELSE youtube_url END
+       WHERE id = ? AND status = ? AND youtube_id = ?`,
+      [
+        status,
+        error,
+        status,
+        publishedAt || new Date().toISOString(),
+        status,
+        `https://www.youtube.com/watch?v=${videoId}`,
+        id,
+        expectedStatus,
+        videoId
+      ]
+    );
+    if (result.changes !== 1) return null;
+    return this.getScheduleEntry(id);
+  }
+
   async resolveScheduleEntryUploadAbsent(id, metadata, reason) {
     const result = await this.executeQuery(
       `UPDATE publish_schedule
