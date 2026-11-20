@@ -118,8 +118,90 @@ class ChannelLearningEngine {
         thumbnail.concept?.composition || thumbnail.concept?.style || thumbnail.style || 'unknown'
       ),
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
-      source: strategy.planRationale ? 'autonomous_operator' : 'manual'
+      source: strategy.planRationale ? 'autonomous_operator' : 'manual',
+      appliedLearnings: this.extractAppliedLearnings(strategy)
     };
+  }
+
+  extractAppliedLearnings(strategy = {}) {
+    const candidates = [];
+    const packaging = strategy.packagingLearning;
+    if (packaging?.recommendationId) {
+      candidates.push({
+        recommendationId: String(packaging.recommendationId),
+        category: 'packaging_experiment',
+        appliedTo: ['thumbnail', 'seo']
+      });
+    }
+    for (const item of Array.isArray(strategy.approvedScriptLearnings) ? strategy.approvedScriptLearnings : []) {
+      if (!item?.recommendationId) continue;
+      candidates.push({
+        recommendationId: String(item.recommendationId),
+        category: String(item.category || 'unknown'),
+        appliedTo: ['script']
+      });
+    }
+    const unique = new Map();
+    for (const item of candidates) {
+      if (!unique.has(item.recommendationId)) unique.set(item.recommendationId, item);
+    }
+    return [...unique.values()].slice(0, 12);
+  }
+
+  buildAppliedLearningFeedback(snapshots = []) {
+    const mature = snapshots.filter(snapshot =>
+      !snapshot.simulated &&
+      snapshot.measurementWindow === '7d' &&
+      Array.isArray(snapshot.contentAttributes?.appliedLearnings) &&
+      this.optionalNumber(snapshot.metrics?.impressions) >= 1000
+    );
+    const grouped = new Map();
+    for (const snapshot of mature) {
+      for (const learning of snapshot.contentAttributes.appliedLearnings) {
+        if (!learning?.recommendationId) continue;
+        if (!grouped.has(learning.recommendationId)) grouped.set(learning.recommendationId, {
+          recommendationId: learning.recommendationId,
+          category: learning.category || 'unknown',
+          productions: new Map()
+        });
+        const group = grouped.get(learning.recommendationId);
+        const prior = group.productions.get(snapshot.productionId || snapshot.videoId);
+        if (!prior || prior.measurementWindow !== '7d') {
+          group.productions.set(snapshot.productionId || snapshot.videoId, snapshot);
+        }
+      }
+    }
+
+    return [...grouped.values()].map(group => {
+      const metric = group.category === 'packaging_experiment'
+        ? 'ctr'
+        : ['hookLength', 'retention'].includes(group.category)
+          ? 'retention'
+          : 'watchHoursPerThousandViews';
+      const samples = [...group.productions.values()];
+      const deltas = samples.map(snapshot => this.optionalNumber(snapshot.deltas?.[metric])).filter(value => value !== null);
+      const impressions = samples.reduce((sum, snapshot) => sum + (this.optionalNumber(snapshot.metrics?.impressions) || 0), 0);
+      let status = 'insufficient_data';
+      if (samples.length >= 2 && impressions >= 2000) {
+        if (deltas.length < 2) status = 'inconclusive';
+        else {
+          const medianDelta = this.median(deltas);
+          status = medianDelta >= 5 ? 'positive_signal' : medianDelta <= -5 ? 'negative_signal' : 'inconclusive';
+        }
+      }
+      return {
+        recommendationId: group.recommendationId,
+        category: group.category,
+        status,
+        measuredProductions: samples.length,
+        measuredSamples: deltas.length,
+        impressions,
+        metric,
+        medianBaselineDeltaPercent: deltas.length ? Number(this.median(deltas).toFixed(1)) : null,
+        measurementWindow: '7d',
+        interpretation: 'Observational association only; this does not establish causation or approve the recommendation.'
+      };
+    });
   }
 
   calculateBaseline(snapshots) {
@@ -396,7 +478,17 @@ class ChannelLearningEngine {
       this.db.listGrowthExperiments ? this.db.listGrowthExperiments({ limit: 100 }) : Promise.resolve([])
     ]);
     const preferred = this.preferredSnapshotPerVideo(snapshots);
-    const recommendationsWithFeedback = this.attachExperimentFeedback(recommendations, experiments);
+    const experimentFeedback = this.attachExperimentFeedback(recommendations, experiments);
+    const appliedLearningFeedback = this.buildAppliedLearningFeedback(snapshots);
+    const feedbackById = new Map(appliedLearningFeedback.map(item => [item.recommendationId, item]));
+    const recommendationsWithFeedback = experimentFeedback.map(item => ({
+      ...item,
+      applicationFeedback: feedbackById.get(item.id) || {
+        status: 'not_observed',
+        measuredProductions: 0,
+        interpretation: 'No mature, reliable 7-day performance evidence is linked to an application of this recommendation.'
+      }
+    }));
     return {
       measuredVideos: preferred.length,
       snapshotCount: snapshots.length,
@@ -406,6 +498,7 @@ class ChannelLearningEngine {
         return counts;
       }, {}),
       recommendations: recommendationsWithFeedback,
+      appliedLearningFeedback,
       approvedCount: recommendations.filter(item => item.status === 'approved').length,
       pendingCount: recommendations.filter(item => item.status === 'pending').length,
       lastMeasuredAt: snapshots[0]?.measuredAt || null,
