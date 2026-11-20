@@ -74,7 +74,21 @@ class ProductionManagementAgent {
         approvedVideoConcept: approvedConcept.concept,
         approvedVideoConceptId: approvedConcept.id
       };
-      
+
+      // A failed generation-stage retry must resume the persisted production for
+      // this job instead of creating a duplicate production and repeating media work.
+      if (jobId && typeof this.db.getProductionBundleByJobId === 'function') {
+        const existing = await this.db.getProductionBundleByJobId(jobId);
+        if (existing) {
+          if (existing.script?.title !== script?.title ||
+              existing.timeline?.jobId !== jobId) {
+            throw new Error('A persisted production exists for this job but its script/job identity does not match; refusing duplicate production');
+          }
+          this.logger.info(`Resuming persisted production ${existing.id} for generation job ${jobId}`);
+          return this.resumeProduction(existing.id);
+        }
+      }
+
       // Create production entry
       const productionId = this.generateProductionId();
       
