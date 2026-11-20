@@ -22,9 +22,80 @@ function getArtifactAttemptId(productionData) {
   return String(productionData.timeline.artifactAttemptId).replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
-async function removeAttemptFiles(filePaths = []) {
-  const uniquePaths = new Set(filePaths.filter(filePath => typeof filePath === 'string' && filePath));
-  await Promise.all([...uniquePaths].map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
+async function removeAttemptFiles(filePaths = [], preservedPaths = []) {
+  const preserved = new Set(preservedPaths.filter(filePath => typeof filePath === 'string' && filePath).map(filePath => path.resolve(filePath)));
+  const uniquePaths = new Set(
+    filePaths
+      .filter(filePath => typeof filePath === 'string' && filePath)
+      .map(filePath => path.resolve(filePath))
+      .filter(filePath => !preserved.has(filePath))
+  );
+  await Promise.all([...uniquePaths].map(filePath => fs.rm(filePath, { force: true, recursive: true }).catch(() => {})));
+}
+
+function getVideoAttemptSidecarPaths(videoPath) {
+  if (typeof videoPath !== 'string' || !videoPath) return [];
+  const resolved = path.resolve(videoPath);
+  const extension = path.extname(resolved).toLowerCase();
+  if (extension !== '.mp4') return [resolved];
+  const stem = resolved.slice(0, -extension.length);
+  const hybridVisual = stem + '_hybrid_visual.mp4';
+  return [
+    resolved,
+    resolved + '.assembly.json',
+    resolved + '.assembly.json.tmp',
+    hybridVisual,
+    stem + '_hybrid_visual_rendering.mp4',
+    hybridVisual + '.render.json',
+    hybridVisual + '.render.json.tmp',
+    stem + '_finalizing.mp4',
+    stem + '_visual.mp4',
+    stem + '_slides'
+  ];
+}
+
+async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
+  const current = productionData?.assets || {};
+  const pathsToRemove = [];
+  const preserved = [
+    previousAssets.audio?.path,
+    previousAssets.captions?.path,
+    previousAssets.finalVideo?.path,
+    previousAssets.finalVideo?.cleanPath,
+    previousAssets.backgroundMusic?.path
+  ];
+
+  if (current.audio?.path && current.audio.path !== previousAssets.audio?.path) {
+    pathsToRemove.push(current.audio.path, current.audio.path + '.pcm', current.audio.path + '.info');
+  }
+  if (current.captions?.path && current.captions.path !== previousAssets.captions?.path) {
+    pathsToRemove.push(current.captions.path);
+  }
+  if (current.finalVideo?.path && current.finalVideo.path !== previousAssets.finalVideo?.path) {
+    if (current.finalVideo.path.endsWith('.assembly.json')) {
+      pathsToRemove.push(current.finalVideo.path);
+      pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.path.slice(0, -'.assembly.json'.length)));
+    } else {
+      pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.path));
+    }
+  }
+  if (current.finalVideo?.cleanPath && current.finalVideo.cleanPath !== previousAssets.finalVideo?.cleanPath) {
+    pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.cleanPath));
+  }
+  if (current.backgroundMusic?.path && current.backgroundMusic.path !== previousAssets.backgroundMusic?.path) {
+    pathsToRemove.push(
+      current.backgroundMusic.path,
+      current.backgroundMusic.path + '.mixing.mp4',
+      current.backgroundMusic.path + '.mix.json',
+      current.backgroundMusic.path + '.mix.json.tmp'
+    );
+  }
+  await removeAttemptFiles(pathsToRemove, preserved);
+}
+
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
 }
 
 class ProductionManagementAgent {
@@ -221,38 +292,59 @@ class ProductionManagementAgent {
         },
         persistWorkflow
       );
-      await runProductionStage(
-        productionData.timeline.productionWorkflow,
-        'narration',
-        async () => {
-          const audioPath = await this.generateAudioNarration(productionData, assertLease);
-          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
-            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
-          }
-          return { audioPath, provider: productionData.assets.audio.provider || null };
-        },
-        persistWorkflow
-      );
-      await runProductionStage(
-        productionData.timeline.productionWorkflow,
-        'editing',
-        async () => {
-          await this.generateCaptions(productionData, assertLease);
-          await this.assembleVideo(productionData, assertLease);
-          const finalVideo = productionData.assets.finalVideo;
-          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
-            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
-          }
-          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
-          return {
-            captionsGenerated: Boolean(productionData.assets.captions?.path),
-            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
-            simulated: Boolean(productionData.assets.finalVideo?.simulated)
-          };
-        },
-        persistWorkflow
-      );
-
+      const assetsBeforeNarration = {
+        audio: productionData.assets.audio,
+        captions: productionData.assets.captions,
+        finalVideo: productionData.assets.finalVideo,
+        backgroundMusic: productionData.assets.backgroundMusic
+      };
+      try {
+        await runProductionStage(
+          productionData.timeline.productionWorkflow,
+          'narration',
+          async () => {
+            const audioPath = await this.generateAudioNarration(productionData, assertLease);
+            if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+              throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+            }
+            return { audioPath, provider: productionData.assets.audio.provider || null };
+          },
+          persistWorkflow
+        );
+      } catch (error) {
+        if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeNarration);
+        throw error;
+      }
+      const assetsBeforeEditing = {
+        audio: productionData.assets.audio,
+        captions: productionData.assets.captions,
+        finalVideo: productionData.assets.finalVideo,
+        backgroundMusic: productionData.assets.backgroundMusic
+      };
+      try {
+        await runProductionStage(
+          productionData.timeline.productionWorkflow,
+          'editing',
+          async () => {
+            await this.generateCaptions(productionData, assertLease);
+            await this.assembleVideo(productionData, assertLease);
+            const finalVideo = productionData.assets.finalVideo;
+            if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+              throw new Error(finalVideo?.blockedReason || 'Production editing did not produce a real MP4 final video');
+            }
+            await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
+            return {
+              captionsGenerated: Boolean(productionData.assets.captions?.path),
+              finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+              simulated: Boolean(productionData.assets.finalVideo?.simulated)
+            };
+          },
+          persistWorkflow
+        );
+      } catch (error) {
+        if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeEditing);
+        throw error;
+      }
       // Mark as ready — or simulated, when no real video could be produced
       await assertLease();
       const finalVideo = productionData.assets.finalVideo;
@@ -391,20 +483,55 @@ class ProductionManagementAgent {
       }
       await assertLease();
       if (workflow.stages.narration.status !== 'completed') {
-        await runProductionStage(workflow, 'narration', async () => {
-          const audioPath = await this.generateAudioNarration(productionData, assertLease);
-          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
-            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
-          }
-          return { audioPath, provider: productionData.assets.audio.provider || null };
-        }, persistWorkflow);
+        const assetsBeforeNarration = {
+          audio: productionData.assets.audio,
+          captions: productionData.assets.captions,
+          finalVideo: productionData.assets.finalVideo,
+          backgroundMusic: productionData.assets.backgroundMusic
+        };
+        try {
+          await runProductionStage(workflow, 'narration', async () => {
+            const audioPath = await this.generateAudioNarration(productionData, assertLease);
+            if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+              throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+            }
+            return { audioPath, provider: productionData.assets.audio.provider || null };
+          }, persistWorkflow);
+        } catch (error) {
+          if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeNarration);
+          throw error;
+        }
       }
       await assertLease();
       if (workflow.stages.editing.status !== 'completed') {
-        await runProductionStage(workflow, 'editing', async () => {
-          await this.generateCaptions(productionData, assertLease);
-          await this.assembleVideo(productionData, assertLease);
-          const finalVideo = productionData.assets.finalVideo;
+        const assetsBeforeEditing = {
+          audio: productionData.assets.audio,
+          captions: productionData.assets.captions,
+          finalVideo: productionData.assets.finalVideo,
+          backgroundMusic: productionData.assets.backgroundMusic
+        };
+        try {
+          await runProductionStage(workflow, 'editing', async () => {
+            await this.generateCaptions(productionData, assertLease);
+            await this.assembleVideo(productionData, assertLease);
+            const finalVideo = productionData.assets.finalVideo;
+            if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+              throw new Error(finalVideo?.blockedReason || 'Production editing did not produce a real MP4 final video');
+            }
+            await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
+            return {
+              captionsGenerated: Boolean(productionData.assets.captions?.path),
+              finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+              simulated: Boolean(productionData.assets.finalVideo?.simulated)
+            };
+          }, persistWorkflow);
+        } catch (error) {
+          if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeEditing);
+          throw error;
+        }
+      }
+      await assertLease();
+      const finalVideo = productionData.assets.finalVideo;
           if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
             throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
           }
@@ -1192,7 +1319,6 @@ class ProductionManagementAgent {
           await assertLease();
           await fs.rm(captionedPath, { force: true });
           await fs.rename(captionTempPath, captionedPath);
-          await assertLease();
           await assertLease();
           await fs.writeFile(manifestTempPath, JSON.stringify({
             version: 1, fingerprint: captionFingerprint, sourceHash, captionsHash,
