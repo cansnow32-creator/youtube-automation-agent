@@ -159,6 +159,60 @@ async function run() {
     sources: [{ source: 'SEARCH', percentage: null }]
   }).searchPercentage, null, 'null source shares must not be coerced into measured zero');
   assert.equal(agent.calculateMobilePercentage([]), null, 'device mix is unknown without measured views');
+  // Traffic-source values preserve YouTube's canonical dimensions and never coerce missing views to zero.
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async args => {
+        assert.equal(args.metrics, 'views', 'traffic-source reports must not invent source-level CTR');
+        assert.equal(args.dimensions, 'insightTrafficSourceType');
+        assert.equal(args.startDate, '2026-11-01');
+        assert.equal(args.endDate, '2026-11-07');
+        return { data: { rows: [
+          ['YT_SEARCH', 40],
+          ['RELATED_VIDEO', 30],
+          ['VIDEO_BROWSE', 20],
+          ['SHORTS', 10],
+          ['EXT_URL', 5]
+        ] } };
+      }
+    }
+  };
+  const traffic = await agent.getTrafficSourcesAnalytics('traffic-video', '2026-11-01', '2026-11-07');
+  assert.equal(traffic.available, true);
+  assert.equal(traffic.topSource, 'YT_SEARCH');
+  assert.equal(traffic.sources.find(item => item.source === 'SHORTS').displayName, 'Shorts feed');
+  assert.equal(traffic.sources.find(item => item.source === 'RELATED_VIDEO').displayName, 'Suggested videos');
+  assert.equal(traffic.sources.reduce((sum, item) => sum + item.percentage, 0), 100);
+  assert.equal(traffic.sources.find(item => item.source === 'YT_SEARCH').percentage, 38.1);
+  assert.equal(traffic.sources.some(item => Object.hasOwn(item, 'clickThroughRate')), false);
+  assert.equal(agent.analyzeSearchPerformance(traffic).searchPercentage, 38.1);
+
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: { rows: [['YT_SEARCH', 50], ['OTHER', null]] } })
+    }
+  };
+  const partialTraffic = await agent.getTrafficSourcesAnalytics('partial-traffic-video', '2026-11-01', '2026-11-07');
+  assert.equal(partialTraffic.available, false);
+  assert.equal(partialTraffic.totalsComplete, false);
+  assert.equal(partialTraffic.sources[0].percentage, null,
+    'partial source rows must not be normalized against an incomplete denominator');
+  assert.equal(partialTraffic.organicPercentage, null);
+  assert.equal(partialTraffic.sources[1].views, null);
+  assert.equal(agent.analyzeSearchPerformance(partialTraffic).searchPercentage, null);
+
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: { rows: [['OTHER', 100]] } })
+    }
+  };
+  const otherOnlyTraffic = await agent.getTrafficSourcesAnalytics('other-traffic-video', '2026-11-01', '2026-11-07');
+  assert.equal(otherOnlyTraffic.sources[0].known, false);
+  assert.equal(agent.analyzeSearchPerformance(otherOnlyTraffic).searchQuality, 'unknown',
+    'unclassified traffic must not be presented as measured search performance');
+  assert.equal(agent.calculateOrganicPercentage([['YT_SEARCH', 75], ['RELATED_VIDEO', 15], ['EXT_URL', 10]]), 90);
+  assert.equal(agent.calculateOrganicPercentage([['YT_SEARCH', null], ['EXT_URL', 10]]), null);
+
 
   const unknownSearch = agent.analyzeSearchPerformance({ sources: [] });
   assert.equal(unknownSearch.searchPercentage, null);
