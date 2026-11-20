@@ -157,6 +157,7 @@ class SceneRepairService {
     this.logger = options.logger || { info() {}, warn() {}, error() {} };
     this.dataRoot = options.dataRoot || path.join(__dirname, '..', 'data');
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
+    this.runFFmpeg = options.runFFmpeg || runFFmpeg;
     this.activeRebuilds = new Set();
   }
 
@@ -828,7 +829,7 @@ class SceneRepairService {
       if (stat.isFile() && stat.size > 0) {
         const duration = await this.getMediaDuration(outputPath);
         if (Number.isFinite(duration) && duration > 0) {
-          await runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+          await this.runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
           return outputPath;
         }
       }
@@ -848,12 +849,12 @@ class SceneRepairService {
     filters.push(`${scenes.map((_, index) => `[a${index}]`).join('')}concat=n=${scenes.length}:v=0:a=1[aout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', tempPath);
     try {
-      await runFFmpeg(args);
+      await this.runFFmpeg(args);
       const stat = await fs.stat(tempPath);
       if (!stat.isFile() || stat.size <= 0) throw new Error('Narration mix output is empty');
       const duration = await this.getMediaDuration(tempPath);
       if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
-      await runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
+      await this.runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
       // The FFmpeg render may outlive the lease; verify ownership immediately before publishing the shared cache file.
       await assertLease();
       await replaceFileWithRollback(tempPath, outputPath);
