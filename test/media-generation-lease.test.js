@@ -286,6 +286,7 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
       model: 'test-model',
       status: 'failed'
     });
+    assert.equal(created.createdByThisInvocation, true);
     await db.updateMediaGenerationTask(created.id, {
       externalTaskId: 'old-remote-task',
       outputPath: path.join(directory, 'old-output.mp4'),
@@ -316,6 +317,7 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
       model: 'test-model',
       request: { prompt: 'other production' }
     });
+    assert.equal(otherProductionTask.createdByThisInvocation, true);
     assert.notEqual(otherProductionTask.id, created.id,
       'two manual productions must not share the same null-job media task row');
 
@@ -327,6 +329,7 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
       model: 'test-model',
       request: { prompt: 'updated production request' }
     });
+    assert.equal(repeatedProductionTask.createdByThisInvocation, false);
     assert.equal(repeatedProductionTask.id, created.id,
       'a retry for the same production must find its existing task row');
     assert.equal(repeatedProductionTask.external_task_id, 'production-a-remote-task',
@@ -340,6 +343,26 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
       (await db.findMediaGenerationTask(null, 0, 'test-provider', 'production-db-other')).id,
       otherProductionTask.id
     );
+
+    const generationJob = await db.createGenerationJob({ topic: 'Atomic media task claim test' });
+    const firstClaim = await db.createMediaGenerationTask({
+      jobId: generationJob.id,
+      productionId: 'production-claim-test',
+      sceneIndex: 2,
+      provider: 'test-provider',
+      model: 'test-model'
+    });
+    const secondClaim = await db.createMediaGenerationTask({
+      jobId: generationJob.id,
+      productionId: 'production-claim-test',
+      sceneIndex: 2,
+      provider: 'test-provider',
+      model: 'test-model'
+    });
+    assert.equal(firstClaim.createdByThisInvocation, true);
+    assert.equal(secondClaim.createdByThisInvocation, false,
+      'a second caller must not believe it owns an existing unique task row');
+    assert.equal(secondClaim.id, firstClaim.id);
   } finally {
     await db.close();
     await fs.rm(directory, { recursive: true, force: true });
