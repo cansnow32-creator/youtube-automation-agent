@@ -3,6 +3,16 @@
 - Continued the PR #2 recovery audit and found a race: reconciliation read a task, queried the provider, then unconditionally updated the DB row. An operator/worker could change the row between the read and final update.
 - Added `compareAndSetMediaGenerationTask()` with a single SQLite UPDATE guarded by the expected status and external task ID. Provider-verified reconciliation and explicit absent-task resolution now require the compare-and-set result; stale actions return 409 and cannot overwrite the current row.
 - Added SQLite regression coverage for a winning update and a stale competing update; documented the 409 conflict behavior in `docs/MEDIA_TASK_RECONCILIATION.md`.
+- Commits on feat/video-concept-approval: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`, `cc53b532c2afa95f627e57d7aea58eda608f1a7b`.
+- Re-fetched the changed files. JavaScript syntax parsing and package JSON parsing passed; the test file declares and invokes all 14 media regression functions. Runtime tests/lint were not executed. GitHub reports zero PR-triggered workflow runs on current PR #2 head `cc53b532c2afa95f627e57d7aea58eda608f1a7b`.
+- Live PR heads: #1 `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81` (open/draft/mergeable); #2 `cc53b532c2afa95f627e57d7aea58eda608f1a7b` (open/draft/not mergeable, still stacked on PR #1); #3 `aa30932a42d7887f7e2b8fccb458db3d6c125e58` (open/draft/mergeable). No PR was merged, retargeted or rebased.
+- Next: obtain a real CI run for PR #2, then fix any runtime failures and re-check the stacked PR relationship. Do not merge.
+
+## 2026-11-20 — Prevent stale operator media-task reconciliation writes
+
+- Continued the PR #2 recovery audit and found a race: reconciliation read a task, queried the provider, then unconditionally updated the DB row. An operator/worker could change the row between the read and final update.
+- Added `compareAndSetMediaGenerationTask()` with a single SQLite UPDATE guarded by the expected status and external task ID. Provider-verified reconciliation and explicit absent-task resolution now require the compare-and-set result; stale actions return 409 and cannot overwrite the current row.
+- Added SQLite regression coverage for a winning update and a stale competing update; documented the 409 conflict behavior in `docs/MEDIA_TASK_RECONCILIATION.md`.
 - Commits on feat/video-concept-approval: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`.
 - Re-fetched the changed files. JavaScript syntax parsing and package JSON parsing passed; the test file still declares and invokes all 14 media regression functions. Runtime tests/lint were not executed. GitHub reports zero PR-triggered workflow runs on the current PR #2 head.
 - Live PR #2 head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; PR #1 and #3 remain open/draft/unmerged. PR #3 currently reports mergeable false after the continuity updates. The fresh-submission test double was aligned with the required compare-and-set capability in `cc53b532c2afa95f627e57d7aea58eda608f1a7b`. No PR was merged, retargeted or rebased.
