@@ -275,6 +275,14 @@ function makeStatefulMediaTaskDb(initialTask = null) {
       };
       return { claimed: true, task: { ...row, providerData: { ...(row.providerData || {}) } } };
     },
+    async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}) {
+      if (!row || row.id !== taskId || row.status !== expectedStatus ||
+          (row.external_task_id || null) !== (expectedExternalTaskId || null)) {
+        return { updated: false, task: row ? { ...row, providerData: { ...(row.providerData || {}) } } : null };
+      }
+      const task = await this.updateMediaGenerationTask(taskId, changes);
+      return { updated: true, task };
+    },
     async updateMediaGenerationTask(_id, changes) {
       row = { ...row };
       if (changes.model !== undefined) row.model = changes.model;
@@ -361,6 +369,25 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
       (await db.findMediaGenerationTask(null, 0, 'test-provider', 'production-db-other')).id,
       otherProductionTask.id
     );
+
+    const firstReconciliationUpdate = await db.compareAndSetMediaGenerationTask(
+      otherProductionTask.id,
+      'submitting',
+      null,
+      { status: 'running', externalTaskId: 'operator-found-task' }
+    );
+    assert.equal(firstReconciliationUpdate.updated, true,
+      'the first operator reconciliation update should atomically claim the unresolved state');
+    const staleReconciliationUpdate = await db.compareAndSetMediaGenerationTask(
+      otherProductionTask.id,
+      'submitting',
+      null,
+      { status: 'failed', externalTaskId: null }
+    );
+    assert.equal(staleReconciliationUpdate.updated, false,
+      'a competing stale operator action must not overwrite the committed reconciliation');
+    assert.equal(staleReconciliationUpdate.task.external_task_id, 'operator-found-task');
+    assert.equal(staleReconciliationUpdate.task.status, 'running');
 
     const generationJob = await db.createGenerationJob({ topic: 'Atomic media task claim test' });
     const firstClaim = await db.createMediaGenerationTask({
@@ -540,6 +567,14 @@ async function testManualReconciliationVerifiesAndResumesRemoteTask() {
     async getMediaGenerationTaskById(taskId) {
       return taskId === row.id ? { ...row, providerData: { ...row.providerData } } : null;
     },
+    async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}) {
+      if (taskId !== row.id || row.status !== expectedStatus ||
+          (row.external_task_id || null) !== (expectedExternalTaskId || null)) {
+        return { updated: false, task: { ...row, providerData: { ...row.providerData } } };
+      }
+      const task = await this.updateMediaGenerationTask(taskId, changes);
+      return { updated: true, task };
+    },
     async updateMediaGenerationTask(taskId, changes) {
       assert.equal(taskId, row.id);
       row = { ...row };
@@ -649,6 +684,14 @@ async function testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirma
   const db = {
     async getMediaGenerationTaskById(id) {
       return id === row.id ? { ...row, providerData: { ...row.providerData } } : null;
+    },
+    async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}) {
+      if (taskId !== row.id || row.status !== expectedStatus ||
+          (row.external_task_id || null) !== (expectedExternalTaskId || null)) {
+        return { updated: false, task: { ...row, providerData: { ...row.providerData } } };
+      }
+      const task = await this.updateMediaGenerationTask(taskId, changes);
+      return { updated: true, task };
     },
     async updateMediaGenerationTask(_id, changes) {
       updates++;
