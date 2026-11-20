@@ -10,6 +10,7 @@ async function run() {
   try {
     const imagePath = path.join(directory, 'scene.png');
     const corruptImagePath = path.join(directory, 'corrupt.png');
+    const mismatchedImagePath = path.join(directory, 'mismatched.jpg');
     const videoPath = path.join(directory, 'scene.mp4');
     const corruptVideoPath = path.join(directory, 'corrupt.mp4');
     const audioPath = path.join(directory, 'scene.mp3');
@@ -17,6 +18,7 @@ async function run() {
 
     await sharp({ create: { width: 16, height: 16, channels: 3, background: '#345678' } }).png().toFile(imagePath);
     await fs.writeFile(corruptImagePath, Buffer.from('not-an-image'));
+    await fs.copyFile(imagePath, mismatchedImagePath);
     await fs.writeFile(videoPath, Buffer.from('valid-video-fixture'));
     await fs.writeFile(corruptVideoPath, Buffer.from('invalid-video-fixture'));
     await fs.writeFile(audioPath, Buffer.from('valid-audio-fixture'));
@@ -31,6 +33,7 @@ async function run() {
 
     assert.equal(await service.isUsableSceneAsset({ assetType: 'image', assetPath: imagePath }), true);
     assert.equal(await service.isUsableSceneAsset({ assetType: 'image', assetPath: corruptImagePath }), false);
+    assert.equal(await service.isUsableSceneAsset({ assetType: 'image', assetPath: mismatchedImagePath }), false, 'image bytes must match their extension');
     assert.equal(await service.isUsableSceneAsset({ assetType: 'video', assetPath: videoPath }), true);
     assert.equal(await service.isUsableSceneAsset({ assetType: 'video', assetPath: corruptVideoPath }), false);
     assert.equal(await service.isUsableSceneAsset({ assetType: 'video', assetPath: imagePath }), false);
