@@ -429,3 +429,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 
 - Final edge-case hardening: a successful-looking `videos.insert` response without `data.id` now raises `YOUTUBE_UPLOAD_ID_MISSING` with HTTP 502. Since the upload attempt flag is already set, the outer publisher marks the schedule `reconciliation_required` and does not retry automatically. The upload claim regression asserts `uploadStartedAt` is persisted.
 - Final verification: static syntax checks passed for DB, publishing service, API, dashboard JS, both publishing regression tests, and package JSON parsing/test wiring. Runtime tests/lint were not executed. PR #2 is open/draft/unmerged, base `feat/local-first-quality-gate`, head `25e6e6489e495b0658cf0e4a18a29d9df20179a7`, mergeable false; no workflow runs found. No merge, rebase, or base change performed.
+
+
+## 2026-11-20 — Verify recorded YouTube IDs during automatic recovery
+
+- Closed a recovery-path gap: `reconcileUploadedVideo()` previously marked any existing video ID as published without checking channel ownership or title. It now calls `videos.list` and `channels.list(mine=true)`, then verifies the video belongs to the authenticated channel and its normalized title matches the scheduled SEO/title value.
+- Missing video, wrong channel, and title mismatch remain `reconciliation_required`; they are not marked published. YouTube API transport errors return a verification error without changing the persisted state.
+- Added `updateScheduleEntryUploadVerification()` in SQLite. It conditionally updates only when schedule ID, exact observed status, and exact recorded YouTube ID still match. This prevents stale verification results from overwriting an operator reconciliation or other state transition.
+- Expanded `test/publishing-reconciliation.test.js` with successful known-ID recovery, wrong-channel/title rejection, and concurrent verification CAS coverage. Updated operator documentation.
+- Static syntax checks passed for DB, publishing service, test and package JSON. Runtime tests/lint were not executed. PR #2 latest head: `13e2cfbef02784d226e99596de60272892faff49`; open/draft/unmerged; no workflow runs found. No merge, rebase or base change performed.
