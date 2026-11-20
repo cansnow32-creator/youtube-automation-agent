@@ -201,6 +201,20 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
     } catch (error) {
       if (this.qualityPipeline.enabled) {
         this.logger.error(`Local-first quality pipeline blocked generation: ${error.message}`);
+        if (error.code === 'QUALITY_REVIEW_REQUIRED' && this.db?.saveScriptQualityReview) {
+          try {
+            const review = await this.db.saveScriptQualityReview({
+              topic: strategy.topic,
+              strategy,
+              draft: error.draft,
+              qualityReport: error.qualityReport || this.qualityPipeline.lastReport
+            });
+            error.qualityReviewId = review?.id || null;
+          } catch (persistError) {
+            error.qualityReviewPersistenceError = persistError.message;
+            this.logger.error('Could not persist rejected script draft:', persistError);
+          }
+        }
         throw error;
       }
       this.logger.warn(`AI script generation failed; using template fallback: ${error.message}`);
