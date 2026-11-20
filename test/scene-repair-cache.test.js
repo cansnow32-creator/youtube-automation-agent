@@ -13,6 +13,13 @@ async function run() {
     await fs.writeFile(audioPath, Buffer.from('same-size-audio-A'));
 
     const service = new SceneRepairService({}, {}, { dataRoot: directory });
+    service.activeRebuilds.add('locked-production');
+    await assert.rejects(
+      service.rebuild('locked-production'),
+      error => error.code === 'SCENE_REBUILD_IN_PROGRESS' && error.status === 409
+    );
+    service.activeRebuilds.delete('locked-production');
+
     const scenes = [{
       id: 'scene-1', revision: 2, assetType: 'image', assetPath: visualPath,
       duration: 12, narrationStatus: 'current', audioPath, scriptText: 'Narration text'
