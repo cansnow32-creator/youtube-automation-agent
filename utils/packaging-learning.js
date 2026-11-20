@@ -16,8 +16,14 @@ function hasFreshEvidence(item, options = {}) {
   return ageDays <= maxAgeDays;
 }
 
+function hasFreshNegativeApplicationFeedback(item) {
+  const feedback = item?.applicationFeedback;
+  return feedback?.status === 'negative_signal' && feedback?.freshnessStatus === 'fresh';
+}
+
 function isApprovedPackagingLearning(item, options = {}) {
-  if (!item || item.status !== 'approved' || !hasFreshEvidence(item, options)) return false;
+  if (!item || item.status !== 'approved' || !hasFreshEvidence(item, options) ||
+    hasFreshNegativeApplicationFeedback(item)) return false;
   const experiment = item.proposedChange?.experiment;
   if (experiment === 'title_thumbnail_variant') return true;
   return item.category === 'packaging_experiment' &&
@@ -76,6 +82,7 @@ function getApprovedScriptLearnings(recommendations = [], options = {}) {
   return (Array.isArray(recommendations) ? recommendations : [])
     .filter(item => item?.status === 'approved' &&
       hasFreshEvidence(item, options) &&
+      !hasFreshNegativeApplicationFeedback(item) &&
       allowedCategories.has(String(item.category || '')) &&
       ['future_plans', 'future_scripts'].includes(item.proposedChange?.target))
     .slice(0, 8)
@@ -100,4 +107,11 @@ function getApprovedScriptLearnings(recommendations = [], options = {}) {
     .filter(item => item.proposedChange.prefer || item.rationale);
 }
 
-module.exports = { hasFreshEvidence, isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings, getAppliedPackagingLearning };
+module.exports = {
+  hasFreshEvidence,
+  hasFreshNegativeApplicationFeedback,
+  isApprovedPackagingLearning,
+  getApprovedPackagingLearning,
+  getApprovedScriptLearnings,
+  getAppliedPackagingLearning
+};
