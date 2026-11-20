@@ -1546,16 +1546,41 @@ class Database {
     } : null;
   }
 
+  async updateScriptQualityReviewDraft(reviewId, draft, qualityReport) {
+    const result = await this.executeQuery(
+      `UPDATE script_quality_reviews
+       SET status = 'pending', draft = ?, quality_report = ?,
+           decision_notes = NULL, decided_at = NULL, updated_at = datetime('now')
+       WHERE id = ? AND status IN ('pending', 'revision_requested')`,
+      [String(draft || ''), JSON.stringify(qualityReport || {}), reviewId]
+    );
+    if (!result.changes) {
+      const existing = await this.getScriptQualityReview(reviewId);
+      if (!existing) return null;
+      const error = new Error('This review is no longer open for revision');
+      error.status = 409;
+      throw error;
+    }
+    return this.getScriptQualityReview(reviewId);
+  }
+
   async decideScriptQualityReview(reviewId, decision, notes = '') {
     const allowed = ['human_approved', 'rejected', 'revision_requested'];
     if (!allowed.includes(decision)) throw new Error('Invalid quality review decision');
-    await this.executeQuery(
+    const result = await this.executeQuery(
       `UPDATE script_quality_reviews
        SET status = ?, decision_notes = ?, decided_at = datetime('now'),
            updated_at = datetime('now')
        WHERE id = ? AND status IN ('pending', 'revision_requested')`,
       [decision, String(notes || '').slice(0, 3000), reviewId]
     );
+    if (!result.changes) {
+      const existing = await this.getScriptQualityReview(reviewId);
+      if (!existing) return null;
+      const error = new Error('This review already has a final human decision');
+      error.status = 409;
+      throw error;
+    }
     return this.getScriptQualityReview(reviewId);
   }
 
