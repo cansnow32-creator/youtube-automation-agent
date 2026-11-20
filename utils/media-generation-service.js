@@ -219,11 +219,55 @@ class MediaGenerationService {
       await assertLease();
       const resumeExistingRemoteTask = Boolean(task.external_task_id && [
         'queued', 'running', 'submitting', 'submission_unknown',
-        'reconciliation_required', 'downloading', 'download_pending', 'succeeded'
+        'reconciliation_required', 'downloading', 'download_pending', 'succeeded',
+        'failed', 'cancelled'
       ].includes(task.status));
 
       if (resumeExistingRemoteTask) {
         remote = await provider.getTask(task.external_task_id, task.providerData || {});
+        remoteTaskId = remote?.externalTaskId || remote?.id || remoteTaskId;
+
+        // Older releases marked some transient polling errors as failed. Before
+        // a replacement submission, re-check that provider task; only a verified
+        // terminal provider status may be archived and atomically replaced.
+        if (['failed', 'cancelled'].includes(remote?.status) &&
+            ['failed', 'cancelled'].includes(task.status)) {
+          await assertLease();
+          if (!this.db?.claimMediaGenerationTaskForSubmission) {
+            const error = new Error('Replacing a terminal provider task requires atomic database submission-claim support');
+            error.code = 'MEDIA_TASK_SUBMISSION_CLAIM_UNAVAILABLE';
+            error.status = 503;
+            throw error;
+          }
+          previousTaskHistory.push({
+            externalTaskId: remoteTaskId,
+            status: remote.status,
+            outputPath: task.output_path || null,
+            completedAt: task.completed_at || null
+          });
+          previousTaskHistory = previousTaskHistory.slice(-10);
+          const claim = await this.db.claimMediaGenerationTaskForSubmission(
+            task.id,
+            task.status,
+            task.external_task_id,
+            previousTaskHistory
+          );
+          if (!claim?.claimed) {
+            const error = new Error(`Another worker already claimed media task ${task.id} for retry; refusing a second provider submission.`);
+            error.code = 'MEDIA_TASK_SUBMISSION_IN_PROGRESS';
+            error.status = 409;
+            throw error;
+          }
+          task = claim.task;
+          previousTaskHistory = Array.isArray(task?.providerData?.previousTasks)
+            ? task.providerData.previousTasks
+            : previousTaskHistory;
+          remoteTaskId = null;
+          await assertLease();
+          await this.assertNotCancelled(jobId, provider, task);
+          remoteSubmissionAttempted = true;
+          remote = await provider.createTask(request);
+        }
       } else {
         await this.assertNotCancelled(jobId, provider, task);
 
