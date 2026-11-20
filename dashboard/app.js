@@ -355,7 +355,7 @@ function renderUnresolvedPublishing(entries = [], error = null) {
     return;
   }
   container.innerHTML = entries.map(entry => `
-    <article class="activity-item" data-publish-reconciliation="${escapeHTML(entry.id)}">
+    <article class="activity reconciliation-upload-card" data-publish-reconciliation="${escapeHTML(entry.id)}">
       <div>
         <strong>${escapeHTML(entry.title || entry.productionId || 'Untitled upload')}</strong>
         <div class="meta-line">${statusChip(entry.status)} · ${escapeHTML(entry.productionId || entry.id)} · ${escapeHTML(formatDate(entry.publishTime))}</div>
