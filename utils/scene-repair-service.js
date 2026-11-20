@@ -130,6 +130,7 @@ class SceneRepairService {
     this.logger = options.logger || { info() {}, warn() {}, error() {} };
     this.dataRoot = options.dataRoot || path.join(__dirname, '..', 'data');
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
+    this.activeRebuilds = new Set();
   }
 
   async ensureManifest(bundle) {
@@ -535,6 +536,18 @@ class SceneRepairService {
   }
 
   async rebuild(productionId) {
+    if (this.activeRebuilds.has(productionId)) {
+      throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
+    }
+    this.activeRebuilds.add(productionId);
+    try {
+      return await this.rebuildUnlocked(productionId);
+    } finally {
+      this.activeRebuilds.delete(productionId);
+    }
+  }
+
+  async rebuildUnlocked(productionId) {
     const bundle = await this.getEditableBundle(productionId);
     const scenes = await this.db.listProductionScenes(productionId);
     if (!scenes.length) throw this.error('No scene manifest is available', 409);
@@ -565,9 +578,10 @@ class SceneRepairService {
 
     const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path);
     const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
-    const visualTempPath = `${visualPath}.rendering.mp4`;
+    const attemptId = crypto.randomUUID();
+    const visualTempPath = `${visualPath}.${attemptId}.rendering.mp4`;
     const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}.mp4`);
-    const finalTempPath = `${finalPath}.rendering.mp4`;
+    const finalTempPath = `${finalPath}.${attemptId}.rendering.mp4`;
     const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${fingerprint}.srt`);
     await fs.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
@@ -624,7 +638,7 @@ class SceneRepairService {
     const captions = this.buildSRT(scenes);
     const existingCaptions = await fs.readFile(captionsPath, 'utf8').catch(() => null);
     if (existingCaptions !== captions) {
-      const captionsTempPath = `${captionsPath}.writing`;
+      const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
       await fs.writeFile(captionsTempPath, captions);
       await fs.unlink(captionsPath).catch(() => {});
       await fs.rename(captionsTempPath, captionsPath);
@@ -718,6 +732,7 @@ class SceneRepairService {
     } catch (_error) {
       // Missing or corrupt cached narration mix is rebuilt below.
     }
+    const tempPath = `${outputPath}.${crypto.randomUUID()}.writing.m4a`;
     const args = ['-y'];
     for (const scene of scenes) {
       if (scene.narrationStatus === 'intentional_silence') {
@@ -728,9 +743,21 @@ class SceneRepairService {
     }
     const filters = scenes.map((scene, index) => `[${index}:a]aresample=48000,apad,atrim=duration=${Number(scene.duration).toFixed(2)},asetpts=PTS-STARTPTS[a${index}]`);
     filters.push(`${scenes.map((_, index) => `[a${index}]`).join('')}concat=n=${scenes.length}:v=0:a=1[aout]`);
-    args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', outputPath);
-    await runFFmpeg(args);
-    return outputPath;
+    args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', tempPath);
+    try {
+      await runFFmpeg(args);
+      const stat = await fs.stat(tempPath);
+      if (!stat.isFile() || stat.size <= 0) throw new Error('Narration mix output is empty');
+      const duration = await this.getMediaDuration(tempPath);
+      if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
+      await runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
+      await fs.unlink(outputPath).catch(() => {});
+      await fs.rename(tempPath, outputPath);
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(tempPath).catch(() => {});
+      throw error;
+    }
   }
 
   buildSRT(scenes) {
