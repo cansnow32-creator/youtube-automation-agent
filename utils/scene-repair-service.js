@@ -413,7 +413,7 @@ class SceneRepairService {
       await this.updateProductionAudioState(bundle, {
         status: 'partial', path: null, simulated: false, intentionalSilence: false,
         error: 'Scene narration changed; rebuild the final narration mix before approval'
-      });
+      }, assertLease);
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate_narration', before, after: next, costEvidence: cost
@@ -472,7 +472,7 @@ class SceneRepairService {
           error: 'Narration is required; regenerate every missing scene before approval'
         };
     await assertLease();
-    await this.updateProductionAudioState(bundle, audioChanges);
+    await this.updateProductionAudioState(bundle, audioChanges, assertLease);
     const updated = [];
     for (const scene of bundle.scenes) {
       await assertLease();
@@ -501,12 +501,14 @@ class SceneRepairService {
     return { enabled, reason: enabled ? reason : null, scenes: updated };
   }
 
-  async updateProductionAudioState(bundle, changes) {
+  async updateProductionAudioState(bundle, changes, assertLease = async () => {}) {
+    await assertLease();
     const assets = { ...bundle.assets, audio: { ...(bundle.assets?.audio || {}), ...changes } };
     await this.db.updateProductionData({
       id: bundle.id, status: bundle.status, assets, timeline: bundle.timeline,
       scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
     }, assertLease.lease);
+    await assertLease();
     bundle.assets = assets;
     return assets.audio;
   }
