@@ -136,6 +136,27 @@ function scoreProductionFit(idea = {}, channelStrategy = {}) {
   return preferredFormat === ideaFormat ? 100 : 65;
 }
 
+function scoreProductionEffort(idea = {}, channelStrategy = {}) {
+  const text = `${idea.topic || ''} ${idea.angle || ''} ${idea.rationale || ''}`.toLowerCase();
+  if (!text.trim()) return 75;
+  const highEffort = /documentary|investigation|deep dive|in-depth|interview|case study|3d animation|frame-by-frame|original animation|field research|on location|multi-location/i;
+  const mediumEffort = /comparison|review|experiment|data analysis|historical|timeline|explainer|story|tutorial|step-by-step/i;
+  let score = highEffort.test(text) ? 45 : mediumEffort.test(text) ? 70 : 90;
+
+  // Only adjust for capabilities explicitly configured by the channel owner.
+  const capabilities = Array.isArray(channelStrategy.productionCapabilities)
+    ? channelStrategy.productionCapabilities.map(value => String(value).toLowerCase())
+    : null;
+  if (capabilities && capabilities.length) {
+    const needs = [];
+    if (/interview|on location|field research/i.test(text)) needs.push('interviews');
+    if (/3d animation|frame-by-frame|original animation/i.test(text)) needs.push('animation');
+    if (/documentary|investigation|field research/i.test(text)) needs.push('research');
+    if (needs.some(need => !capabilities.includes(need))) score -= 15;
+  }
+  return clamp(score);
+}
+
 function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSnapshots = [], audienceDemand = []) {
   const trends = new Map((trendTopics || []).map(item => [String(item.topic || '').toLowerCase(), item]));
   const maxTrend = Math.max(1, ...(trendTopics || []).map(item => Number(item.score) || 0));
@@ -172,6 +193,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     const performance = historical?.score ?? null;
     const viewerValue = scoreViewerValue(idea, demand);
     const productionFit = scoreProductionFit(idea, channelStrategy);
+    const productionEffort = scoreProductionEffort(idea, channelStrategy);
 
     let weights;
     let score;
@@ -192,7 +214,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
       score = Math.round(trendScore * weights.trend + channelFit * weights.channelFit);
     }
 
-    score = Math.round(score * 0.8 + viewerValue * 0.1 + productionFit * 0.1);
+    score = Math.round(score * 0.8 + viewerValue * 0.1 + productionFit * 0.05 + productionEffort * 0.05);
 
     return {
       ...idea,
@@ -211,6 +233,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
         channelFit,
         viewerValue,
         productionFit,
+        productionEffort,
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
         historicalSampleSize: historical?.sampleSize || 0,
@@ -298,5 +321,6 @@ module.exports = {
   audienceDemandForTopic,
   scoreViewerValue,
   scoreProductionFit,
+  scoreProductionEffort,
   filterTrendIdeasForApproval
 };
