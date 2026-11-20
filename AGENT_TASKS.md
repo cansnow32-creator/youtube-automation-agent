@@ -6,9 +6,10 @@ Status values: todo, in_progress, blocked, done, needs_user.
 
 ## P0 — Validate and stabilize current production work
 
-- [ ] todo — Audit PR #2 current head: fetch live diff/check-runs; inspect job creation lock, resume lock, lease renewal, lease-loss guards, and rollback-safe output replacement.
-- [ ] todo — Run CI for PR #2: execute npm ci, lint and tests in a cloud environment if available; record exact SHA and outputs. If unavailable, say so.
-- [ ] todo — Fix verified failures with focused regression tests; do not merge.
+- [ ] in_progress — Complete PR #2 audit. Live diff and check-runs inspected; static review covered job-scoped production lock, production resume lease, scene-repair lease/heartbeat, and rollback-safe output replacement. Database-backed multi-process concurrency and full runtime behavior remain unverified.
+- [ ] todo — Run CI for PR #2 head `96ac8f7c27be5009c981576650dd93c365cd160e`: `npm ci`, lint and tests in GitHub Actions; record exact run and outputs. Current head has zero check-runs.
+- [x] done — Fix CI integrity issue: stop rewriting the committed lockfile before `npm ci`; generate the npm audit remediation candidate separately. Commit `96ac8f7c27be5009c981576650dd93c365cd160e` on PR #2 branch.
+- [ ] todo — Fix any additional verified application failures with focused regression tests; do not merge.
 - [ ] todo — Review PR #1 / PR #2 dependency. PR #2 currently targets PR #1's branch. Preserve stacked PRs or retarget only after reviewing dependencies.
 
 ## P1 — Establish continuity and cloud execution
