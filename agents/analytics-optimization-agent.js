@@ -363,7 +363,7 @@ class AnalyticsOptimizationAgent {
       sources: sources.map(row => ({
         source: row[0],
         views: row[1],
-        percentage: ((row[1] / totalViews) * 100).toFixed(1)
+        percentage: totalViews > 0 ? ((row[1] / totalViews) * 100).toFixed(1) : '0.0'
       })),
       topSource: sources.length > 0 ? sources[0][0] : 'unknown',
       organicPercentage: this.calculateOrganicPercentage(sources)
@@ -802,16 +802,22 @@ class AnalyticsOptimizationAgent {
   }
 
   identifyPrimaryAudience(ageGroups, gender) {
-    const topAge = ageGroups?.[0]?.[0] || '25-34';
-    const topGender = gender?.[0]?.[0] || 'male';
+    const topAge = ageGroups?.[0]?.[0] || null;
+    const topGender = gender?.[0]?.[0] || null;
+    if (!topAge && !topGender) return null;
+    if (!topAge) return `${topGender}, age unavailable`;
+    if (!topGender) return `Gender unavailable, ${topAge}`;
     return `${topGender}s ${topAge}`;
   }
 
   calculateOrganicPercentage(sources) {
     const organicSources = ['SEARCH', 'YOUTUBE_SEARCH', 'SUGGESTED_VIDEO'];
-    return sources
+    const totalViews = (sources || []).reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    if (totalViews <= 0) return null;
+    const organicViews = (sources || [])
       .filter(row => organicSources.includes(row[0]))
-      .reduce((sum, row) => sum + row[1], 0);
+      .reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    return Number(((organicViews / totalViews) * 100).toFixed(1));
   }
 
   calculateMobilePercentage(devices) {
