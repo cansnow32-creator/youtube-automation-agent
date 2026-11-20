@@ -261,6 +261,32 @@ async function run() {
     fs.writeFile = originalWriteFile;
   }
 
+  // Lease loss during AI thumbnail generation must not be swallowed by the
+  // fallback path or create a copied/placeholder thumbnail.
+  const thumbnailAgent = Object.create(ProductionManagementAgent.prototype);
+  thumbnailAgent.aiVideoGenerator = {
+    generateThumbnail: async () => ({ simulated: true })
+  };
+  thumbnailAgent.logger = { error() {} };
+  const originalMkdir = fs.mkdir;
+  const thumbnailSideEffects = [];
+  fs.mkdir = async (...args) => { thumbnailSideEffects.push({ type: 'mkdir', args }); };
+  try {
+    let thumbnailLeaseChecks = 0;
+    await assert.rejects(
+      thumbnailAgent.processThumbnail({}, { title: 'test' }, async () => {
+        thumbnailLeaseChecks += 1;
+        if (thumbnailLeaseChecks === 2) {
+          throw Object.assign(new Error('job lease lost during thumbnail generation'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
+    );
+    assert.deepEqual(thumbnailSideEffects, [], 'lease loss during thumbnail generation prevents fallback directory creation');
+  } finally {
+    fs.mkdir = originalMkdir;
+  }
+
     process.stdout.write('Production operation lock tests passed\\n');
 }
 
