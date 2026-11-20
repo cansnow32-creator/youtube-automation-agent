@@ -335,7 +335,7 @@ class SceneRepairService {
     await new ProvenanceService(this.db).review(bundle.id, {
       sources: provenance.sources || [], claims,
       containsSyntheticMedia: provenance.containsSyntheticMedia
-    });
+    }, assertLease.lease);
   }
 
   async reorder(productionId, orderedIds) {
