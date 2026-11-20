@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { hasFreshEvidence, isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings } = require('../utils/packaging-learning');
+const { hasFreshEvidence, hasFreshNegativeApplicationFeedback, isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings } = require('../utils/packaging-learning');
 
 const now = new Date('2026-11-20T12:00:00.000Z');
 const freshEvidence = { freshness: { status: 'fresh', oldestMeasuredAt: '2026-10-01T00:00:00.000Z', latestMeasuredAt: '2026-11-19T00:00:00.000Z', sampleCount: 4, maxAgeDays: 90 } };
@@ -38,6 +38,31 @@ const selected = getApprovedScriptLearnings(approved, { now });
 assert.deepEqual(selected.map(item => item.recommendationId), ['hook-1', 'format-1']);
 assert.equal(selected[0].proposedChange.prefer, 'concise');
 assert.equal(selected[0].evidence.sampleSize, 5);
+
+const freshNegative = { status: 'negative_signal', freshnessStatus: 'fresh' };
+const staleNegative = { status: 'negative_signal', freshnessStatus: 'stale' };
+const insufficientFeedback = { status: 'insufficient_data', freshnessStatus: 'fresh' };
+assert.equal(hasFreshNegativeApplicationFeedback({ applicationFeedback: freshNegative }), true);
+assert.equal(hasFreshNegativeApplicationFeedback({ applicationFeedback: staleNegative }), false);
+assert.equal(hasFreshNegativeApplicationFeedback({ applicationFeedback: insufficientFeedback }), false);
+assert.deepEqual(
+  getApprovedScriptLearnings(approved.map(item => item.id === 'hook-1'
+    ? { ...item, applicationFeedback: freshNegative } : item), { now }).map(item => item.recommendationId),
+  ['format-1'],
+  'fresh negative application feedback blocks reuse without changing approval status'
+);
+assert.deepEqual(
+  getApprovedScriptLearnings(approved.map(item => item.id === 'hook-1'
+    ? { ...item, applicationFeedback: staleNegative } : item), { now }).map(item => item.recommendationId),
+  ['hook-1', 'format-1'],
+  'stale negative feedback must not block an otherwise fresh approved recommendation'
+);
+assert.deepEqual(
+  getApprovedScriptLearnings(approved.map(item => item.id === 'hook-1'
+    ? { ...item, applicationFeedback: insufficientFeedback } : item), { now }).map(item => item.recommendationId),
+  ['hook-1', 'format-1'],
+  'insufficient feedback must not penalize an approved recommendation'
+);
 assert.deepEqual(getApprovedScriptLearnings(approved, { now: new Date('2027-03-01T00:00:00.000Z') }).map(item => item.recommendationId), [], 'evidence older than 90 days must no longer steer future scripts');
 assert.equal(hasFreshEvidence({ evidence: freshEvidence }, { now }), true);
 assert.equal(hasFreshEvidence({ evidence: { freshness: { ...freshEvidence.freshness, oldestMeasuredAt: null } } }, { now }), false);
@@ -53,6 +78,16 @@ const packaging = {
 };
 assert.equal(isApprovedPackagingLearning(packaging, { now }), true);
 assert.equal(getApprovedPackagingLearning([packaging], { now }).recommendationId, 'pack-1');
+assert.equal(isApprovedPackagingLearning({ ...packaging, applicationFeedback: freshNegative }, { now }), false,
+  'fresh negative application feedback blocks packaging reuse');
+assert.equal(getApprovedPackagingLearning([{ ...packaging, applicationFeedback: freshNegative }], { now }), null);
+assert.equal(isApprovedPackagingLearning({ ...packaging, applicationFeedback: staleNegative }, { now }), true,
+  'stale feedback does not block reuse when recommendation evidence itself is fresh');
+assert.equal(isApprovedPackagingLearning({ ...packaging, applicationFeedback: insufficientFeedback }, { now }), true,
+  'insufficient feedback does not block reuse');
+assert.equal(isApprovedPackagingLearning({
+  ...packaging, applicationFeedback: { status: 'positive_signal', freshnessStatus: 'fresh' }
+}, { now }), true, 'positive observational feedback leaves approved learning eligible');
 assert.equal(isApprovedPackagingLearning({ ...packaging, evidence: {} }, { now }), false,
   'legacy approved recommendations without measured evidence timestamps must fail closed');
 assert.equal(getApprovedPackagingLearning([packaging], { now: new Date('2027-03-01T00:00:00.000Z') }), null,
