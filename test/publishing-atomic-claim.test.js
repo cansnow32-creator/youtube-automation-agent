@@ -65,18 +65,16 @@ async function main() {
   const secondRun = second.publishContentOnce('short-1');
   try {
     await uploadStarted.promise;
-    const results = await Promise.allSettled([firstRun, secondRun]);
+    const secondResult = await Promise.allSettled([secondRun]);
     assert.equal(uploadCalls, 1, 'two independent publisher instances must not upload the same Short');
-    const fulfilled = results.filter(result => result.status === 'fulfilled');
-    const rejected = results.filter(result => result.status === 'rejected');
-    assert.equal(fulfilled.length, 1);
-    assert.equal(rejected.length, 1);
-    assert.equal(rejected[0].reason.code, 'UPLOAD_OUTCOME_UNKNOWN');
+    assert.equal(secondResult[0].status, 'rejected');
+    assert.equal(secondResult[0].reason.code, 'UPLOAD_OUTCOME_UNKNOWN');
     assert.equal(state.status, 'uploading', 'the durable claim blocks a second worker while the first upload is active');
   } finally {
     allowUpload.resolve();
-    await Promise.allSettled([firstRun, secondRun]);
   }
+  const firstResult = await firstRun;
+  assert.equal(firstResult.status, 'published');
   assert.equal(state.status, 'published');
   assert.equal(state.youtubeId, 'youtube-video-1');
   process.stdout.write('Publishing atomic claim integration tests passed\\n');
