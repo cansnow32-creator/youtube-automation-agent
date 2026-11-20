@@ -535,6 +535,34 @@ class SceneRepairService {
     }
   }
 
+  async cleanupStaleRepairTemps(productionId, maxAgeMs = 24 * 60 * 60 * 1000) {
+    const uuid = /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:rendering\\.mp4|writing(?:\\.m4a)?)$/i;
+    const targets = [
+      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.rendering\\.mp4$/i },
+      { directory: path.join(this.dataRoot, 'captions'), prefix: `${productionId}_repair_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.writing$/i },
+      { directory: path.join(this.dataRoot, 'audio'), prefix: `${productionId}_scene_mix_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.writing\\.m4a$/i }
+    ];
+    const cutoff = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
+    let removed = 0;
+    for (const target of targets) {
+      let entries;
+      try { entries = await fs.readdir(target.directory, { withFileTypes: true }); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.startsWith(target.prefix) || !target.suffix.test(entry.name)) continue;
+        const filePath = path.join(target.directory, entry.name);
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.mtimeMs >= cutoff) continue;
+          await fs.unlink(filePath);
+          removed++;
+        } catch (error) {
+          if (error.code !== 'ENOENT') this.logger.warn(`Could not remove stale scene repair temp ${filePath}: ${error.message}`);
+        }
+      }
+    }
+    return removed;
+  }
   async rebuild(productionId) {
     if (this.activeRebuilds.has(productionId)) {
       throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
@@ -563,6 +591,7 @@ class SceneRepairService {
           leaseHeartbeat.unref?.();
         }
       }
+      if (databaseLockAcquired) await this.cleanupStaleRepairTemps(productionId);
       return await this.rebuildUnlocked(productionId);
     } finally {
       if (leaseHeartbeat) clearInterval(leaseHeartbeat);
