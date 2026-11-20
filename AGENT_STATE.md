@@ -438,3 +438,13 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added `updateScheduleEntryUploadVerification()` in SQLite. It conditionally updates only when schedule ID, exact observed status, and exact recorded YouTube ID still match. This prevents stale verification results from overwriting an operator reconciliation or other state transition.
 - Expanded `test/publishing-reconciliation.test.js` with successful known-ID recovery, wrong-channel/title rejection, and concurrent verification CAS coverage. Updated operator documentation.
 - Static syntax checks passed for DB, publishing service, test and package JSON. Runtime tests/lint were not executed. PR #2 latest head: `13e2cfbef02784d226e99596de60272892faff49`; open/draft/unmerged; no workflow runs found. No merge, rebase or base change performed.
+
+## 2026-11-20 — Durable scheduled queue refresh and catch-up
+
+- `processPublishQueue()` now reloads the durable SQLite queue on every scheduler tick rather than trusting the startup in-memory snapshot. Overdue scheduled rows are therefore picked up after restart; paused rows remain excluded from automatic publishing.
+- A database read failure clears the in-memory queue and safely skips that tick, preventing stale memory from initiating uploads.
+- Invalid scheduled timestamps are marked `failed` with a clear error and are never treated as immediately due.
+- Added `test/publishing-queue-recovery.test.js` for restart catch-up, invalid timestamps, DB-read failure/stale-memory suppression, and overlapping queue ticks sharing one in-process publish operation. Wired into `npm test`.
+- Existing SQLite atomic upload claim and unresolved-upload reconciliation continue to protect cross-process uploads and ambiguous outcomes.
+- PR #2 commits for this slice: `ff0baa09606c1d72bf18d6423805cd092cef0af2`, `ae1a2f712463065dd605e1f224c6635893d29636`, `5bacd5b9aa2f2d250ff9899ab02cf3b782027586`.
+- Static JavaScript syntax checks passed for the changed publishing service and new regression test; package JSON parsed. Runtime tests/lint have not been run in this environment.
