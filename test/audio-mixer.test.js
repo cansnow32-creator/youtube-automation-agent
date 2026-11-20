@@ -117,9 +117,11 @@ async function testProductionIntegration(directory) {
       }
     }
   };
+  let productionLeaseChecks = 0;
   try {
-    const assembledPath = await agent.assembleVideo(production);
+    const assembledPath = await agent.assembleVideo(production, async () => { productionLeaseChecks += 1; });
     assert.equal(assembledPath, finalPath);
+    assert.ok(productionLeaseChecks >= 5, 'production assembly must pass lease checks into background music mixing');
     assert.equal(production.assets.backgroundMusic.status, 'mixed');
     assert.equal(production.assets.backgroundMusic.direction, 'subtle cinematic ambient');
     assert.equal(production.assets.backgroundMusic.licenseType, 'user_owned');
