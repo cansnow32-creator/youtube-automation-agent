@@ -557,13 +557,12 @@ class ProductionManagementAgent {
       } catch (error) {
         failures.push({ sceneIndex, message: String(error?.message || error).slice(0, 300) });
         this.logger.warn(`Visual scene ${sceneIndex + 1}/${visualPrompts.length} failed: ${error.message}`);
+        // Stop at the first provider failure to avoid spending on later scenes
+        // while the provider is unavailable; successful earlier scenes are safe.
+        break;
       }
     }
 
-    const completedScenes = [...scenesByIndex.values()]
-      .filter(scene => scene.promptHash === crypto.createHash('sha256')
-        .update(JSON.stringify({ prompt: visualPrompts[scene.sceneIndex], visualStyle })).digest('hex')
-        && visualPrompts[scene.sceneIndex] !== undefined);
     const validAssets = [];
     for (let sceneIndex = 0; sceneIndex < visualPrompts.length; sceneIndex++) {
       const scene = scenesByIndex.get(sceneIndex);
