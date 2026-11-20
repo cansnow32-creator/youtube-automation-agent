@@ -213,7 +213,10 @@ function filterTrendIdeasForApproval(ideas, existingTopics = [], options = {}) {
     ...(options.channelStrategy?.contentPillars || [])
   ].filter(Boolean).join(' ');
   const hasChannelProfile = Boolean(profile.trim());
-  const seen = (existingTopics || []).map(topic => String(topic || '').trim()).filter(Boolean);
+  const seen = (existingTopics || []).map(topic => {
+    if (typeof topic === 'string') return topic.trim();
+    return { topic: String(topic?.topic || '').trim(), angle: String(topic?.angle || '').trim(), pillar: String(topic?.pillar || '').trim() };
+  }).filter(topic => typeof topic === 'string' ? Boolean(topic) : Boolean(topic.topic));
   const accepted = [];
   const rejected = { lowScore: 0, offAudience: 0, duplicate: 0, missingEvidence: 0, invalid: 0 };
 
@@ -235,8 +238,25 @@ function filterTrendIdeasForApproval(ideas, existingTopics = [], options = {}) {
       rejected.missingEvidence++;
       continue;
     }
-    const duplicate = [...seen, ...accepted.map(item => item.topic)]
-      .some(previous => overlapScore(title, previous) >= 70);
+    const angle = String(idea.angle || '').trim();
+    const pillar = String(idea.pillar || '').trim();
+    const duplicate = [...seen, ...accepted.map(item => item)]
+      .some(previous => {
+        const previousTitle = typeof previous === 'string' ? previous : String(previous.topic || '').trim();
+        const previousAngle = typeof previous === 'string' ? '' : String(previous.angle || '').trim();
+        const previousPillar = typeof previous === 'string' ? '' : String(previous.pillar || '').trim();
+        const titleSimilarity = overlapScore(title, previousTitle);
+        const angleSimilarity = angle && previousAngle ? overlapScore(angle, previousAngle) : null;
+        const crossSimilarity = angle && previousTitle ? overlapScore(angle, previousTitle) : null;
+        const reverseCrossSimilarity = previousAngle ? overlapScore(title, previousAngle) : null;
+        const sharedPillar = pillar && previousPillar &&
+          pillar.toLocaleLowerCase() === previousPillar.toLocaleLowerCase();
+        return (titleSimilarity !== null && titleSimilarity >= 70) ||
+          (angleSimilarity !== null && angleSimilarity >= 60) ||
+          (sharedPillar && titleSimilarity !== null && titleSimilarity >= 55) ||
+          (crossSimilarity !== null && crossSimilarity >= 65) ||
+          (reverseCrossSimilarity !== null && reverseCrossSimilarity >= 65);
+      });
     if (duplicate) {
       rejected.duplicate++;
       continue;
