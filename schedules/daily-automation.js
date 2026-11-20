@@ -55,6 +55,15 @@ class DailyAutomation {
       }, { scheduled: false })
     );
 
+    // Refresh trend research before the weekly strategy review.
+    this.scheduledTasks.set('weekly-trend-refresh',
+      cron.schedule('30 7 * * 0', async () => {
+        if (this.isEnabled) {
+          await this.refreshWeeklyTrends();
+        }
+      }, { scheduled: false })
+    );
+
     // Weekly strategy review on Sundays at 8:00 AM
     this.scheduledTasks.set('weekly-strategy-review',
       cron.schedule('0 8 * * 0', async () => {
@@ -329,6 +338,43 @@ class DailyAutomation {
       this.logger.error('Growth experiment refresh failed:', error);
       await this.logAutomationEvent('growth_experiment_refresh', 'error', { error: error.message });
     }
+  }
+
+  async refreshWeeklyTrends() {
+    const strategy = this.agents.strategy;
+    if (!strategy?.refreshTrendSnapshot) {
+      await this.logAutomationEvent('weekly_trend_refresh', 'skipped', {
+        reason: 'Trend refresh is not configured'
+      });
+      return null;
+    }
+
+    let result = null;
+    try {
+      this.logger.info('Refreshing weekly trend research...');
+      result = await strategy.refreshTrendSnapshot();
+      await this.logAutomationEvent('weekly_trend_refresh', 'success', result);
+    } catch (error) {
+      this.logger.error('Weekly trend refresh failed:', error);
+      await this.logAutomationEvent('weekly_trend_refresh', 'error', {
+        error: error.message
+      });
+    }
+
+    if (strategy.generateTrendIdeasFromSnapshot) {
+      try {
+        const ideaResult = await strategy.generateTrendIdeasFromSnapshot();
+        await this.logAutomationEvent('weekly_trend_idea_generation', ideaResult.status === 'success' ? 'success' : 'skipped', ideaResult);
+        result = { ...(result || {}), ideaGeneration: ideaResult };
+      } catch (error) {
+        this.logger.error('Weekly trend idea generation failed:', error);
+        await this.logAutomationEvent('weekly_trend_idea_generation', 'error', {
+          error: error.message
+        });
+        result = { ...(result || {}), ideaGeneration: { status: 'error', reason: error.message } };
+      }
+    }
+    return result;
   }
 
   async weeklyStrategyReview() {

@@ -445,6 +445,21 @@ function renderLearning(learning = {}) {
     <article class="learning-card">
       <div class="learning-card-heading"><strong>${escapeHTML(item.title)}</strong>${statusChip(item.status)}</div>
       <p>${escapeHTML(item.rationale)}</p>
+      ${(() => {
+        const feedback = item.experimentFeedback || { status: 'not_tested' };
+        const messages = {
+          not_tested: 'Not tested in a controlled experiment yet.',
+          in_progress: 'Controlled experiment is in progress.',
+          awaiting_operator_decision: 'Experiment finished; operator decision is required.',
+          validated_and_adopted: 'Validated by a controlled test and adopted.',
+          inconclusive: 'Experiment was inconclusive; no winner was declared.',
+          cancelled: 'Experiment was cancelled; no result was adopted.',
+          action_required: 'Experiment needs an operator action.'
+        };
+        const detail = feedback.liftPercent !== null && feedback.liftPercent !== undefined
+          ? ` · ${feedback.liftPercent}% measured lift` : '';
+        return `<p class="learning-feedback"><strong>Outcome:</strong> ${escapeHTML(messages[feedback.status] || 'Experiment outcome recorded.')}${escapeHTML(detail)}${feedback.winnerLabel ? ` · Winner: ${escapeHTML(feedback.winnerLabel)}` : ''}</p>`;
+      })()}
       <div class="learning-meta"><span>${escapeHTML(label(item.category))} · ${escapeHTML(label(item.confidence))} confidence</span>
         <span class="learning-actions">
           ${item.status !== 'approved' ? `<button class="text-button approve" data-learning-action="approve" data-learning-id="${escapeHTML(item.id)}">Approve</button>` : ''}
@@ -452,6 +467,60 @@ function renderLearning(learning = {}) {
         </span>
       </div>
     </article>`).join('') : empty('No recommendation yet. YouTube Automation Agent needs at least two real, sufficiently exposed measurements.');
+  renderPerformanceInsights(learning.performanceInsights || {});
+}
+
+function formatInsightMetric(metric, kind) {
+  if (!metric || metric.average === null || metric.average === undefined) return '—';
+  const value = Number(metric.average);
+  if (!Number.isFinite(value)) return '—';
+  if (kind === 'percent') return `${value.toFixed(1)}%`;
+  if (kind === 'score') return `${value.toFixed(0)}/100`;
+  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function renderPerformanceInsights(report = {}) {
+  const container = $('#performance-insights');
+  const countNode = $('#performance-insights-count');
+  const policy = $('#performance-insights-policy');
+  if (!container || !countNode || !policy) return;
+
+  countNode.textContent = `${Number(report.independentVideoCount || 0)} independent videos`;
+  policy.textContent = report.evidencePolicy || 'Only real YouTube analytics are included. Each video is counted once.';
+  const dimensions = report.dimensions || {};
+  const definitions = [
+    ['pillar', 'Content pillars'],
+    ['format', 'Formats'],
+    ['durationBucket', 'Actual video length']
+  ];
+  container.innerHTML = definitions.map(([key, heading]) => {
+    const dimension = dimensions[key] || {};
+    const cohorts = Array.isArray(dimension.cohorts) ? dimension.cohorts : [];
+    const rows = cohorts.length ? cohorts.slice(0, 5).map(cohort => {
+      const metrics = cohort.metrics || {};
+      const status = cohort.confidence === 'high' ? 'High confidence'
+        : cohort.confidence === 'moderate' ? 'Moderate confidence' : 'Exploratory';
+      const leader = dimension.leader?.name === cohort.name && cohort.sufficientlySampled;
+      return `<div class="performance-cohort ${leader ? 'leader' : ''}">
+        <div class="performance-cohort-title"><strong>${escapeHTML(label(cohort.name))}</strong><span>${Number(cohort.videoCount || 0)} videos · ${escapeHTML(status)}</span></div>
+        <div class="performance-cohort-metrics">
+          <span><small>Views</small><b>${formatInsightMetric(metrics.views)}</b></span>
+          <span><small>Score</small><b>${formatInsightMetric(metrics.performanceScore, 'score')}</b></span>
+          <span><small>CTR</small><b>${formatInsightMetric(metrics.ctr, 'percent')}</b></span>
+          <span><small>Retention</small><b>${formatInsightMetric(metrics.retention, 'percent')}</b></span>
+        </div>
+        ${leader ? '<small class="performance-leader-note">Current evidence-backed leader</small>' : ''}
+      </div>`;
+    }).join('') : empty('No real measurements for this dimension yet.');
+    const summary = dimension.leader
+      ? `Leader: ${label(dimension.leader.name)} · ${dimension.leader.videoCount} videos`
+      : 'Not enough independent videos to name a leader yet.';
+    return `<section class="performance-dimension">
+      <div class="performance-dimension-heading"><h3>${escapeHTML(heading)}</h3><span class="status ${dimension.leader ? 'active' : ''}">${dimension.leader ? 'Evidence available' : 'Building evidence'}</span></div>
+      <p class="meta-line">${escapeHTML(summary)}</p>
+      <div class="performance-cohort-list">${rows}</div>
+    </section>`;
+  }).join('');
 }
 
 function renderGrowthExperiments(summary = {}) {
@@ -773,6 +842,20 @@ function renderOperator(strategy, runs, system) {
 
   $('#operator-run-title').textContent = `${label(run.stage)} · ${run.progress || 0}%`;
   const sources = Array.isArray(run.research?.sources) ? run.research.sources.join(', ') : 'Research pending';
+  const guidance = run.research?.performanceGuidance || {};
+  const preferences = Array.isArray(guidance.preferences) ? guidance.preferences : [];
+  const guidanceSummary = preferences.length
+    ? `<section class="operator-performance-guidance">
+        <div class="operator-guidance-heading"><strong>Evidence-backed planning guidance</strong><span>${escapeHTML(guidance.independentVideoCount || 0)} independent videos</span></div>
+        ${preferences.map(preference => `<article class="operator-guidance-item">
+          <strong>Prefer ${escapeHTML(label(preference.prefer))} · ${escapeHTML(label(preference.dimension))}</strong>
+          <p>${escapeHTML(preference.rationale)}</p>
+          <small>Compared with ${escapeHTML(preference.comparisonSampleSize || 0)} videos · ${escapeHTML(preference.metric || 'performance')}</small>
+        </article>`).join('')}
+      </section>`
+    : `<p class="operator-guidance-empty">${guidance.status === 'insufficient_evidence'
+      ? `No planning preference applied. Need at least ${escapeHTML(guidance.minimumSamplesPerGroup || 3)} independent videos in each compared group.`
+      : 'No performance-based planning preference was available for this run. The original plan order was preserved.'}</p>`;
   $('#operator-run-summary').innerHTML = `<div class="run-summary">
     <div class="progress"><i style="width:${Math.max(0, Math.min(100, run.progress || 0))}%"></i></div>
     <div class="run-summary-row"><span>Status</span><strong>${statusChip(run.status)}</strong></div>
@@ -780,6 +863,7 @@ function renderOperator(strategy, runs, system) {
     <div class="run-summary-row"><span>Produced</span><strong>${escapeHTML(run.summary?.generated || 0)} / ${escapeHTML(run.summary?.planned || run.plan?.length || 0)}</strong></div>
     <div class="run-summary-row"><span>Needs review</span><strong>${escapeHTML(run.summary?.needsReview || 0)}</strong></div>
     ${run.error ? `<p class="callout">${escapeHTML(run.error)}</p>` : ''}
+    ${guidanceSummary}
   </div>`;
   const plan = Array.isArray(run.plan) ? run.plan : [];
   $('#operator-plan').innerHTML = plan.length ? plan.map((item, index) => {
@@ -787,7 +871,8 @@ function renderOperator(strategy, runs, system) {
     return `<article class="plan-card">
       <div class="meta-line">${index + 1} · ${escapeHTML(item.format)} · ${escapeHTML(item.length)} ${job ? `· ${statusChip(job.reviewStatus || job.status)}` : ''}</div>
       <strong>${escapeHTML(item.topic)}</strong>
-      <p>${escapeHTML(item.angle || item.rationale)}</p>
+      ${item.angle ? `<p>${escapeHTML(item.angle)}</p>` : ''}
+      ${item.rationale ? `<p class="plan-rationale"><strong>Planning rationale:</strong> ${escapeHTML(item.rationale)}</p>` : ''}
     </article>`;
   }).join('') : empty('Research and planning will appear here when the run begins.');
 }
@@ -1055,6 +1140,7 @@ async function openContent(productionId) {
             <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
+            ${item.schedule?.metadata?.thumbnailUpload?.status === 'failed' ? `<div class="callout error"><strong>Thumbnail upload failed.</strong> ${escapeHTML(item.schedule.metadata.thumbnailUpload.errorMessage || 'The video is already uploaded; retrying here uploads only the thumbnail.')}<div class="form-actions"><button type="button" class="button secondary" data-retry-thumbnail="${escapeHTML(item.id)}">Retry thumbnail upload</button></div></div>` : item.schedule?.metadata?.thumbnailUpload?.status === 'uploaded' ? '<p class="meta-line">✓ YouTube thumbnail uploaded successfully.</p>' : ''}
           </div>
           <div class="editor">
             <label><span>Title</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
@@ -1616,6 +1702,15 @@ document.addEventListener('click', async event => {
     try {
       await mutate(`/api/content/${encodeURIComponent(publishNow.dataset.publishNowContent)}/publish-now`, 'POST', {}, 'Content published.');
       $('#content-dialog').close();
+    } catch (_error) { /* toast already shown */ }
+    return;
+  }
+
+  const retryThumbnail = event.target.closest('[data-retry-thumbnail]');
+  if (retryThumbnail) {
+    try {
+      await mutate(`/api/content/${encodeURIComponent(retryThumbnail.dataset.retryThumbnail)}/retry-thumbnail`, 'POST', {}, 'Thumbnail uploaded successfully. The video was not uploaded again.');
+      await openContent(retryThumbnail.dataset.retryThumbnail);
     } catch (_error) { /* toast already shown */ }
     return;
   }

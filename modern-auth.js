@@ -3,13 +3,32 @@ const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
 const http = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
+
+// Narrow OAuth permissions to the APIs this agent actually calls. Avoid the
+// broader youtube account-management scope; force-ssl covers Data API writes.
+const YOUTUBE_SCOPES = [
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/yt-analytics.readonly',
+  'https://www.googleapis.com/auth/youtube.force-ssl'
+];
+
+function preserveRefreshToken(previousTokens, receivedTokens) {
+  const next = { ...(receivedTokens || {}) };
+  if (!next.refresh_token && previousTokens?.refresh_token) {
+    next.refresh_token = previousTokens.refresh_token;
+  }
+  return next;
+}
 
 class ModernAuth {
   constructor() {
     this.credentialsPath = path.join(__dirname, 'config', 'credentials.json');
     this.tokensPath = path.join(__dirname, 'config', 'tokens.json');
     this.server = null;
+    this.oauthState = null;
   }
 
   async authenticate() {
@@ -28,13 +47,9 @@ class ModernAuth {
         redirectUri
       );
 
-      const scopes = [
-        'https://www.googleapis.com/auth/youtube.upload',
-        'https://www.googleapis.com/auth/youtube',
-        'https://www.googleapis.com/auth/youtube.readonly',
-        'https://www.googleapis.com/auth/yt-analytics.readonly',
-        'https://www.googleapis.com/auth/youtube.force-ssl'
-      ];
+      this.oauthState = crypto.randomBytes(32).toString('hex');
+
+      const scopes = YOUTUBE_SCOPES;
 
       const authResult = new Promise((resolve, reject) => {
         this.resolveAuth = resolve;
@@ -52,7 +67,8 @@ class ModernAuth {
       const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: scopes,
-        prompt: 'consent'
+        prompt: 'consent',
+        state: this.oauthState
       });
 
       console.log(chalk.cyan('🔗 Please visit this URL to authorize:'));
@@ -109,6 +125,13 @@ class ModernAuth {
     };
   }
 
+  isValidOAuthState(receivedState) {
+    if (typeof receivedState !== 'string' || typeof this.oauthState !== 'string') return false;
+    const expected = Buffer.from(this.oauthState, 'utf8');
+    const received = Buffer.from(receivedState, 'utf8');
+    return expected.length === received.length && crypto.timingSafeEqual(expected, received);
+  }
+
   async startTempServer(redirect, oauth2Client) {
     this.server = http.createServer(async (req, res) => {
       const url = new URL(req.url, redirect.uri);
@@ -116,14 +139,17 @@ class ModernAuth {
       if (url.pathname === redirect.pathname) {
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
+        const state = url.searchParams.get('state');
+
+        if (!this.isValidOAuthState(state)) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Invalid OAuth state. Authorization callback rejected.');
+          return;
+        }
         
         if (error) {
-          res.writeHead(400, { 'Content-Type': 'text/html' });
-          res.end(`
-            <h1>❌ Authorization Error</h1>
-            <p>${error}</p>
-            <p>You can close this window.</p>
-          `);
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(`Authorization error: ${error}. You can close this window.`);
           this.rejectAuth(new Error(`Authorization error: ${error}`));
           return;
         }
@@ -132,8 +158,18 @@ class ModernAuth {
           try {
             const { tokens } = await oauth2Client.getToken(code);
             
+            // Google may omit refresh_token on later authorizations. Keep the existing
+            // one so a re-consent cannot silently break unattended access.
+            let previousTokens = {};
+            try {
+              previousTokens = JSON.parse(fs.readFileSync(this.tokensPath, 'utf8')).youtube || {};
+            } catch (_error) {
+              // First authorization: there is no prior token file to preserve.
+            }
+            const savedTokens = preserveRefreshToken(previousTokens, tokens);
+
             // Save tokens
-            const tokenData = { youtube: tokens };
+            const tokenData = { youtube: savedTokens };
             fs.writeFileSync(this.tokensPath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
             fs.chmodSync(this.tokensPath, 0o600);
             
@@ -151,14 +187,11 @@ class ModernAuth {
             
             console.log(chalk.green('\n✅ Authentication successful!'));
             this.cleanup();
-            this.resolveAuth(tokens);
+            this.resolveAuth(savedTokens);
             
           } catch (tokenError) {
-            res.writeHead(500, { 'Content-Type': 'text/html' });
-            res.end(`
-              <h1>❌ Token Exchange Failed</h1>
-              <p>${tokenError.message}</p>
-            `);
+            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end(`Token exchange failed: ${tokenError.message}`);
             this.rejectAuth(tokenError);
           }
         }
@@ -192,6 +225,7 @@ class ModernAuth {
       this.server.close();
       this.server = null;
     }
+    this.oauthState = null;
   }
 
   async testAuthentication() {
@@ -261,4 +295,4 @@ if (require.main === module) {
   runAuth();
 }
 
-module.exports = { ModernAuth };
+module.exports = { ModernAuth, preserveRefreshToken, YOUTUBE_SCOPES };

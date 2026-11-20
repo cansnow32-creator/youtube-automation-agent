@@ -7,6 +7,7 @@ const { checkFFmpeg, runFFmpeg } = require('./ffmpeg');
 const { validateYouTubeMetadata } = require('./youtube-metadata-validator');
 const { Logger } = require('./logger');
 const { MediaGenerationService } = require('./media-generation-service');
+const { YOUTUBE_SCOPES } = require('../modern-auth');
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -41,8 +42,18 @@ class ProductionReadinessService {
 
   async assertReady(action) {
     const summary = await this.getSummary();
-    if (summary.status === 'failed') {
-      const error = new Error(`${action} is blocked by the production readiness gate. Fix ${summary.blockingFailures.join(', ')} and run the check again.`);
+    let reason = null;
+    if (summary.status === 'unverified') {
+      reason = 'Run the verified production readiness check before continuing';
+    } else if (summary.stale) {
+      reason = 'The production readiness check is older than 24 hours; run it again';
+    } else if (summary.status === 'failed') {
+      reason = `Fix ${summary.blockingFailures.join(', ')} and run the check again`;
+    } else if (!['passed', 'warning'].includes(summary.status)) {
+      reason = `Resolve the readiness status (${summary.status || 'unknown'}) and run the check again`;
+    }
+    if (reason) {
+      const error = new Error(`${action} is blocked by the production readiness gate. ${reason}.`);
       error.status = 409;
       error.readiness = summary;
       throw error;
@@ -71,6 +82,9 @@ class ProductionReadinessService {
 
     try {
       checks.push(await this.executeCheck('text_provider', 'AI text provider', true, () => this.probeText()));
+      if (process.env.QUALITY_PIPELINE_ENABLED === 'true') {
+        checks.push(await this.executeCheck('quality_pipeline', 'Local-first script quality pipeline', true, () => this.probes.qualityPipeline ? this.probes.qualityPipeline() : this.probeQualityPipeline()));
+      }
       checks.push(await this.executeCheck('image_provider', 'Image provider', false, () => this.probeImage(tempDir, Boolean(options.includePaidMedia))));
       checks.push(await this.executeCheck('video_provider', 'AI video provider', true, () => this.probeVideoProvider(tempDir, Boolean(options.includePaidVideo))));
       checks.push(await this.executeCheck('voice_narration', 'Voice narration', true, () => this.probeNarration(tempDir)));
@@ -134,6 +148,27 @@ class ProductionReadinessService {
     }
   }
 
+  async probeQualityPipeline() {
+    const credentials = this.credentialManager.credentials || {};
+    const geminiKey = credentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
+    if (!geminiKey) throw new Error('Gemini reviewer is not configured');
+    if (!process.env.GROQ_API_KEY) throw new Error('Groq reviewer is not configured');
+
+    let baseUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434');
+    while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    const model = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
+    const response = await fetch(`${baseUrl}/api/tags`, { signal: globalThis.AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`Ollama model check failed: HTTP ${response.status}`);
+    const data = await response.json();
+    const installed = (data.models || []).map(item => String(item.name || item.model || ''));
+    if (!installed.some(name => name === model || name.startsWith(`${model}:`))) {
+      throw new Error(`Ollama model ${model} is not installed`);
+    }
+    return {
+      message: 'Ollama model is installed and Gemini/Groq reviewer credentials are configured.',
+      details: { ollamaModel: model, geminiConfigured: true, groqConfigured: true }
+    };
+  }
   async probeText() {
     if (this.probes.text) return this.probes.text();
     const service = new AITextService(this.credentialManager.credentials || {});
@@ -235,6 +270,14 @@ class ProductionReadinessService {
 
   async probeYouTube() {
     if (this.probes.youtube) return this.probes.youtube();
+    const grantedScopes = new Set(
+      String(this.credentialManager.tokens?.youtube?.scope || '').split(/\s+/).filter(Boolean)
+    );
+    const missingScopes = YOUTUBE_SCOPES.filter(scope => !grantedScopes.has(scope));
+    if (missingScopes.length) {
+      const names = missingScopes.map(scope => scope.split('/').pop()).join(', ');
+      throw new Error(`YouTube authorization is missing required OAuth scopes: ${names}. Reconnect the channel and approve the requested permissions.`);
+    }
     const youtube = this.credentialManager.getYouTubeClient();
     const response = await youtube.channels.list({ part: 'snippet,status', mine: true, maxResults: 1 });
     const channel = response.data?.items?.[0];
@@ -281,6 +324,7 @@ class ProductionReadinessService {
   remediationFor(id) {
     const messages = {
       text_provider: 'Run npm run walkthrough, verify the selected model, and confirm provider credits or quota.',
+      quality_pipeline: 'Start Ollama, pull the configured model, and set GEMINI_API_KEY (or saved Gemini credentials) plus GROQ_API_KEY. Rerun readiness.',
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',

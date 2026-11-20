@@ -34,6 +34,13 @@ function isLoopbackHost(host) {
   return ['127.0.0.1', '::1', 'localhost'].includes(String(host).toLowerCase()) || /^127\./.test(String(host));
 }
 
+function validateHostConfiguration(host) {
+  if (!isLoopbackHost(host)) {
+    throw new Error('Refusing to expose the dashboard beyond loopback: read-only API routes do not yet have session authentication. Bind HOST to 127.0.0.1.');
+  }
+  return true;
+}
+
 class YouTubeAutomationAgent {
   constructor() {
     this.logger = new Logger('MainAgent');
@@ -1028,6 +1035,16 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/content/:productionId/retry-thumbnail', protect, async (req, res) => {
+      try {
+        if (!this.agents.publishing) return res.status(503).json({ error: 'YouTube publishing is not configured' });
+        const result = await this.agents.publishing.retryThumbnailUpload(req.params.productionId);
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
     this.app.delete('/api/content/:productionId/schedule', protect, async (req, res) => {
       try {
         if (!this.agents.publishing) return res.status(503).json({ error: 'Publishing requires completed setup' });
@@ -1467,6 +1484,11 @@ class YouTubeAutomationAgent {
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
       const generated = await this.agents.strategy.generateContentStrategy(topic);
+      const { getApprovedPackagingLearning } = require('./utils/packaging-learning');
+      const approvedLearnings = this.db.listLearningRecommendations
+        ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
+        : [];
+      generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
@@ -1505,7 +1527,7 @@ class YouTubeAutomationAgent {
       jobId,
       'thumbnail',
       40,
-      () => this.agents.thumbnailDesigner.generateThumbnail(script)
+      () => this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning)
     );
     this.logger.info('Thumbnail generated');
 
@@ -1651,20 +1673,30 @@ class YouTubeAutomationAgent {
     const withoutPunctuation = control.replace(/[.!?]+$/, '');
     return [
       { label: 'Control', title: control },
-      { label: 'Step-by-step', title: `${withoutPunctuation}: Step-by-Step`.slice(0, 100) },
-      { label: 'Curiosity', title: `${withoutPunctuation}: What Most People Miss`.slice(0, 100) }
+      { label: 'Step-by-step + Color contrast', title: `${withoutPunctuation}: Step-by-Step`.slice(0, 100) },
+      { label: 'Curiosity + Alternate promise', title: `${withoutPunctuation}: What Most People Miss`.slice(0, 100) },
+      { label: 'Benefit + Centered composition', title: `${withoutPunctuation}: What You Can Achieve`.slice(0, 100) }
     ];
   }
 
   async preparePackagingExperiment(thumbnail, productionData, seoData, script) {
     const approved = await this.db.listLearningRecommendations({ status: 'approved', limit: 25 });
-    const recommendation = approved.find(item => item.proposedChange?.experiment === 'title_thumbnail_variant');
+    const { isApprovedPackagingLearning } = require('./utils/packaging-learning');
+    const recommendation = approved.find(isApprovedPackagingLearning);
     if (!recommendation) return null;
     try {
       const generated = await this.agents.thumbnailDesigner.generateABVariants(thumbnail.concept);
       return {
         sourceRecommendationId: recommendation.id,
         hypothesis: recommendation.title,
+        learning: {
+          rationale: recommendation.rationale || '',
+          confidence: recommendation.confidence || 'unknown',
+          winningTitle: recommendation.proposedChange?.winningTitle || null,
+          winningThumbnailPattern: recommendation.proposedChange?.winningThumbnailPattern || null,
+          winningArmLabel: recommendation.proposedChange?.winningArmLabel || null,
+          evidence: recommendation.evidence || {}
+        },
         status: 'draft',
         titleVariants: this.buildTitleExperimentVariants(seoData.title || script.title),
         thumbnailVariants: [
@@ -1752,6 +1784,14 @@ class YouTubeAutomationAgent {
     if (bundle.schedule?.status === 'published') {
       const error = new Error('Content is already published');
       error.status = 409;
+      throw error;
+    }
+    if (['uploading', 'uploaded', 'reconciliation_required'].includes(bundle.schedule?.status)) {
+      const error = new Error(
+        'This content may already have reached YouTube. Reconcile the existing upload before changing its approval or schedule state.'
+      );
+      error.status = 409;
+      error.code = 'UPLOAD_OUTCOME_UNKNOWN';
       throw error;
     }
 
@@ -1853,11 +1893,9 @@ class YouTubeAutomationAgent {
     // Loopback by default: mutating routes are open whenever API_KEY is unset,
     // so the dashboard must not be reachable from the network unless asked.
     const HOST = process.env.HOST || '127.0.0.1';
+    validateHostConfiguration(HOST);
     this.app.listen(PORT, HOST, () => {
       console.log(chalk.green(`\n✅ YouTube Automation Agent running on ${HOST}:${PORT}`));
-      if (!isLoopbackHost(HOST) && !process.env.API_KEY) {
-        console.log(chalk.yellow(`⚠️  HOST=${HOST} exposes the dashboard to your network without API_KEY. Set API_KEY in .env to protect generation, approval, and publishing routes.`));
-      }
       console.log(chalk.gray('─'.repeat(50)));
       console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(`http://localhost:${PORT}`));
       console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`http://localhost:${PORT}/health`));
@@ -1882,4 +1920,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { YouTubeAutomationAgent };
+module.exports = { YouTubeAutomationAgent, isLoopbackHost, validateHostConfiguration };

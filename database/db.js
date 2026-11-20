@@ -559,6 +559,17 @@ class Database {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      `CREATE TABLE IF NOT EXISTS content_idea_outcomes (
+        id TEXT PRIMARY KEY,
+        idea_id TEXT NOT NULL,
+        production_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        measurement_window TEXT NOT NULL,
+        metrics TEXT NOT NULL DEFAULT '{}',
+        performance_score REAL,
+        measured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(idea_id, measurement_window)
+      )`,
       `CREATE TABLE IF NOT EXISTS channel_strategies (
         id TEXT PRIMARY KEY,
         objective TEXT NOT NULL,
@@ -616,7 +627,18 @@ class Database {
         completed_at TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
-            // System Settings
+            // Weekly trend snapshots preserve research history for strategy decisions.
+      `CREATE TABLE IF NOT EXISTS trend_snapshots (
+        id TEXT PRIMARY KEY,
+        region_code TEXT NOT NULL,
+        topics TEXT NOT NULL,
+        source_counts TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_trend_snapshots_captured_at
+        ON trend_snapshots(captured_at DESC)`,
+      // System Settings
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
@@ -710,6 +732,69 @@ class Database {
         'Clean, high-contrast, and readable',
         process.env.CHANNEL_TIMEZONE || 'America/Chicago'
       ]
+    );
+  }
+
+  // Trend research snapshots
+  async saveTrendSnapshot(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.topics) || snapshot.topics.length === 0) {
+      throw new Error('A trend snapshot requires at least one topic');
+    }
+    const record = {
+      id: this.generateId('trend'),
+      regionCode: String(snapshot.regionCode || 'US').toUpperCase(),
+      topics: snapshot.topics,
+      sourceCounts: snapshot.sourceCounts || {},
+      capturedAt: snapshot.capturedAt || new Date().toISOString()
+    };
+    await this.executeQuery(
+      `INSERT INTO trend_snapshots (id, region_code, topics, source_counts, captured_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [record.id, record.regionCode, JSON.stringify(record.topics),
+        JSON.stringify(record.sourceCounts), record.capturedAt]
+    );
+    await this.pruneTrendSnapshots(52);
+    return record;
+  }
+
+  async getLatestTrendSnapshot() {
+    const row = await this.getRow(
+      'SELECT * FROM trend_snapshots ORDER BY captured_at DESC, created_at DESC LIMIT 1'
+    );
+    if (!row) return null;
+    return {
+      id: row.id,
+      regionCode: row.region_code,
+      topics: JSON.parse(row.topics || '[]'),
+      sourceCounts: JSON.parse(row.source_counts || '{}'),
+      capturedAt: row.captured_at
+    };
+  }
+
+  async getTrendSnapshots(limit = 52) {
+    const safeLimit = Math.max(1, Math.min(104, Number.parseInt(limit, 10) || 52));
+    const rows = await this.getAllRows(
+      'SELECT * FROM trend_snapshots ORDER BY captured_at DESC, created_at DESC LIMIT ?',
+      [safeLimit]
+    );
+    return rows.map(row => ({
+      id: row.id,
+      regionCode: row.region_code,
+      topics: JSON.parse(row.topics || '[]'),
+      sourceCounts: JSON.parse(row.source_counts || '{}'),
+      capturedAt: row.captured_at
+    }));
+  }
+
+  async pruneTrendSnapshots(retain = 52) {
+    const safeRetain = Math.max(1, Math.min(104, Number.parseInt(retain, 10) || 52));
+    await this.executeQuery(
+      `DELETE FROM trend_snapshots
+       WHERE id NOT IN (
+         SELECT id FROM trend_snapshots
+         ORDER BY captured_at DESC, created_at DESC LIMIT ?
+       )`,
+      [safeRetain]
     );
   }
 
@@ -1621,6 +1706,76 @@ class Database {
       ]
     );
     return this.getRow('SELECT * FROM content_ideas WHERE id = ?', [id]);
+  }
+
+  async linkContentIdeaToProduction(ideaId, productionId) {
+    if (!ideaId || !productionId) return null;
+    const idea = await this.getRow('SELECT * FROM content_ideas WHERE id = ?', [ideaId]);
+    if (!idea) return null;
+    const rationale = this.parseContentIdeaRationale(idea.rationale);
+    rationale.productionId = productionId;
+    rationale.lifecycle = { ...(rationale.lifecycle || {}), status: 'in_production' };
+    await this.updateContentIdea(ideaId, {
+      status: 'generated',
+      rationale: JSON.stringify(rationale)
+    });
+    return { ideaId, productionId };
+  }
+
+  parseContentIdeaRationale(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return { note: String(value) }; }
+  }
+
+  async recordContentIdeaOutcome(snapshot) {
+    if (!snapshot?.productionId || !snapshot?.videoId || snapshot.simulated) return null;
+    const ideas = await this.getAllRows("SELECT * FROM content_ideas WHERE rationale LIKE ?", [`%"${snapshot.productionId}"%`]);
+    const idea = ideas.find(item => this.parseContentIdeaRationale(item.rationale).productionId === snapshot.productionId);
+    if (!idea) return null;
+    const id = this.generateId('idea_outcome');
+    await this.executeQuery(
+      `INSERT INTO content_idea_outcomes (
+        id, idea_id, production_id, video_id, measurement_window, metrics, performance_score, measured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(idea_id, measurement_window) DO UPDATE SET
+        video_id = excluded.video_id,
+        metrics = excluded.metrics,
+        performance_score = excluded.performance_score,
+        measured_at = excluded.measured_at`,
+      [
+        id, idea.id, snapshot.productionId, snapshot.videoId, snapshot.measurementWindow,
+        JSON.stringify(snapshot.metrics || {}), snapshot.metrics?.performanceScore ?? null,
+        snapshot.measuredAt || new Date().toISOString()
+      ]
+    );
+    const outcomes = await this.getAllRows(
+      'SELECT measurement_window, metrics, performance_score, measured_at FROM content_idea_outcomes WHERE idea_id = ? ORDER BY measured_at DESC',
+      [idea.id]
+    );
+    const rationale = this.parseContentIdeaRationale(idea.rationale);
+    rationale.lifecycle = {
+      ...(rationale.lifecycle || {}),
+      status: 'performance_measured',
+      videoId: snapshot.videoId,
+      latestMeasurementWindow: snapshot.measurementWindow,
+      latestMeasuredAt: snapshot.measuredAt || new Date().toISOString(),
+      latestPerformanceScore: snapshot.metrics?.performanceScore ?? null,
+      outcomeCount: outcomes.length
+    };
+    await this.updateContentIdea(idea.id, {
+      status: 'performance_measured',
+      rationale: JSON.stringify(rationale)
+    });
+    return { ideaId: idea.id, outcomeCount: outcomes.length, performanceScore: snapshot.metrics?.performanceScore ?? null };
+  }
+
+  async listContentIdeaOutcomes(ideaId) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM content_idea_outcomes WHERE idea_id = ? ORDER BY measured_at DESC',
+      [ideaId]
+    );
+    return rows.map(row => ({ ...row, metrics: JSON.parse(row.metrics || '{}') }));
   }
 
   async getChannelStrategy() {

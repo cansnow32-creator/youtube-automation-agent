@@ -1,0 +1,217 @@
+const assert = require('node:assert/strict');
+const { Database } = require('../database/db');
+const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
+const { scoreTrendIdeas, buildAudienceDemand } = require('../utils/trend-idea-ranker');
+
+async function run() {
+  const db = new Database();
+  await db.initialize();
+  const ideaIds = [];
+  const snapshotIds = [];
+  const originalFetch = global.fetch;
+  const originalModel = process.env.OLLAMA_MODEL;
+  const originalUrl = process.env.OLLAMA_BASE_URL;
+
+  try {
+    const snapshot = await db.saveTrendSnapshot({
+      regionCode: 'US',
+      topics: [{
+        topic: 'AI video editing',
+        score: 18,
+        sources: ['trending', 'competitor'],
+        evidence: [{ url: 'https://www.youtube.com/watch?v=trend-idea-test', title: 'AI video editing tools' }]
+      }]
+    });
+    snapshotIds.push(snapshot.id);
+
+    const ranked = scoreTrendIdeas([
+      {
+        sourceTopic: 'AI video editing',
+        topic: 'AI video editing workflow for beginner creators',
+        angle: 'A practical workflow',
+        pillar: 'editing tutorials',
+        format: 'tutorial'
+      }
+    ], snapshot.topics, {
+      objective: 'Help video creators improve their workflow',
+      audience: 'beginner video creators',
+      contentPillars: ['AI video tools', 'editing tutorials']
+    }, [{
+      videoId: 'performance-video-1',
+      measuredAt: '2026-11-18T12:00:00.000Z',
+      simulated: false,
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 86, ctr: 6, retention: 55 }
+    }, {
+      videoId: 'performance-video-1',
+      measuredAt: '2026-11-17T12:00:00.000Z',
+      simulated: false,
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 10, ctr: 1, retention: 10 }
+    }, {
+      videoId: 'performance-video-2',
+      measuredAt: '2026-11-18T12:00:00.000Z',
+      simulated: false,
+      contentAttributes: { topic: 'camera lighting basics', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 80, ctr: 5, retention: 50 }
+    }, {
+      videoId: 'simulated-video',
+      simulated: true,
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial' },
+      metrics: { performanceScore: 100, ctr: 10, retention: 100 }
+    }]);
+    assert.equal(ranked.length, 1);
+    assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 2,
+      'multiple measurement windows for one video count as one independent sample');
+    assert.equal(ranked[0].scoreBreakdown.historicalConfidence, 0.5,
+      'two independent videos receive a 50% confidence weight');
+    assert.equal(ranked[0].scoreBreakdown.historicalPillarMatches, 2,
+      'successful videos in the same content pillar can inform new ideas');
+    assert.ok(ranked[0].scoreBreakdown.historicalPerformance < ranked[0].scoreBreakdown.historicalRawPerformance,
+      'small samples are pulled toward a neutral score');
+
+    const audienceDemand = buildAudienceDemand([
+      {
+        videoId: 'audience-video-1',
+        analysisMethod: 'ai',
+        themes: [
+          { kind: 'request', title: 'AI video editing tutorials', count: 12, summary: 'Show a beginner workflow' },
+          { kind: 'question', title: 'AI video editing tools', count: 4, summary: 'Compare tools' },
+          { kind: 'praise', title: 'Great editing', count: 50, summary: 'Positive feedback only' }
+        ]
+      },
+      {
+        videoId: 'fallback-video',
+        analysisMethod: 'fallback',
+        themes: [{ kind: 'request', title: 'AI video editing', count: 40 }]
+      }
+    ]);
+    assert.equal(audienceDemand.length, 2, 'only AI-analyzed request/question themes with at least three asks should count');
+    const demandRanked = scoreTrendIdeas([
+      { sourceTopic: 'AI video editing', topic: 'AI video editing workflow for beginner creators', format: 'tutorial' }
+    ], snapshot.topics, {
+      objective: 'Help video creators improve their workflow',
+      audience: 'beginner video creators',
+      contentPillars: ['AI video tools', 'editing tutorials']
+    }, [], audienceDemand);
+    assert.ok(demandRanked[0].scoreBreakdown.audienceDemand > 0);
+    assert.equal(demandRanked[0].scoreBreakdown.audienceAskCount, 16);
+    assert.equal(demandRanked[0].scoreBreakdown.weights.audienceDemand, 0.35);
+
+    process.env.OLLAMA_MODEL = 'qwen3.5:4b';
+    process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
+    global.fetch = async (url, options) => {
+      assert.match(url, /\/api\/chat$/);
+      const body = JSON.parse(options.body);
+      assert.equal(body.model, 'qwen3.5:4b');
+      return {
+        ok: true,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              ideas: [{
+                sourceTopic: 'AI video editing',
+                topic: 'A beginner workflow for AI video editing',
+                angle: 'Build a repeatable editing workflow',
+                pillar: 'editing tutorials',
+                format: 'tutorial',
+                rationale: 'Turns a verified trend into a practical tutorial'
+              }]
+            })
+          }
+        })
+      };
+    };
+
+    const backlogIdea = await db.createContentIdea({
+      topic: 'Beginner AI video editing workflow checklist',
+      angle: 'Practical steps for beginners',
+      style: 'tutorial',
+      status: 'backlog',
+      rationale: JSON.stringify({
+        source: 'weekly_trend_snapshot',
+        sourceTopic: 'AI video editing',
+        pillar: 'editing tutorials',
+        explanation: 'Existing saved idea to re-rank'
+      })
+    });
+    ideaIds.push(backlogIdea.id);
+    await db.savePerformanceSnapshot({
+      videoId: 'backlog-ranking-performance-video',
+      productionId: 'backlog-ranking-production',
+      measurementWindow: '7d',
+      publishedAt: '2026-11-10T00:00:00.000Z',
+      metrics: { views: 1400, impressions: 12000, ctr: 6, retention: 55, performanceScore: 86 },
+      contentAttributes: { topic: 'AI video editing', pillar: 'editing tutorials', format: 'tutorial', surface: 'long_form' },
+      baseline: {},
+      deltas: {},
+      confidence: 'high',
+      simulated: false
+    });
+
+    const strategy = new ContentStrategyAgent(db, {});
+    const result = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
+    assert.equal(result.status, 'success');
+    assert.equal(result.createdCount, 1);
+    assert.equal(result.rerankedBacklogCount, 1, 'existing backlog ideas should be rescored');
+    const refreshedBacklog = (await db.listContentIdeas()).find(item => item.id === backlogIdea.id);
+    const refreshedRationale = JSON.parse(refreshedBacklog.rationale);
+    assert.equal(refreshedRationale.scoreBreakdown.historicalSampleSize, 1);
+    assert.ok(refreshedRationale.rankingUpdatedAt);
+    assert.equal(result.ideas[0].topic, 'A beginner workflow for AI video editing');
+
+    strategy.analyzeTrends = async () => {};
+    strategy.trendingTopics = snapshot.topics;
+    strategy.competitorData = [];
+    const autonomousPlan = await strategy.researchAndPlanChannel({
+      videos_per_run: 1,
+      objective: 'Help video creators improve their workflow',
+      audience: 'beginner video creators',
+      value_proposition: 'Practical editing education',
+      contentPillars: ['editing tutorials'],
+      default_format: 'tutorial',
+      default_length: 'medium',
+      primary_kpi: 'views'
+    });
+    assert.equal(autonomousPlan.plan[0].topic, backlogIdea.topic,
+      'highest-scoring eligible backlog idea should be prioritized for production');
+    assert.equal(autonomousPlan.research.prioritizedBacklogIdeas[0].topic, backlogIdea.topic);
+
+    const savedIdeas = await db.listContentIdeas();
+    const created = savedIdeas.find(item => item.topic === result.ideas[0].topic);
+    assert.ok(created, 'generated idea should be persisted in the existing content ideas table');
+    ideaIds.push(created.id);
+    const rationale = JSON.parse(created.rationale);
+    assert.equal(rationale.generatedBy, 'ollama');
+    assert.equal(rationale.snapshotId, snapshot.id);
+    assert.ok(rationale.scoreBreakdown);
+
+    global.fetch = async () => { throw new Error('Ollama is offline'); };
+    const skipped = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
+    assert.equal(skipped.status, 'skipped');
+    assert.match(skipped.reason, /Ollama is offline/);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalModel === undefined) delete process.env.OLLAMA_MODEL;
+    else process.env.OLLAMA_MODEL = originalModel;
+    if (originalUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+    else process.env.OLLAMA_BASE_URL = originalUrl;
+    if (ideaIds.length) {
+      await db.executeQuery(`DELETE FROM content_ideas WHERE id IN (${ideaIds.map(() => '?').join(',')})`, ideaIds);
+    }
+    await db.executeQuery(
+      "DELETE FROM performance_snapshots WHERE video_id = 'backlog-ranking-performance-video'"
+    );
+    if (snapshotIds.length) {
+      await db.executeQuery(`DELETE FROM trend_snapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds);
+    }
+    await db.close();
+  }
+
+  process.stdout.write('Trend idea generation tests passed\\n');
+}
+
+run().catch(error => {
+  process.stderr.write(`Trend idea generation tests failed: ${error.stack || error.message}\\n`);
+  process.exitCode = 1;
+});

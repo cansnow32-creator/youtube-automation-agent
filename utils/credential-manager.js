@@ -6,8 +6,8 @@ const chalk = require('chalk');
 const { Logger } = require('./logger');
 const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./ai-text-service');
 
-// API keys and OAuth tokens are owner-only (0600). writeFile's mode applies only
-// when the file is created, so files written by older versions are tightened too.
+// Apply restrictive POSIX mode bits where supported. Windows access is governed
+// by NTFS ACLs; see the README's Windows credential-folder guidance.
 async function writePrivateFile(filePath, contents) {
   await fs.writeFile(filePath, contents, { mode: 0o600 });
   await fs.chmod(filePath, 0o600).catch(() => {});
@@ -64,8 +64,9 @@ class CredentialManager {
   // YouTube API Authentication
   async setupYouTubeCredentials() {
     console.log(chalk.cyan('\n🎬 YouTube API Setup'));
-    console.log(chalk.gray('You need to create a YouTube Data API project in Google Cloud Console'));
-    console.log(chalk.gray('Visit: https://console.cloud.google.com/'));
+    console.log(chalk.gray('Create a Google OAuth client with application type Desktop app (not Web application).'));
+    console.log(chalk.gray('The agent uses a temporary 127.0.0.1 loopback port during sign-in.'));
+    console.log(chalk.gray('Google Cloud Console: https://console.cloud.google.com/'));
     
     const answers = await inquirer.prompt([
       {
@@ -83,8 +84,8 @@ class CredentialManager {
       {
         type: 'input',
         name: 'redirectUri',
-        message: 'Enter your redirect URI:',
-        default: 'http://localhost:8080/oauth2callback'
+        message: 'Loopback redirect URI (use a Google OAuth Desktop app client; keep the default):',
+        default: 'http://127.0.0.1'
       }
     ]);
 
@@ -103,39 +104,11 @@ class CredentialManager {
   }
 
   async authenticateYouTube() {
-    const oauth2Client = new google.auth.OAuth2(
-      this.credentials.youtube.client_id,
-      this.credentials.youtube.client_secret,
-      this.credentials.youtube.redirect_uris[0]
-    );
-
-    const scopes = [
-      'https://www.googleapis.com/auth/youtube.upload',
-      'https://www.googleapis.com/auth/youtube',
-      'https://www.googleapis.com/auth/youtube.readonly',
-      'https://www.googleapis.com/auth/yt-analytics.readonly',
-      'https://www.googleapis.com/auth/youtube.force-ssl'
-    ];
-
-    const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: scopes,
-    });
-
-    console.log(chalk.cyan('\n🔗 Please visit this URL to authorize the application:'));
-    console.log(chalk.blue(authUrl));
-
-    const { code } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'code',
-        message: 'Enter the authorization code:',
-        validate: input => input.length > 0 || 'Authorization code is required'
-      }
-    ]);
-
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    // Use the loopback OAuth flow so the callback state is verified and the
+    // authorization code is exchanged directly instead of being pasted into a prompt.
+    const { ModernAuth } = require('../modern-auth');
+    const auth = new ModernAuth();
+    const tokens = await auth.authenticate();
 
     this.tokens.youtube = tokens;
     await this.saveTokens();
@@ -155,6 +128,14 @@ class CredentialManager {
     );
 
     oauth2Client.setCredentials(this.tokens.youtube);
+    // Persist refreshed access tokens and any rotated refresh token so the next
+    // process start can continue without requiring another interactive sign-in.
+    oauth2Client.on('tokens', updatedTokens => {
+      this.tokens.youtube = { ...this.tokens.youtube, ...updatedTokens };
+      this.saveTokens().catch(error => {
+        this.logger.error('Failed to persist refreshed YouTube tokens:', error);
+      });
+    });
     return oauth2Client;
   }
 

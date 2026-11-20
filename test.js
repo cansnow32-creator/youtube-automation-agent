@@ -578,9 +578,9 @@ class SystemTest {
       const titleVariants = workflow.buildTitleExperimentVariants('Automate Your Weekly Reporting');
       const selected = workflow.validateEditorData(
         { selectedTitleVariant: 1, selectedThumbnailVariant: 2 },
-        { packagingExperiment: { titleVariants, thumbnailVariants: [{}, {}, {}] } }
+        { packagingExperiment: { titleVariants, thumbnailVariants: [{}, {}, {}, {}] } }
       );
-      if (titleVariants.length !== 3 || selected.selectedTitleVariant !== 1 || selected.selectedThumbnailVariant !== 2) {
+      if (titleVariants.length !== 4 || selected.selectedTitleVariant !== 1 || selected.selectedThumbnailVariant !== 2) {
         throw new Error('Packaging experiment selections were not validated');
       }
 
@@ -1005,6 +1005,43 @@ class SystemTest {
       blocked = error.status === 409;
     }
     if (!blocked) throw new Error('Failed readiness did not block protected automation');
+
+    const { YOUTUBE_SCOPES } = require('./modern-auth');
+    let channelProbeCalls = 0;
+    const scopedCredentials = {
+      tokens: { youtube: { scope: YOUTUBE_SCOPES.join(' ') } },
+      getYouTubeClient: () => ({
+        channels: { list: async () => {
+          channelProbeCalls++;
+          return { data: { items: [{ id: 'channel-test', snippet: { title: 'Test channel' } }] } };
+        } }
+      })
+    };
+    const scopedReadiness = new ProductionReadinessService({}, scopedCredentials);
+    const channelAccess = await scopedReadiness.probeYouTube();
+    if (channelProbeCalls !== 1 || !channelAccess.details.channelId) {
+      throw new Error('YouTube readiness did not verify channel access with the required OAuth scopes');
+    }
+
+    let missingScopeChannelCalls = 0;
+    const missingScopeReadiness = new ProductionReadinessService({}, {
+      tokens: { youtube: { scope: 'https://www.googleapis.com/auth/youtube.readonly' } },
+      getYouTubeClient: () => ({
+        channels: { list: async () => {
+          missingScopeChannelCalls++;
+          return { data: { items: [{ id: 'unexpected' }] } };
+        } }
+      })
+    });
+    let missingScopesBlocked = false;
+    try {
+      await missingScopeReadiness.probeYouTube();
+    } catch (error) {
+      missingScopesBlocked = /missing required OAuth scopes/.test(error.message);
+    }
+    if (!missingScopesBlocked || missingScopeChannelCalls !== 0) {
+      throw new Error('Readiness accepted a YouTube token missing required write or analytics scopes');
+    }
 
     const tags = normalizeTags(['#Automation', 'automation', 'bad"tag', 'x'.repeat(140)]);
     const metadata = validateYouTubeMetadata({
@@ -2163,8 +2200,14 @@ class SystemTest {
         await server.start();
         if (listenArgs?.host !== '127.0.0.1') throw new Error(`Dashboard server bound to ${listenArgs?.host} instead of loopback by default`);
         process.env.HOST = '0.0.0.0';
-        await server.start();
-        if (listenArgs?.host !== '0.0.0.0') throw new Error('HOST did not override the dashboard bind address');
+        let unsafeHostRejected = false;
+        try {
+          await server.start();
+        } catch (error) {
+          unsafeHostRejected = /loopback/.test(error.message);
+        }
+        if (!unsafeHostRejected) throw new Error('Dashboard allowed a non-loopback bind without full read-route authentication');
+        if (listenArgs?.host !== '127.0.0.1') throw new Error('Unsafe HOST unexpectedly reached app.listen');
       } finally {
         console.log = quietLog;
         delete process.env.HOST;
@@ -2193,9 +2236,32 @@ class SystemTest {
   }
 
   async testOpenIssueRegressions() {
-    const { ModernAuth } = require('./modern-auth');
+    const fs = require('fs').promises;
+    const { ModernAuth, preserveRefreshToken, YOUTUBE_SCOPES } = require('./modern-auth');
+    const requiredScopes = [
+      'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube.readonly',
+      'https://www.googleapis.com/auth/yt-analytics.readonly',
+      'https://www.googleapis.com/auth/youtube.force-ssl'
+    ];
+    if (
+      requiredScopes.some(scope => !YOUTUBE_SCOPES.includes(scope)) ||
+      YOUTUBE_SCOPES.includes('https://www.googleapis.com/auth/youtube')
+    ) {
+      throw new Error('YouTube OAuth scopes are not restricted to the required API permissions');
+    }
+    const { OAuthServer } = require('./oauth-server');
     const { ProductionManagementAgent } = require('./agents/production-management-agent');
     const { YouTubeAutomationAgent } = require('./index');
+
+    const preservedRefresh = preserveRefreshToken({ refresh_token: 'existing-refresh' }, { access_token: 'new-access' });
+    if (preservedRefresh.refresh_token !== 'existing-refresh' || preservedRefresh.access_token !== 'new-access') {
+      throw new Error('OAuth reauthorization must preserve an existing refresh token when Google omits it');
+    }
+    const rotatedRefresh = preserveRefreshToken({ refresh_token: 'old-refresh' }, { refresh_token: 'new-refresh' });
+    if (rotatedRefresh.refresh_token !== 'new-refresh') {
+      throw new Error('OAuth reauthorization must prefer a newly issued refresh token');
+    }
 
     const auth = new ModernAuth();
     const fixedRedirect = auth.resolveRedirect({
@@ -2204,6 +2270,42 @@ class SystemTest {
     if (fixedRedirect.hostname !== '127.0.0.1' || fixedRedirect.port < 8000 || fixedRedirect.pathname !== '/') {
       throw new Error('OAuth did not use a desktop-app loopback redirect with a local dynamic port');
     }
+    auth.oauthState = 'expected-oauth-state';
+    if (!auth.isValidOAuthState('expected-oauth-state') ||
+        auth.isValidOAuthState('attacker-controlled-state') ||
+        auth.isValidOAuthState('') ||
+        auth.isValidOAuthState(null)) {
+      throw new Error('OAuth callback state validation accepted a missing or mismatched state');
+    }
+    auth.oauthState = null;
+
+    // Refresh events must update the private token file for the next process start.
+    const tokenDirectory = await fs.mkdtemp(path.join(require('os').tmpdir(), 'agenttube-oauth-'));
+    try {
+      const manager = new CredentialManager();
+      manager.credentials = { youtube: { client_id: 'test-client', client_secret: 'test-secret', redirect_uris: ['http://127.0.0.1'] } };
+      manager.tokens = { youtube: { access_token: 'old-access', refresh_token: 'old-refresh' } };
+      manager.tokensPath = path.join(tokenDirectory, 'tokens.json');
+      const client = manager.getYouTubeAuth();
+      client.emit('tokens', { access_token: 'new-access', refresh_token: 'rotated-refresh' });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const persisted = JSON.parse(await fs.readFile(manager.tokensPath, 'utf8')).youtube;
+      if (persisted.access_token !== 'new-access' || persisted.refresh_token !== 'rotated-refresh') {
+        throw new Error('Refreshed YouTube tokens were not persisted');
+      }
+    } finally {
+      await fs.rm(tokenDirectory, { recursive: true, force: true });
+    }
+
+    const legacyOAuth = new OAuthServer();
+    legacyOAuth.oauthState = 'legacy-expected-state';
+    if (!legacyOAuth.isValidState('legacy-expected-state') ||
+        legacyOAuth.isValidState('legacy-attacker-state') ||
+        legacyOAuth.isValidState('') ||
+        legacyOAuth.isValidState(null)) {
+      throw new Error('Legacy OAuth callback state validation accepted a missing or mismatched state');
+    }
+    legacyOAuth.oauthState = null;
 
     const visualStyles = [];
     const productionAgent = Object.create(ProductionManagementAgent.prototype);
@@ -2398,8 +2500,30 @@ class SystemTest {
   }
 
   async testAPIValidationAndSecurity() {
-    const { YouTubeAutomationAgent } = require('./index');
+    const { YouTubeAutomationAgent, validateHostConfiguration } = require('./index');
     const agent = new YouTubeAutomationAgent();
+
+    if (!validateHostConfiguration('127.0.0.1', undefined)) {
+      throw new Error('Loopback binding should be allowed without an API key');
+    }
+    let unsafeBindRejected = false;
+    try {
+      validateHostConfiguration('0.0.0.0', undefined);
+    } catch (error) {
+      unsafeBindRejected = /loopback/.test(error.message);
+    }
+    if (!unsafeBindRejected) {
+      throw new Error('Network binding without API_KEY was not rejected');
+    }
+    let keyedNetworkBindRejected = false;
+    try {
+      validateHostConfiguration('0.0.0.0', 'test-secret');
+    } catch (error) {
+      keyedNetworkBindRejected = /loopback/.test(error.message);
+    }
+    if (!keyedNetworkBindRejected) {
+      throw new Error('Network binding was allowed even though read-only API routes lack session authentication');
+    }
 
     if (typeof agent.validateGenerateRequestBody !== 'function') {
       throw new Error('validateGenerateRequestBody is not implemented');
@@ -2522,6 +2646,114 @@ class SystemTest {
       throw new Error('publishContent removed the wrong publish queue entries');
     }
 
+    // The service-level approval gate must protect every publishing entry point.
+    let approvalUploadCalls = 0;
+    const unapprovedDb = {
+      getProductionBundle: async () => ({ id: 'prod-unapproved', review_status: 'needs_review', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const unapproved = new PublishingSchedulingAgent(unapprovedDb, {});
+    unapproved.publishQueue = [{
+      productionId: 'prod-unapproved', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    unapproved.uploadToYouTube = async () => { approvalUploadCalls++; return { id: 'must-not-upload' }; };
+    let approvalGateBlocked = false;
+    try {
+      await unapproved.publishContent('prod-unapproved');
+    } catch (error) {
+      approvalGateBlocked = error.code === 'CONTENT_NOT_APPROVED';
+    }
+    if (!approvalGateBlocked || approvalUploadCalls !== 0) {
+      throw new Error('Publishing started without explicit production approval');
+    }
+
+    let emergencyApprovalBlocked = false;
+    try {
+      await unapproved.emergencyPublish('prod-unapproved');
+    } catch (error) {
+      emergencyApprovalBlocked = error.code === 'CONTENT_NOT_APPROVED';
+    }
+    if (!emergencyApprovalBlocked || approvalUploadCalls !== 0) {
+      throw new Error('Emergency publish bypassed the service-level approval gate');
+    }
+
+    const approvedDb = {
+      getProductionBundle: async () => ({ id: 'prod-approved', review_status: 'approved', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const approved = new PublishingSchedulingAgent(approvedDb, {});
+    approved.publishQueue = [{
+      productionId: 'prod-approved', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    approved.uploadToYouTube = async () => ({ id: 'youtube-approved' });
+    const approvedResult = await approved.publishContent('prod-approved');
+    if (approvedResult.status !== 'published') {
+      throw new Error('Explicitly approved production was incorrectly blocked');
+    }
+
+    const unapprovedShortDb = {
+      getProductionBundle: async () => null,
+      getShortClip: async () => ({
+        id: 'short-unapproved', status: 'scheduled',
+        inheritedEvidence: { ready: false }
+      }),
+      updateScheduleEntry: async () => {}
+    };
+    const unapprovedShort = new PublishingSchedulingAgent(unapprovedShortDb, {});
+    unapprovedShort.publishQueue = [{
+      productionId: 'short-unapproved', status: 'scheduled',
+      metadata: { contentType: 'short', audio: intentionalAudio }
+    }];
+    let shortApprovalBlocked = false;
+    try {
+      await unapprovedShort.publishContent('short-unapproved');
+    } catch (error) {
+      shortApprovalBlocked = error.code === 'SHORT_NOT_APPROVED';
+    }
+    if (!shortApprovalBlocked) {
+      throw new Error('Short publishing accepted a clip without explicit approval and verified source evidence');
+    }
+
+    // Concurrent requests for one production share one in-flight upload.
+    let concurrentUploadCalls = 0;
+    let releaseConcurrentUpload;
+    let signalConcurrentUploadStarted;
+    const concurrentUploadGate = new Promise(resolve => { releaseConcurrentUpload = resolve; });
+    const concurrentUploadStarted = new Promise(resolve => { signalConcurrentUploadStarted = resolve; });
+    const concurrentDb = {
+      getProductionBundle: async () => ({ id: 'prod-concurrent', review_status: 'approved', provenance: { status: 'not_required' } }),
+      updateScheduleEntry: async () => {}
+    };
+    const concurrent = new PublishingSchedulingAgent(concurrentDb, {});
+    concurrent.publishQueue = [{
+      id: 'schedule-concurrent', productionId: 'prod-concurrent', status: 'scheduled',
+      metadata: { audio: intentionalAudio }
+    }];
+    concurrent.uploadToYouTube = async () => {
+      concurrentUploadCalls++;
+      signalConcurrentUploadStarted();
+      await concurrentUploadGate;
+      return { id: 'youtube-concurrent' };
+    };
+    const firstPublish = concurrent.publishContent('prod-concurrent');
+    const secondPublish = concurrent.publishContent('prod-concurrent');
+    await concurrentUploadStarted;
+    if (concurrentUploadCalls !== 1) {
+      releaseConcurrentUpload();
+      throw new Error('Concurrent publish requests started more than one YouTube upload');
+    }
+    releaseConcurrentUpload();
+    const [firstConcurrentResult, secondConcurrentResult] = await Promise.all([firstPublish, secondPublish]);
+    if (
+      concurrentUploadCalls !== 1 ||
+      firstConcurrentResult.youtubeId !== 'youtube-concurrent' ||
+      secondConcurrentResult.youtubeId !== 'youtube-concurrent'
+    ) {
+      throw new Error('Concurrent publish requests did not share the same upload result');
+    }
+
     const missingNarration = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
     missingNarration.publishQueue = [{ productionId: 'prod-no-audio', status: 'scheduled', metadata: {} }];
     missingNarration.uploadToYouTube = async () => { throw new Error('Upload must not start without narration'); };
@@ -2572,6 +2804,27 @@ class SystemTest {
     }
     if (!uncertainBlocked || uploadAttempts !== 1 || uncertainUpdates.at(-1)?.status !== 'reconciliation_required') {
       throw new Error('An uncertain upload outcome was retried or failed to require reconciliation');
+    }
+
+    // Re-approval must not reset an in-flight or uncertain upload to "scheduled".
+    const { YouTubeAutomationAgent } = require('./index');
+    const approvalAgent = new YouTubeAutomationAgent();
+    for (const status of ['uploading', 'uploaded', 'reconciliation_required']) {
+      approvalAgent.db = {
+        getProductionBundle: async () => ({
+          id: 'prod-approval-state',
+          schedule: { status }
+        })
+      };
+      let approvalStateProtected = false;
+      try {
+        await approvalAgent.approveContent('prod-approval-state', {});
+      } catch (error) {
+        approvalStateProtected = error.code === 'UPLOAD_OUTCOME_UNKNOWN' && error.status === 409;
+      }
+      if (!approvalStateProtected) {
+        throw new Error(`Re-approval reset the protected ${status} upload state`);
+      }
     }
 
     let reconciliationCalls = 0;
@@ -2631,6 +2884,75 @@ class SystemTest {
     }, { publishNow: true });
     if (uploadMetadata?.status?.privacyStatus !== 'public' || uploadMetadata?.status?.publishAt !== undefined) {
       throw new Error('Publish now still sent a stale scheduled publishAt value');
+    }
+
+    let invalidPrivacyUploadCalls = 0;
+    const invalidPrivacy = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
+    invalidPrivacy.youtube = {
+      videos: { insert: async () => { invalidPrivacyUploadCalls++; return { data: { id: 'must-not-upload' } }; } }
+    };
+    invalidPrivacy.getVideoStream = async () => ({ fixture: true });
+    let invalidPrivacyBlocked = false;
+    try {
+      await invalidPrivacy.uploadToYouTube({
+        publishTime: new Date().toISOString(),
+        metadata: {
+          seo: { title: 'Invalid privacy', description: 'Must be rejected.', tags: ['test'] },
+          video: { path: 'fixture.mp4' },
+          privacyStatus: 'everyone'
+        }
+      }, { publishNow: true });
+    } catch (error) {
+      invalidPrivacyBlocked = error.code === 'INVALID_PRIVACY_STATUS';
+    }
+    if (!invalidPrivacyBlocked || invalidPrivacyUploadCalls !== 0) {
+      throw new Error('Invalid privacy configuration reached the YouTube upload API');
+    }
+
+    let thumbnailFailurePersisted = null;
+    let videoUploadCalls = 0;
+    const thumbnailFailure = new PublishingSchedulingAgent({
+      updateScheduleEntry: async entry => { thumbnailFailurePersisted = { ...entry, metadata: { ...entry.metadata } }; }
+    }, {});
+    thumbnailFailure.youtube = {
+      videos: { insert: async () => { videoUploadCalls++; return { data: { id: 'youtube-thumbnail-failure' } }; } },
+      thumbnails: { set: async () => { const error = new Error('thumbnail quota unavailable'); error.code = 403; throw error; } }
+    };
+    thumbnailFailure.getVideoStream = async () => ({ fixture: true });
+    const thumbnailFailureEntry = {
+      id: 'schedule-thumbnail-failure', productionId: 'production-thumbnail-failure',
+      publishTime: new Date().toISOString(), status: 'uploading',
+      metadata: {
+        seo: { title: 'Thumbnail failure stays visible', description: 'The video must not be uploaded twice.', tags: ['test'] },
+        video: { path: 'fixture.mp4' }, thumbnail: { path: 'thumbnail.png' }, privacyStatus: 'private'
+      }
+    };
+    const thumbnailUploadResult = await thumbnailFailure.uploadToYouTube(thumbnailFailureEntry, { publishNow: true });
+    if (thumbnailUploadResult.id !== 'youtube-thumbnail-failure' || thumbnailFailureEntry.status !== 'uploaded') {
+      throw new Error('A thumbnail failure incorrectly converted a successful video upload into a failed video upload');
+    }
+    if (thumbnailFailurePersisted?.metadata?.thumbnailUpload?.status !== 'failed' ||
+        thumbnailFailurePersisted.metadata.thumbnailUpload.retryRequired !== true ||
+        thumbnailFailurePersisted.youtubeId !== 'youtube-thumbnail-failure') {
+      throw new Error('A failed thumbnail upload was not persisted for separate repair');
+    }
+
+    thumbnailFailure.publishQueue = [thumbnailFailureEntry];
+    let thumbnailRepairCalls = 0;
+    thumbnailFailure.uploadThumbnail = async (videoId, thumbnailPath) => {
+      if (videoId !== 'youtube-thumbnail-failure' || thumbnailPath !== 'thumbnail.png') {
+        throw new Error('Thumbnail retry used the wrong video ID or asset path');
+      }
+      thumbnailRepairCalls++;
+      return { videoId, uploaded: true };
+    };
+    const repairedThumbnail = await thumbnailFailure.retryThumbnailUpload('production-thumbnail-failure');
+    if (repairedThumbnail.metadata.thumbnailUpload.status !== 'uploaded' ||
+        repairedThumbnail.metadata.thumbnailUpload.retryRequired !== false) {
+      throw new Error('Thumbnail-only retry did not persist a successful repair state');
+    }
+    if (videoUploadCalls !== 1 || thumbnailRepairCalls !== 1) {
+      throw new Error('Thumbnail-only repair attempted to upload the YouTube video again or did not retry the thumbnail');
     }
 
     this.logger.info('Publishing safety test completed successfully');

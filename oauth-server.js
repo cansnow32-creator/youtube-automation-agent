@@ -3,20 +3,28 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
+const crypto = require('crypto');
+const { YOUTUBE_SCOPES } = require('./modern-auth');
 
 class OAuthServer {
   constructor() {
     this.app = express();
     this.server = null;
+    this.oauthState = null;
     this.setupRoutes();
   }
 
   setupRoutes() {
     this.app.get('/auth/callback', async (req, res) => {
-      const { code, error } = req.query;
+      const { code, error, state } = req.query;
+
+      if (!this.isValidState(state)) {
+        res.status(400).type('text').send('Invalid OAuth state. Authorization callback rejected.');
+        return;
+      }
       
       if (error) {
-        res.send(`<h1>❌ Authentication Error</h1><p>${error}</p>`);
+        res.status(400).type('text').send(`Authentication error: ${error}`);
         return;
       }
 
@@ -49,7 +57,7 @@ class OAuthServer {
         
       } catch (error) {
         console.error(chalk.red('Token exchange failed:'), error);
-        res.send(`<h1>❌ Token Exchange Failed</h1><p>${error.message}</p>`);
+        res.status(500).type('text').send(`Token exchange failed: ${error.message}`);
       }
     });
 
@@ -63,6 +71,13 @@ class OAuthServer {
         </style>
       `);
     });
+  }
+
+  isValidState(receivedState) {
+    if (typeof receivedState !== 'string' || typeof this.oauthState !== 'string') return false;
+    const expected = Buffer.from(this.oauthState, 'utf8');
+    const received = Buffer.from(receivedState, 'utf8');
+    return expected.length === received.length && crypto.timingSafeEqual(expected, received);
   }
 
   async exchangeCodeForTokens(code) {
@@ -121,18 +136,15 @@ class OAuthServer {
       credentials.youtube.redirect_uris[0]
     );
 
-    const scopes = [
-      'https://www.googleapis.com/auth/youtube.upload',
-      'https://www.googleapis.com/auth/youtube',
-      'https://www.googleapis.com/auth/youtube.readonly',
-      'https://www.googleapis.com/auth/yt-analytics.readonly',
-      'https://www.googleapis.com/auth/youtube.force-ssl'
-    ];
+    this.oauthState = crypto.randomBytes(32).toString('hex');
+
+    const scopes = YOUTUBE_SCOPES;
 
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
-      prompt: 'consent'
+      prompt: 'consent',
+      state: this.oauthState
     });
 
     console.log(chalk.cyan.bold('\n🎬 YouTube Automation Agent - OAuth Setup'));
@@ -145,8 +157,13 @@ class OAuthServer {
 }
 
 if (require.main === module) {
-  const oauthServer = new OAuthServer();
-  oauthServer.start();
+  // Keep the legacy module export for compatibility, but route direct CLI use
+  // through the same state-validated loopback flow as CredentialManager.
+  const { ModernAuth } = require('./modern-auth');
+  new ModernAuth().authenticate().catch(error => {
+    console.error(chalk.red('Authentication failed:'), error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = { OAuthServer };

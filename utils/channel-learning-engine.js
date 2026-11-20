@@ -110,6 +110,7 @@ class ChannelLearningEngine {
         ? 'shorts'
         : this.slug(strategy.requestedStyle || strategy.contentType || 'unknown'),
       length: this.slug(strategy.requestedLengthKey || strategy.requestedLength || 'unknown'),
+      durationBucket: this.durationBucket(report.videoDetails?.duration),
       hookLength: hook ? (this.wordCount(hook) <= 40 ? 'concise' : 'extended') : 'unknown',
       titleLength: title ? (this.wordCount(title) <= 9 ? 'concise' : 'long') : 'unknown',
       thumbnailStyle: this.slug(
@@ -293,14 +294,94 @@ class ChannelLearningEngine {
     return candidates;
   }
 
+  durationBucket(duration) {
+    if (!duration || typeof duration !== 'string') return 'unknown';
+    const match = duration.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+    if (!match) return 'unknown';
+    const seconds = (Number(match[1] || 0) * 3600) + (Number(match[2] || 0) * 60) + Number(match[3] || 0);
+    if (!seconds) return 'unknown';
+    if (seconds < 60) return 'under_1m';
+    if (seconds < 180) return '1_to_3m';
+    if (seconds < 480) return '3_to_8m';
+    if (seconds < 900) return '8_to_15m';
+    return '15m_plus';
+  }
+
+  buildPerformanceInsights(snapshots, minimumSamples = 3) {
+    const dimensions = [
+      { key: 'pillar', label: 'content pillar' },
+      { key: 'format', label: 'format' },
+      { key: 'durationBucket', label: 'actual video duration' }
+    ];
+    const metricKeys = ['views', 'performanceScore', 'ctr', 'retention', 'engagementRate'];
+    const breakdowns = {};
+
+    for (const dimension of dimensions) {
+      const groups = new Map();
+      for (const snapshot of snapshots) {
+        const name = snapshot.contentAttributes?.[dimension.key];
+        if (!name || ['unknown', 'mixed_or_unknown'].includes(name)) continue;
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(snapshot);
+      }
+
+      const cohorts = [...groups.entries()].map(([name, videos]) => {
+        const metrics = {};
+        for (const key of metricKeys) {
+          const values = videos
+            .map(video => this.optionalNumber(video.metrics?.[key]))
+            .filter(value => value !== null);
+          metrics[key] = {
+            average: values.length ? Number(this.average(values).toFixed(2)) : null,
+            median: values.length ? Number(this.median(values).toFixed(2)) : null,
+            measuredVideos: values.length
+          };
+        }
+        const sampleSize = videos.length;
+        return {
+          name,
+          videoCount: sampleSize,
+          confidence: sampleSize >= 5 ? 'high' : sampleSize >= minimumSamples ? 'moderate' : 'exploratory',
+          sufficientlySampled: sampleSize >= minimumSamples,
+          metrics
+        };
+      }).sort((a, b) => {
+        const scoreA = a.metrics.performanceScore.average;
+        const scoreB = b.metrics.performanceScore.average;
+        if (scoreA !== null && scoreB !== null) return scoreB - scoreA;
+        return (b.metrics.views.average ?? -1) - (a.metrics.views.average ?? -1);
+      });
+
+      const reliable = cohorts.filter(cohort => cohort.sufficientlySampled);
+      breakdowns[dimension.key] = {
+        label: dimension.label,
+        minimumSamples,
+        cohorts,
+        leader: reliable[0] || null,
+        evidenceStatus: reliable.length ? 'sufficient' : 'insufficient'
+      };
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      independentVideoCount: snapshots.length,
+      minimumSamplesPerCohort: minimumSamples,
+      dimensions: breakdowns,
+      rankingPolicy: 'Cohorts are ordered by average performance score when available, otherwise by average views. Metrics with missing values are omitted from that metric average.',
+      evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using its preferred measurement window. Cohorts below the minimum sample size are exploratory and are not declared winners.'
+    };
+  }
+
   async getSummary() {
-    const [snapshots, recommendations, retentionSnapshots, strategy] = await Promise.all([
+    const [snapshots, recommendations, retentionSnapshots, strategy, experiments] = await Promise.all([
       this.db.listPerformanceSnapshots({ reliableOnly: true }),
       this.db.listLearningRecommendations({ limit: 50 }),
       this.db.listRetentionSnapshots ? this.db.listRetentionSnapshots({ limit: 12 }) : Promise.resolve([]),
-      this.db.getChannelStrategy ? this.db.getChannelStrategy() : Promise.resolve(null)
+      this.db.getChannelStrategy ? this.db.getChannelStrategy() : Promise.resolve(null),
+      this.db.listGrowthExperiments ? this.db.listGrowthExperiments({ limit: 100 }) : Promise.resolve([])
     ]);
     const preferred = this.preferredSnapshotPerVideo(snapshots);
+    const recommendationsWithFeedback = this.attachExperimentFeedback(recommendations, experiments);
     return {
       measuredVideos: preferred.length,
       snapshotCount: snapshots.length,
@@ -309,12 +390,13 @@ class ChannelLearningEngine {
         counts[snapshot.measurementWindow] = (counts[snapshot.measurementWindow] || 0) + 1;
         return counts;
       }, {}),
-      recommendations,
+      recommendations: recommendationsWithFeedback,
       approvedCount: recommendations.filter(item => item.status === 'approved').length,
       pendingCount: recommendations.filter(item => item.status === 'pending').length,
       lastMeasuredAt: snapshots[0]?.measuredAt || null,
       evidencePolicy: 'Only real YouTube analytics are eligible; simulated fallbacks are excluded.',
       outcome: this.buildOutcomeSummary(preferred, strategy),
+      performanceInsights: this.buildPerformanceInsights(preferred),
       retention: {
         snapshotCount: retentionSnapshots.length,
         longFormCount: retentionSnapshots.filter(item => item.surface === 'long_form').length,
@@ -322,6 +404,40 @@ class ChannelLearningEngine {
         snapshots: retentionSnapshots
       }
     };
+  }
+
+  attachExperimentFeedback(recommendations = [], experiments = []) {
+    const byRecommendation = new Map();
+    for (const experiment of experiments) {
+      if (!experiment.recommendationId) continue;
+      if (!byRecommendation.has(experiment.recommendationId)) byRecommendation.set(experiment.recommendationId, []);
+      byRecommendation.get(experiment.recommendationId).push(experiment);
+    }
+    return recommendations.map(recommendation => {
+      const linked = byRecommendation.get(recommendation.id) || [];
+      const latest = linked[0] || null;
+      if (!latest) return { ...recommendation, experimentFeedback: { status: 'not_tested', experimentCount: 0 } };
+      const winner = (latest.arms || []).find(arm => arm.id === latest.winningArmId);
+      const status = latest.status === 'adopted' ? 'validated_and_adopted'
+        : latest.status === 'awaiting_winner' ? 'awaiting_operator_decision'
+          : ['inconclusive', 'cancelled'].includes(latest.status) ? latest.status
+            : ['running', 'approved', 'draft', 'action_required'].includes(latest.status) ? 'in_progress'
+              : latest.status || 'unknown';
+      return {
+        ...recommendation,
+        experimentFeedback: {
+          status,
+          experimentCount: linked.length,
+          experimentId: latest.id,
+          reason: latest.result?.reason || null,
+          liftPercent: latest.result?.liftPercent !== null && latest.result?.liftPercent !== undefined && Number.isFinite(Number(latest.result.liftPercent))
+            ? Number(latest.result.liftPercent) : null,
+          winnerLabel: winner?.label || null,
+          confidence: latest.result?.confidence || null,
+          guardrailsPassed: latest.result?.guardrails?.passed === true
+        }
+      };
+    });
   }
 
   outcomeGoal(strategy = {}) {

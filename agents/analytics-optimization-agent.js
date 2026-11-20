@@ -129,6 +129,16 @@ class AnalyticsOptimizationAgent {
         context,
         measurementWindow
       );
+      if (!analytics.simulated && context.productionId && this.db.recordContentIdeaOutcome) {
+        performanceReport.contentIdeaOutcome = await this.db.recordContentIdeaOutcome({
+          productionId: context.productionId,
+          videoId,
+          measurementWindow,
+          metrics: performanceReport.learningSnapshot?.metrics || {},
+          measuredAt: performanceReport.learningSnapshot?.measured_at || new Date().toISOString(),
+          simulated: false
+        });
+      }
       if (retention.available) {
         performanceReport.retentionSnapshot = await this.learning.captureRetention(
           {

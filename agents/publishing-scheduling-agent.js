@@ -12,6 +12,8 @@ class PublishingSchedulingAgent {
     this.logger = new Logger('PublishingScheduling');
     this.youtube = null;
     this.publishQueue = [];
+    // Prevent overlapping publish requests for the same item in this process.
+    this.activePublishes = new Map();
   }
 
   async initialize() {
@@ -99,26 +101,73 @@ class PublishingSchedulingAgent {
   }
 
   async publishContent(contentId, options = {}) {
+    const key = String(contentId);
+    const active = this.activePublishes.get(key);
+    if (active) return active;
+
+    const operation = this.publishContentOnce(contentId, options);
+    this.activePublishes.set(key, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.activePublishes.get(key) === operation) {
+        this.activePublishes.delete(key);
+      }
+    }
+  }
+
+  async publishContentOnce(contentId, options = {}) {
     try {
       let productionBundle = null;
-      if (this.db.getLatestReadinessRun) {
-        const readiness = await this.db.getLatestReadinessRun();
-        if (readiness?.status === 'failed') {
-          const failures = readiness.checks
-            .filter(check => check.blocking && check.status === 'failed')
-            .map(check => check.id);
-          const error = new Error(`Publishing is blocked by the production readiness gate. Fix ${failures.join(', ')} and run the check again.`);
-          error.status = 409;
-          error.code = 'READINESS_BLOCKED';
-          throw error;
-        }
-      }
       if (this.db.getProductionBundle) {
         productionBundle = await this.db.getProductionBundle(contentId);
         if (productionBundle && !['verified', 'not_required'].includes(productionBundle.provenance?.status || 'not_required')) {
           const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
           error.status = 409;
           error.code = 'PROVENANCE_BLOCKED';
+          throw error;
+        }
+
+        // Enforce operator approval in the publishing service itself. This protects
+        // every caller, including scheduled jobs and the emergency "publish now" path.
+        if (productionBundle) {
+          if (productionBundle.review_status !== 'approved') {
+            const error = new Error('Publishing is blocked until the production has explicit operator approval');
+            error.status = 409;
+            error.code = 'CONTENT_NOT_APPROVED';
+            throw error;
+          }
+        } else {
+          const shortClip = this.db.getShortClip ? await this.db.getShortClip(contentId) : null;
+          const approvedShort = shortClip &&
+            ['scheduled', 'uploading', 'reconciliation_required', 'published'].includes(shortClip.status) &&
+            Boolean(shortClip.approvedAt) &&
+            shortClip.inheritedEvidence?.ready === true;
+          if (!approvedShort) {
+            const error = new Error('Publishing is blocked until the Short has explicit approval and verified source evidence');
+            error.status = 409;
+            error.code = 'SHORT_NOT_APPROVED';
+            throw error;
+          }
+        }
+      }
+      if (this.db.getLatestReadinessRun) {
+        const readiness = await this.db.getLatestReadinessRun();
+        const completedAt = readiness?.completed_at || readiness?.completedAt || readiness?.created_at;
+        const ageMs = completedAt ? Date.now() - new Date(completedAt).getTime() : NaN;
+        const stale = !Number.isFinite(ageMs) || ageMs < 0 || ageMs > 24 * 60 * 60 * 1000;
+        const blockingFailures = (readiness?.checks || [])
+          .filter(check => check.blocking && check.status === 'failed')
+          .map(check => check.id);
+        let reason = null;
+        if (!readiness) reason = 'Run the verified production readiness check before publishing';
+        else if (stale) reason = 'The production readiness check is missing a valid timestamp or is older than 24 hours; run it again';
+        else if (readiness.status === 'failed') reason = `Fix ${blockingFailures.join(', ') || 'the blocking readiness checks'} and run the check again`;
+        else if (!['passed', 'warning'].includes(readiness.status)) reason = `Resolve the readiness status (${readiness.status || 'unknown'}) and run the check again`;
+        if (reason) {
+          const error = new Error(`Publishing is blocked by the production readiness gate. ${reason}.`);
+          error.status = 409;
+          error.code = 'READINESS_BLOCKED';
           throw error;
         }
       }
@@ -206,6 +255,12 @@ class PublishingSchedulingAgent {
     
     // Prepare video metadata
     const requestedPrivacy = metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private';
+    if (!['private', 'unlisted', 'public'].includes(requestedPrivacy)) {
+      const error = new Error('Invalid YouTube privacy status. Use private, unlisted, or public.');
+      error.status = 400;
+      error.code = 'INVALID_PRIVACY_STATUS';
+      throw error;
+    }
     const scheduledFor = new Date(scheduleEntry.publishTime);
     const futureSchedule = !options.publishNow && Number.isFinite(scheduledFor.getTime()) && scheduledFor.getTime() > Date.now() + 60000;
     const videoMetadata = {
@@ -244,9 +299,23 @@ class PublishingSchedulingAgent {
     scheduleEntry.error = null;
     await this.db.updateScheduleEntry(scheduleEntry);
     
-    // Upload thumbnail
+    // Upload the thumbnail without turning a successful video upload into a retryable video failure.
+    // Persist the result so a failed thumbnail is visible and can be repaired separately.
     if (metadata.thumbnail && metadata.thumbnail.path) {
-      await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+      try {
+        await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+        scheduleEntry.metadata.thumbnailUpload = { status: 'uploaded', completedAt: new Date().toISOString() };
+      } catch (error) {
+        scheduleEntry.metadata.thumbnailUpload = {
+          status: 'failed',
+          failedAt: new Date().toISOString(),
+          errorCode: error.code || null,
+          errorMessage: String(error.message || 'Thumbnail upload failed').slice(0, 300),
+          retryRequired: true
+        };
+        this.logger.warn(`Video ${videoId} was uploaded, but its thumbnail failed. Repair the thumbnail separately; do not retry the video upload.`);
+      }
+      await this.db.updateScheduleEntry(scheduleEntry);
     }
     
     // Upload captions
@@ -323,19 +392,70 @@ class PublishingSchedulingAgent {
     }
   }
   async uploadThumbnail(videoId, thumbnailPath) {
+    const thumbnailBuffer = await fs.readFile(thumbnailPath);
+    await this.youtube.thumbnails.set({
+      videoId,
+      media: { body: thumbnailBuffer }
+    });
+    this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
+    return { videoId, uploaded: true };
+  }
+
+  async retryThumbnailUpload(contentId) {
+    const entry = this.db.getLatestScheduleEntry
+      ? await this.db.getLatestScheduleEntry(contentId)
+      : this.publishQueue.find(item => item.productionId === contentId || item.id === contentId);
+    if (!entry) {
+      const error = new Error(`Scheduled content not found: ${contentId}`);
+      error.status = 404;
+      throw error;
+    }
+    if (!entry.youtubeId) {
+      const error = new Error('The video has not been uploaded to YouTube; thumbnail repair is not available yet');
+      error.status = 409;
+      throw error;
+    }
+    if (entry.metadata?.thumbnailUpload?.status !== 'failed' || entry.metadata.thumbnailUpload.retryRequired !== true) {
+      const error = new Error('A recorded thumbnail upload failure is required before retrying this asset');
+      error.status = 409;
+      throw error;
+    }
+    const thumbnailPath = entry.metadata?.thumbnail?.path;
+    if (!thumbnailPath) {
+      const error = new Error('No generated thumbnail file is attached to this video');
+      error.status = 409;
+      throw error;
+    }
+    if (!this.youtube) {
+      const error = new Error('YouTube API is not initialized');
+      error.status = 503;
+      throw error;
+    }
+
+    entry.metadata = entry.metadata || {};
     try {
-      const thumbnailBuffer = await fs.readFile(thumbnailPath);
-      
-      await this.youtube.thumbnails.set({
-        videoId: videoId,
-        media: {
-          body: thumbnailBuffer
-        }
-      });
-      
-      this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
+      await this.uploadThumbnail(entry.youtubeId, thumbnailPath);
+      entry.metadata.thumbnailUpload = {
+        status: 'uploaded',
+        completedAt: new Date().toISOString(),
+        retryRequired: false
+      };
+      await this.db.updateScheduleEntry(entry);
+      const queued = this.publishQueue.find(item => item.id === entry.id);
+      if (queued) Object.assign(queued, entry);
+      return entry;
     } catch (error) {
-      this.logger.error(`Failed to upload thumbnail: ${error.message}`);
+      entry.metadata.thumbnailUpload = {
+        status: 'failed',
+        failedAt: new Date().toISOString(),
+        errorCode: error.code || null,
+        errorMessage: String(error.message || 'Thumbnail upload failed').slice(0, 300),
+        retryRequired: true
+      };
+      await this.db.updateScheduleEntry(entry);
+      error.status = error.status || 502;
+      error.code = 'THUMBNAIL_RETRY_FAILED';
+      throw error;
     }
   }
 

@@ -44,6 +44,8 @@ npm start
 
 Then open `http://localhost:3456`.
 
+**Local security:** the dashboard binds to `127.0.0.1` by default and refuses non-loopback `HOST` values. Keep it local: API-key middleware currently protects write actions, but read-only API routes do not yet have browser session authentication.
+
 1. **`npm run walkthrough`** explains each provider choice, tests your keys, and connects your YouTube channel. For a shorter flow, use `npm run setup`. Every setting is documented in [`.env.example`](.env.example).
 2. **Check readiness.** In the dashboard, open **Production readiness** and choose **Run verified check**. It makes small live text and narration requests, checks access to your channel, and builds and decodes a test MP4, without uploading anything.
 3. **Make videos.** Open **Autonomous operator**, describe the channel you want, and choose **Activate & run now**, or create a single video from the dashboard. Finished videos wait in **Pipeline** for your review and approval.
@@ -56,6 +58,16 @@ FFmpeg is installed with `npm install` through `ffmpeg-static`.
 2. Enable **YouTube Data API v3**, and **YouTube Analytics API** for retention and outcome data.
 3. Create an OAuth 2.0 client of type **Desktop app** (not Web application) and save the JSON as `config/credentials.json`.
 4. Under **Google Auth Platform → Audience**, add the Google account that owns your channel as a **test user**. Otherwise sign-in fails with `Error 403: access_denied`. While the app is in Testing mode, Google expires the sign-in after 7 days.
+
+On Windows, Node's `chmod(0600)` is not a substitute for NTFS access control. After creating `config/`, restrict the folder to your Windows account before storing OAuth credentials or tokens:
+
+```powershell
+$principal = (whoami).Trim()
+icacls .\config /inheritance:r
+icacls .\config /grant:r "$($principal):(OI)(CI)F"
+```
+
+Keep `config/credentials.json` and `config/tokens.json` out of shared folders and never commit them.
 
 ## How it works
 
