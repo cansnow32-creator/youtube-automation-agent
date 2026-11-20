@@ -256,7 +256,7 @@ async function run() {
       error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
     );
     assert.equal(attemptedWrites.length, 1, 'lease loss between writes prevents publishing the TTS companion file');
-    assert.match(String(attemptedWrites[0].filePath), /_script\\.json$/);
+    assert.match(String(attemptedWrites[0].filePath), /_script\.json$/);
   } finally {
     fs.writeFile = originalWriteFile;
   }
