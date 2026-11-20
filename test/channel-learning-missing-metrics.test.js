@@ -71,12 +71,16 @@ assert.deepEqual(
 
 const measuredRetentionOnly = [
   { metrics: { impressions: 1200, ctr: null, retention: 20 } },
-  { metrics: { impressions: 900, ctr: null, retention: 30 } }
+  { metrics: { impressions: 900, ctr: null, retention: 30 } },
+  { metrics: { impressions: 1500, ctr: null, retention: 25 } }
 ];
 const retentionRecommendations = engine.buildChannelRecommendations(measuredRetentionOnly);
 assert.equal(retentionRecommendations.length, 1);
 assert.equal(retentionRecommendations[0].category, 'retention');
-assert.equal(retentionRecommendations[0].evidence.sampleSize, 2);
+assert.equal(retentionRecommendations[0].evidence.sampleSize, 3,
+  'retention recommendations require at least three measured samples');
+assert.deepEqual(engine.buildChannelRecommendations(measuredRetentionOnly.slice(0, 2)), [],
+  'two measured retention samples are insufficient for a channel recommendation');
 
 const dimensionSamples = [
   { contentAttributes: { titleLength: 'concise' }, metrics: { ctr: 6 } },
