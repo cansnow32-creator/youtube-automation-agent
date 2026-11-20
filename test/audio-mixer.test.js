@@ -256,6 +256,38 @@ async function testFailedMixPreservesExistingOutput(directory) {
   await assert.rejects(fs.stat(temporary), { code: 'ENOENT' });
 }
 
+async function testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory) {
+  const source = path.join(directory, 'lease-source.mp4');
+  const music = path.join(directory, 'lease-music.wav');
+  const output = path.join(directory, 'lease-mixed.mp4');
+  await fs.writeFile(source, 'source-video');
+  await fs.writeFile(music, 'source-music');
+  let leaseChecks = 0;
+  await assert.rejects(
+    mixBackgroundMusic(source, output, licensedMusic({ path: music }), {
+      assertLease: async () => {
+        leaseChecks += 1;
+        if (leaseChecks === 6) {
+          throw Object.assign(new Error('generation lease lost after mix publish'), {
+            code: 'GENERATION_JOB_LEASE_LOST'
+          });
+        }
+      },
+      runFFmpeg: async args => {
+        if (String(args[args.length - 1]).endsWith('.mixing.mp4')) {
+          await fs.writeFile(args[args.length - 1], 'rendered-mix');
+        }
+      },
+      getMediaInfo: async () => ({ duration: 3, hasAudio: true, width: 640, height: 360 }),
+      getAudioInfo: async () => ({ duration: 2 })
+    }),
+    error => error.code === 'GENERATION_JOB_LEASE_LOST'
+  );
+  for (const filePath of [output, output + '.mix.json', output + '.mix.json.tmp', output + '.mixing.mp4']) {
+    await assert.rejects(fs.access(filePath), { code: 'ENOENT' });
+  }
+}
+
 async function testRealFFmpegMix(directory) {
   if (!await checkFFmpeg()) {
     process.stdout.write('Audio mixer FFmpeg smoke test skipped: FFmpeg is unavailable\\n');
@@ -304,6 +336,7 @@ async function run() {
     await testProductionIntegration(directory);
     await testFailedMixPreservesExistingOutput(directory);
     await testMusicMixCache(directory);
+    await testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory);
     await testRealFFmpegMix(directory);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
