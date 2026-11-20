@@ -84,9 +84,28 @@ async function run() {
     const test = experiment();
     test.status = 'awaiting_winner';
     test.winningArmId = 'variant';
+    const { service } = makeService([]);
+    service.requireExperiment = async () => test;
+    await assert.rejects(
+      () => service.adoptWinner(test.id, { confirmed: true }),
+      error => error.code === 'EXPERIMENT_CAUSAL_EVIDENCE_REQUIRED'
+    );
+  }
+
+  {
+    const test = experiment();
+    test.status = 'awaiting_winner';
+    test.winningArmId = 'variant';
     test.productionId = 'production-1';
     test.arms[1].title = 'A centered composition title';
-    test.result = { liftPercent: 25, zScore: 2.4, confidence: 'high', guardrails: { passed: true } };
+    test.result = {
+      comparisonMethod: 'randomized_arm_level',
+      exposureAttribution: 'verified_randomized',
+      liftPercent: 25,
+      zScore: 2.4,
+      confidence: 'high',
+      guardrails: { passed: true }
+    };
     const { service } = makeService([]);
     service.requireExperiment = async () => test;
     service.applyArm = async () => {};
