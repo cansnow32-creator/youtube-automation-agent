@@ -21,9 +21,10 @@ async function run() {
     return [simulatedPath];
   };
 
-  const leasePartialPath = path.join(os.tmpdir(), `agenttube-lease-lost-visual-${process.pid}-${Date.now()}.png`);
+  let leasePartialPath = null;
   let fallbackCalled = false;
   generator.generateImage = async (_prompt, imagePath) => {
+    leasePartialPath = imagePath;
     await fs.writeFile(imagePath, 'late provider output');
     return imagePath;
   };
@@ -46,7 +47,7 @@ async function run() {
     assert.equal(fallbackCalled, false, 'lease loss must not trigger simulated fallback generation');
     await assert.rejects(fs.access(leasePartialPath), { code: 'ENOENT' });
   } finally {
-    await fs.unlink(leasePartialPath).catch(() => {});
+    if (leasePartialPath) await fs.unlink(leasePartialPath).catch(() => {});
   }
 
   try {
