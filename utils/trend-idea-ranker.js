@@ -122,7 +122,7 @@ function scoreViewerValue(idea = {}, audienceDemand = null) {
   const rationale = String(idea.rationale || '').trim();
   const combined = `${angle} ${rationale}`.toLowerCase();
   if (!combined.trim()) return 45;
-  const benefitTerms = /\\b(step|steps|guide|checklist|workflow|compare|comparison|avoid|fix|solve|learn|build|create|save|improve|choose|explained|tutorial|beginner|practical)\\b/i;
+  const benefitTerms = /step|steps|guide|checklist|workflow|compare|comparison|avoid|fix|solve|learn|build|create|save|improve|choose|explained|tutorial|beginner|practical/i;
   const hasConcreteBenefit = benefitTerms.test(combined);
   const hasSpecificAngle = tokenize(angle).size >= 5;
   const hasAudienceDemand = Boolean(audienceDemand);
