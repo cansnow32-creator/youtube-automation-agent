@@ -182,27 +182,38 @@ class ChannelLearningEngine {
     return [...unique.values()].slice(0, 12);
   }
 
-  buildAppliedLearningFeedback(snapshots = []) {
-    const mature = snapshots.filter(snapshot =>
-      !snapshot.simulated &&
-      snapshot.measurementWindow === '7d' &&
-      Array.isArray(snapshot.contentAttributes?.appliedLearnings) &&
-      this.optionalNumber(snapshot.metrics?.impressions) >= 1000
-    );
+  buildAppliedLearningFeedback(snapshots = [], options = {}) {
+    const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+    const mature = snapshots.filter(snapshot => {
+      const measuredAt = new Date(snapshot.measuredAt || snapshot.measured_at || 0);
+      return !snapshot.simulated &&
+        snapshot.measurementWindow === '7d' &&
+        Number.isFinite(measuredAt.getTime()) &&
+        measuredAt.getTime() > 0 &&
+        measuredAt <= now &&
+        Array.isArray(snapshot.contentAttributes?.appliedLearnings) &&
+        this.optionalNumber(snapshot.metrics?.impressions) >= 1000;
+    });
     const grouped = new Map();
     for (const snapshot of mature) {
+      const productionId = snapshot.productionId || snapshot.videoId;
+      if (!productionId) continue;
+      const surface = this.snapshotSurface(snapshot);
+      if (surface === 'unknown') continue;
       for (const learning of snapshot.contentAttributes.appliedLearnings) {
         if (!learning?.recommendationId) continue;
-        if (!grouped.has(learning.recommendationId)) grouped.set(learning.recommendationId, {
-          recommendationId: learning.recommendationId,
+        const key = `${learning.recommendationId}:${surface}`;
+        if (!grouped.has(key)) grouped.set(key, {
+          recommendationId: String(learning.recommendationId),
           category: learning.category || 'unknown',
+          surface,
           productions: new Map()
         });
-        const group = grouped.get(learning.recommendationId);
-        const prior = group.productions.get(snapshot.productionId || snapshot.videoId);
-        if (!prior || prior.measurementWindow !== '7d') {
-          group.productions.set(snapshot.productionId || snapshot.videoId, snapshot);
-        }
+        const group = grouped.get(key);
+        const prior = group.productions.get(productionId);
+        const measuredAt = new Date(snapshot.measuredAt || snapshot.measured_at).getTime();
+        const priorMeasuredAt = prior ? new Date(prior.measuredAt || prior.measured_at).getTime() : -1;
+        if (!prior || measuredAt > priorMeasuredAt) group.productions.set(productionId, snapshot);
       }
     }
 
@@ -215,6 +226,10 @@ class ChannelLearningEngine {
       const samples = [...group.productions.values()];
       const deltas = samples.map(snapshot => this.optionalNumber(snapshot.deltas?.[metric])).filter(value => value !== null);
       const impressions = samples.reduce((sum, snapshot) => sum + (this.optionalNumber(snapshot.metrics?.impressions) || 0), 0);
+      const measuredAtValues = samples.map(snapshot => new Date(snapshot.measuredAt || snapshot.measured_at).getTime());
+      const latestMeasuredAt = measuredAtValues.length ? new Date(Math.max(...measuredAtValues)).toISOString() : null;
+      const evidenceAgeDays = latestMeasuredAt ? (now.getTime() - new Date(latestMeasuredAt).getTime()) / 86400000 : null;
+      const freshnessStatus = evidenceAgeDays === null ? 'unknown' : evidenceAgeDays > 90 ? 'stale' : 'fresh';
       let status = 'insufficient_data';
       if (samples.length >= 2 && impressions >= 2000) {
         if (deltas.length < 2) status = 'inconclusive';
@@ -223,17 +238,24 @@ class ChannelLearningEngine {
           status = medianDelta >= 5 ? 'positive_signal' : medianDelta <= -5 ? 'negative_signal' : 'inconclusive';
         }
       }
+      if (freshnessStatus !== 'fresh' && status !== 'insufficient_data') status = 'inconclusive';
       return {
         recommendationId: group.recommendationId,
         category: group.category,
+        surface: group.surface,
         status,
+        freshnessStatus,
+        latestMeasuredAt,
+        evidenceAgeDays: evidenceAgeDays === null ? null : Number(evidenceAgeDays.toFixed(1)),
         measuredProductions: samples.length,
         measuredSamples: deltas.length,
         impressions,
         metric,
         medianBaselineDeltaPercent: deltas.length ? Number(this.median(deltas).toFixed(1)) : null,
         measurementWindow: '7d',
-        interpretation: 'Observational association only; this does not establish causation or approve the recommendation.'
+        interpretation: freshnessStatus === 'stale'
+          ? 'The latest linked measurement is older than 90 days; refresh evidence before interpreting this feedback. Observational association only, not causation or approval.'
+          : 'Observational association only; this does not establish causation or approve the recommendation.'
       };
     });
   }
@@ -660,10 +682,10 @@ class ChannelLearningEngine {
     const preferred = this.preferredSnapshotPerVideo(snapshots);
     const experimentFeedback = this.attachExperimentFeedback(recommendations, experiments);
     const appliedLearningFeedback = this.buildAppliedLearningFeedback(snapshots);
-    const feedbackById = new Map(appliedLearningFeedback.map(item => [item.recommendationId, item]));
+    const feedbackById = new Map(appliedLearningFeedback.map(item => [`${item.recommendationId}:${item.surface}`, item]));
     const recommendationsWithFeedback = experimentFeedback.map(item => ({
       ...item,
-      applicationFeedback: feedbackById.get(item.id) || {
+      applicationFeedback: feedbackById.get(`${item.id}:${this.normalizeSurface(item.evidence?.surface)}`) || {
         status: 'not_observed',
         measuredProductions: 0,
         interpretation: 'No mature, reliable 7-day performance evidence is linked to an application of this recommendation.'
