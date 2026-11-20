@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { Logger } = require('./logger');
 const { SceneRetentionEngine } = require('./scene-retention-engine');
+const { verifyAppliedScriptLearnings } = require('./script-learning-verification');
 
 class ChannelLearningEngine {
   constructor(db) {
@@ -125,7 +126,7 @@ class ChannelLearningEngine {
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
       source: strategy.planRationale ? 'autonomous_operator' : 'manual',
       appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings, script),
-      learningGuidance: this.extractLearningGuidance(strategy.approvedScriptLearnings, script.metadata?.verifiedAppliedLearnings),
+      learningGuidance: this.extractLearningGuidance(strategy.approvedScriptLearnings, verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, script)),
       packagingChangeHistory: (Array.isArray(context.packagingChangeHistory) ? context.packagingChangeHistory : [])
         .slice(-20)
         .map(change => ({
@@ -168,27 +169,13 @@ class ChannelLearningEngine {
         source: item.source || 'unknown'
       }))
       .filter(item => item.appliedTo.length > 0);
-    const approvedGuidance = new Map((Array.isArray(strategy.approvedScriptLearnings) ? strategy.approvedScriptLearnings : [])
-      .filter(item => item?.recommendationId && item.category === 'hookLength')
-      .map(item => [String(item.recommendationId), item]));
-    const verifiedScriptCandidates = (Array.isArray(script.metadata?.verifiedAppliedLearnings) ? script.metadata.verifiedAppliedLearnings : [])
-      .filter(item => {
-        const approved = approvedGuidance.get(String(item?.recommendationId || ''));
-        const expected = String(approved?.proposedChange?.prefer || '').trim().toLowerCase();
-        const observed = String(item?.observedValue || '');
-        const wordCount = Number(item?.observedWordCount);
-        return item?.category === 'hookLength' &&
-          item?.verificationMethod === 'generated_hook_word_count_threshold_40' &&
-          item?.status === 'verified_applied' &&
-          ['concise', 'extended'].includes(expected) && expected === item.expectedValue &&
-          observed === expected && Number.isInteger(wordCount) && wordCount > 0 &&
-          (observed === 'concise' ? wordCount <= 40 : wordCount > 40);
-      })
+    const verifiedScriptCandidates = verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, script)
+      .filter(item => item?.status === 'verified_applied')
       .map(item => ({
         recommendationId: String(item.recommendationId),
-        category: 'hookLength',
-        appliedTo: ['hook'],
-        source: 'script_output_deterministic_verification'
+        category: item.category,
+        appliedTo: [item.category === 'hookLength' ? 'hook' : 'script_length'],
+        source: item.verificationMethod
       }));
     const candidates = [...packagingCandidates, ...verifiedScriptCandidates];
     const unique = new Map();
@@ -200,7 +187,7 @@ class ChannelLearningEngine {
 
   extractLearningGuidance(approvedScriptLearnings = [], verifiedAppliedLearnings = []) {
     const verifiedIds = new Set((Array.isArray(verifiedAppliedLearnings) ? verifiedAppliedLearnings : [])
-      .filter(item => item?.status === 'verified_applied' && item?.verificationMethod === 'generated_hook_word_count_threshold_40')
+      .filter(item => item?.status === 'verified_applied' && ['generated_hook_word_count_threshold_40', 'generated_spoken_word_count_estimated_minutes_130_wpm'].includes(item?.verificationMethod))
       .map(item => String(item.recommendationId || '')));
     const unique = new Map();
     for (const item of Array.isArray(approvedScriptLearnings) ? approvedScriptLearnings : []) {
