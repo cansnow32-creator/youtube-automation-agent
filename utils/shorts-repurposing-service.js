@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('node:crypto');
 const { runFFmpeg, getMediaInfo } = require('./ffmpeg');
 const { Logger } = require('./logger');
 
@@ -166,7 +167,9 @@ class ShortsRepurposingService {
     return this.db.updateShortClip(clipId, changes);
   }
 
-  async render(productionId, clipId) {
+  async render(productionId, clipId, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    await assertLease();
     const bundle = await this.requireSource(productionId);
     const clip = await this.requireClip(productionId, clipId);
     if (['approved', 'scheduled', 'uploading', 'published', 'reconciliation_required'].includes(clip.status)) {
@@ -179,26 +182,33 @@ class ShortsRepurposingService {
     const sourceScenes = (bundle.scenes || []).filter(scene => clip.sourceSceneIds.includes(scene.id));
     if (!sourceScenes.length) throw new Error('The selected source scenes no longer exist');
 
+    const attemptId = crypto.randomUUID();
     const directory = path.join(this.dataRoot, productionId);
     await fs.mkdir(directory, { recursive: true });
-    const outputPath = path.join(directory, `${clip.id}.mp4`);
-    const temporaryOutputPath = path.join(directory, `${clip.id}.rendering.mp4`);
-    const captionsPath = path.join(directory, `${clip.id}.srt`);
-    await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), 'utf8');
-    await this.db.updateShortClip(clip.id, { status: 'rendering', error: null });
-
+    const outputPath = path.join(directory, `${clip.id}_${attemptId}.mp4`);
+    const temporaryOutputPath = path.join(directory, `${clip.id}_${attemptId}.rendering.mp4`);
+    const captionsPath = path.join(directory, `${clip.id}_${attemptId}.srt`);
+    const ownedPaths = [outputPath, temporaryOutputPath, captionsPath];
     try {
+      await assertLease();
+      await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), { encoding: 'utf8', flag: 'wx' });
+      await assertLease();
+      await this.db.updateShortClip(clip.id, { status: 'rendering', error: null, renderAttemptId: attemptId });
+      await assertLease();
       const filter = this.videoFilter(clip.layout, captionsPath);
       await this.runFFmpeg([
         '-y', '-ss', String(clip.startSeconds), '-i', sourceVideo, '-t', String(clip.duration),
         '-filter_complex', filter, '-map', '[shortv]', '-map', '0:a:0?',
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
         '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-shortest', temporaryOutputPath
-      ]);
-      await this.runFFmpeg(['-v', 'error', '-i', temporaryOutputPath, '-f', 'null', '-']);
+      ], { assertLease });
+      await assertLease();
+      await this.runFFmpeg(['-v', 'error', '-i', temporaryOutputPath, '-f', 'null', '-'], { assertLease });
+      await assertLease();
       const stats = await fs.stat(temporaryOutputPath);
       if (!stats.isFile() || stats.size <= 0) throw new Error('FFmpeg returned an empty Short');
       const media = await this.getMediaInfo(temporaryOutputPath);
+      await assertLease();
       const expectedDuration = Number(clip.duration);
       const durationTolerance = Math.max(1.5, expectedDuration * 0.03);
       if (!Number.isFinite(media.duration) || media.duration < expectedDuration - durationTolerance || media.duration > expectedDuration + 1) {
@@ -207,19 +217,22 @@ class ShortsRepurposingService {
       if (!Number.isFinite(media.width) || !Number.isFinite(media.height) || media.width <= 0 || media.height <= 0 || Math.abs((media.width / media.height) - (9 / 16)) > 0.01) {
         throw new Error(`Rendered Short must be 9:16 portrait video; received ${media.width || 'unknown'}x${media.height || 'unknown'}`);
       }
+      await assertLease();
       await fs.rename(temporaryOutputPath, outputPath);
-      return this.db.updateShortClip(clip.id, {
-        status: 'rendered', outputPath, captionsPath, error: null,
+      await assertLease();
+      return await this.db.updateShortClip(clip.id, {
+        status: 'rendered', outputPath, captionsPath, error: null, renderAttemptId: attemptId,
         renderedAt: new Date().toISOString(),
         renderMetadata: { duration: media.duration, width: media.width, height: media.height, hasAudio: media.hasAudio === true }
       });
     } catch (error) {
-      await fs.rm(temporaryOutputPath, { force: true }).catch(() => {});
-      await this.db.updateShortClip(clip.id, { status: 'failed', error: error.message });
+      await Promise.all(ownedPaths.map(file => fs.rm(file, { force: true }).catch(() => {})));
+      if (error?.code === 'GENERATION_JOB_LEASE_LOST' || error?.code === 'PRODUCTION_OPERATION_LOCK_LOST') throw error;
+      await assertLease();
+      await this.db.updateShortClip(clip.id, { status: 'failed', error: error.message, renderAttemptId: attemptId });
       throw error;
     }
   }
-
   videoFilter(layout, captionsPath) {
     const escapedCaptions = path.resolve(captionsPath)
       .replaceAll('\\', '/')
