@@ -78,6 +78,23 @@ async function run() {
       'idea generation must reject stale trend snapshots');
     assert.match(staleIdeas.reason, /stale/);
 
+    const beforeUnavailableRefresh = await db.getLatestTrendSnapshot();
+    const unavailableStrategy = new ContentStrategyAgent(db, {});
+    unavailableStrategy.fetchYouTubeTrends = async () => [];
+    unavailableStrategy.analyzeCompetitors = async () => [{
+      channelId: 'competitor-only-channel',
+      frequency: 4,
+      topPerformingTopics: [{ topic: 'Competitor-only topic', avgViews: 90000, evidence: [] }]
+    }];
+    await assert.rejects(
+      () => unavailableStrategy.refreshTrendSnapshot(),
+      /YouTube trending feed is unavailable/,
+      'competitor-only data must not be saved as a general trend snapshot'
+    );
+    const afterUnavailableRefresh = await db.getLatestTrendSnapshot();
+    assert.equal(afterUnavailableRefresh.id, beforeUnavailableRefresh.id,
+      'a competitor-only refresh must preserve the previous saved snapshot');
+
     const refreshed = await strategy.refreshTrendSnapshot();
     createdIds.push(refreshed.id);
     assert.ok(refreshed.topicCount > 0, 'weekly trend refresh should produce topics');
