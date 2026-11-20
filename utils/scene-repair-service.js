@@ -538,15 +538,19 @@ class SceneRepairService {
       if (!['current', 'intentional_silence'].includes(scene.narrationStatus)) {
         missing.push(`${scene.label}: narration is ${String(scene.narrationStatus || 'unavailable').replaceAll('_', ' ')}`);
       }
-      if (scene.narrationStatus === 'current') currentSceneAudio.push(Boolean(scene.audioPath && await this.pathExists(scene.audioPath)));
+      if (scene.narrationStatus === 'current' && scene.audioPath) {
+        const audioUsable = await this.isUsableNarrationSegment(scene);
+        currentSceneAudio.push(audioUsable);
+        if (!audioUsable) missing.push(`${scene.label}: narration segment is missing or invalid`);
+      }
       if (scene.status === 'visual_stale') missing.push(`${scene.label}: visual prompt changed but the asset was not regenerated or replaced`);
       if (['failed', 'generating', 'missing_asset'].includes(scene.status)) missing.push(`${scene.label}: scene status is ${scene.status.replaceAll('_', ' ')}`);
-      if (!scene.assetPath || !await this.pathExists(scene.assetPath)) missing.push(`${scene.label}: visual asset is missing`);
+      if (!await this.isUsableSceneAsset(scene)) missing.push(`${scene.label}: visual asset is missing or invalid`);
       if (scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed) missing.push(`${scene.label}: media rights are not confirmed`);
     }
-    if (currentSceneAudio.some(Boolean) && currentSceneAudio.some(value => !value)) {
-      missing.push('The scene narration mix is incomplete; regenerate every missing narration segment');
-    } else if (currentSceneAudio.length && currentSceneAudio.every(value => !value) && !fullNarrationReady) {
+    if (currentSceneAudio.length && currentSceneAudio.some(value => !value)) {
+      missing.push('The scene narration mix is incomplete; regenerate every missing or invalid narration segment');
+    } else if (!currentSceneAudio.length && !fullNarrationReady) {
       missing.push('No usable production or scene narration audio is available');
     }
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
@@ -672,6 +676,36 @@ class SceneRepairService {
 
   array(value) {
     return Array.isArray(value) ? value.map(item => String(item)) : [];
+  }
+
+  async isUsableSceneAsset(scene) {
+    if (!scene?.assetPath) return false;
+    try {
+      const stat = await fs.stat(scene.assetPath);
+      if (!stat.isFile() || stat.size <= 0) return false;
+      if (scene.assetType === 'image') {
+        if (!IMAGE_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
+        const metadata = await sharp(scene.assetPath, { failOn: 'error' }).metadata();
+        return Boolean(metadata.width && metadata.height && ['png', 'jpeg', 'webp'].includes(metadata.format));
+      }
+      if (scene.assetType === 'video') {
+        if (!VIDEO_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
+        if (typeof this.mediaGeneration?.isValidVideo !== 'function') return false;
+        return Boolean(await this.mediaGeneration.isValidVideo(scene.assetPath));
+      }
+      return false;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async isUsableNarrationSegment(scene) {
+    if (!scene?.audioPath || scene.narrationStatus !== 'current') return false;
+    try {
+      return Boolean(await this.videoGenerator?.isUsableAudioFile?.(scene.audioPath));
+    } catch (_error) {
+      return false;
+    }
   }
 
   async pathExists(filePath) {
