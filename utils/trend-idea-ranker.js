@@ -203,4 +203,53 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
   }).filter(Boolean).sort((a, b) => b.score - a.score);
 }
 
-module.exports = { scoreTrendIdeas, overlapScore, buildAudienceDemand, audienceDemandForTopic };
+function filterTrendIdeasForApproval(ideas, existingTopics = [], options = {}) {
+  const minimumScore = Number.isFinite(Number(options.minimumScore)) ? Number(options.minimumScore) : 40;
+  const minimumChannelFit = Number.isFinite(Number(options.minimumChannelFit)) ? Number(options.minimumChannelFit) : 12;
+  const profile = [
+    options.channelStrategy?.objective,
+    options.channelStrategy?.audience,
+    options.channelStrategy?.value_proposition || options.channelStrategy?.valueProposition,
+    ...(options.channelStrategy?.contentPillars || [])
+  ].filter(Boolean).join(' ');
+  const hasChannelProfile = Boolean(profile.trim());
+  const seen = (existingTopics || []).map(topic => String(topic || '').trim()).filter(Boolean);
+  const accepted = [];
+  const rejected = { lowScore: 0, offAudience: 0, duplicate: 0, missingEvidence: 0, invalid: 0 };
+
+  for (const idea of ideas || []) {
+    const title = String(idea?.topic || '').trim();
+    if (!title || title.length < 12 || !idea.sourceTopic) {
+      rejected.invalid++;
+      continue;
+    }
+    if (Number(idea.score) < minimumScore) {
+      rejected.lowScore++;
+      continue;
+    }
+    if (hasChannelProfile && Number(idea.scoreBreakdown?.channelFit ?? 50) < minimumChannelFit) {
+      rejected.offAudience++;
+      continue;
+    }
+    if (Number(idea.scoreBreakdown?.trendEvidenceCount || 0) < 1) {
+      rejected.missingEvidence++;
+      continue;
+    }
+    const duplicate = [...seen, ...accepted.map(item => item.topic)]
+      .some(previous => overlapScore(title, previous) >= 80);
+    if (duplicate) {
+      rejected.duplicate++;
+      continue;
+    }
+    accepted.push(idea);
+  }
+  return { ideas: accepted, rejected };
+}
+
+module.exports = {
+  scoreTrendIdeas,
+  overlapScore,
+  buildAudienceDemand,
+  audienceDemandForTopic,
+  filterTrendIdeasForApproval
+};
