@@ -1049,3 +1049,5 @@ body.scrolled .topbar { border-color: rgba(151, 167, 195, .32); }
 .quality-review-draft-editor { display: block; width: 100%; min-height: 240px; margin: .65rem 0; padding: .8rem; resize: vertical; border: 1px solid var(--line-strong, var(--border)); border-radius: 9px; color: var(--text, inherit); background: var(--surface, #0b1018); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 
 .quality-review-job-note { color: var(--warning, #d6a44b); font-size: .76rem; line-height: 1.4; margin: .4rem 0; }
+
+.quality-review-final-note { margin: .8rem 0 0; color: var(--muted); font-size: .78rem; }
