@@ -2360,16 +2360,16 @@ class Database {
 
   // Publishing methods
   async saveScheduleEntry(entry) {
-    const existing = await this.getLatestScheduleEntry(entry.productionId);
-    if (existing) return existing;
     const id = this.generateId('schedule');
-    entry.id = id;
-    
-    await this.executeQuery(
+    const result = await this.executeQuery(
       `INSERT INTO publish_schedule (
-        id, production_id, title, publish_time, status, 
+        id, production_id, title, publish_time, status,
         priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM publish_schedule WHERE production_id = ?
+      )`,
       [
         id,
         entry.productionId,
@@ -2377,11 +2377,26 @@ class Database {
         entry.publishTime,
         entry.status,
         entry.priority,
-        JSON.stringify(entry.metadata)
+        JSON.stringify(entry.metadata),
+        entry.productionId
       ]
     );
-    
-    return entry;
+
+    if (result.changes === 1) {
+      entry.id = id;
+      return entry;
+    }
+
+    // The conditional insert is a single SQLite write statement. If another
+    // connection won the race, return its durable row instead of creating a
+    // second schedule for the same production.
+    const existing = await this.getLatestScheduleEntry(entry.productionId);
+    if (existing) return existing;
+
+    const error = new Error('Schedule entry was not inserted and no existing row could be reloaded');
+    error.code = 'SCHEDULE_CREATE_CONFLICT';
+    error.status = 409;
+    throw error;
   }
 
   async claimScheduleEntryForUpload(id) {
