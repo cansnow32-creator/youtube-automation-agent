@@ -44,3 +44,12 @@ Per-video discovery reports retain YouTube's canonical `insightTrafficSourceType
 The report uses the requested Analytics date range and the `views` metric by traffic-source dimension. It does not claim source-level impressions or click-through rate: those values are not derived from overall video CTR. Source percentages and aggregate shares are withheld when any returned row has a missing/invalid view count, because a partial denominator can make every share misleading. A missing source row is not interpreted as zero traffic.
 
 Shorts feed, browse, suggested videos, search, external, notifications, channel pages, playlists, and other source families remain distinct. Search-quality interpretation uses only recognized search source identifiers; an unknown-only report is not described as poor search performance. These traffic-source summaries are descriptive and are not automatically converted into cross-surface recommendations.
+
+
+## Minimum cohort size and surface-safe comparisons
+
+A missing content-format label is stored as `unknown`; it is never silently defaulted to long-form. Unknown-surface snapshots are excluded from surface-specific recommendation generation until their format is known.
+
+Dimension recommendations require at least three independent videos in each compared group. Channel-level CTR and retention recommendations require at least three videos with the corresponding measured metric. Outcome-alignment recommendations require at least six eligible videos overall and at least three measured videos in each compared group. These are minimum screening thresholds, not proof of statistical significance.
+
+Performance insights expose separate `surfaceBreakdowns.long_form` and `surfaceBreakdowns.shorts` cohorts. When both surfaces exist in the same requested window, the combined descriptive dimensions remain available for continuity but no pooled leader is declared. A cohort without measured views or performance score cannot be selected as a leader.
