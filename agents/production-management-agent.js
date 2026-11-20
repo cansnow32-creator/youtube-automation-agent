@@ -192,7 +192,7 @@ class ProductionManagementAgent {
         productionData.timeline.productionWorkflow,
         'visuals',
         async () => {
-          const assets = await this.generateVideoContent(productionData);
+          const assets = await this.generateVideoContent(productionData, assertLease);
           const realAssets = Array.isArray(assets)
             ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
             : [];
@@ -205,7 +205,7 @@ class ProductionManagementAgent {
         productionData.timeline.productionWorkflow,
         'narration',
         async () => {
-          const audioPath = await this.generateAudioNarration(productionData);
+          const audioPath = await this.generateAudioNarration(productionData, assertLease);
           if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
             throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
           }
@@ -217,8 +217,8 @@ class ProductionManagementAgent {
         productionData.timeline.productionWorkflow,
         'editing',
         async () => {
-          await this.generateCaptions(productionData);
-          await this.assembleVideo(productionData);
+          await this.generateCaptions(productionData, assertLease);
+          await this.assembleVideo(productionData, assertLease);
           const finalVideo = productionData.assets.finalVideo;
           if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
             throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
@@ -345,6 +345,7 @@ class ProductionManagementAgent {
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
+        await assertLease();
         await assertLease();
         await this.db.updateProductionData(productionData);
         throw new Error(productionData.timeline.lastProductionError);
@@ -606,7 +607,7 @@ class ProductionManagementAgent {
     return Math.min(100, priority);
   }
 
-  async generateVideoContent(productionData) {
+  async generateVideoContent(productionData, assertLease = async () => {}) {
     this.logger.info('Generating AI video content with resumable scene assets...');
 
     const { script } = productionData;
@@ -651,7 +652,9 @@ class ProductionManagementAgent {
       }
 
       try {
+        await assertLease();
         const generated = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
+        await assertLease();
         const imagePath = Array.isArray(generated)
           ? generated.find(candidate => typeof candidate === 'string' && path.extname(candidate).toLowerCase() !== '.info')
           : null;
@@ -720,6 +723,7 @@ class ProductionManagementAgent {
       failedScenes: visualPrompts.map((_, index) => index).filter(index => !validAssets.some(filePath => filePath === scenesByIndex.get(index)?.path)),
       updatedAt: new Date().toISOString()
     };
+    await assertLease();
     await this.db.updateProductionData(productionData);
 
     if (validAssets.length !== visualPrompts.length) {
@@ -728,6 +732,7 @@ class ProductionManagementAgent {
       throw new Error(`Visual generation incomplete: ${validAssets.length}/${visualPrompts.length} scenes ready; ${failedCount} scene(s) will be retried. ${details}`);
     }
 
+    await assertLease();
     productionData.timeline.videoGenerated = new Date().toISOString();
     await this.db.updateProductionData(productionData);
     return validAssets;
@@ -821,7 +826,7 @@ class ProductionManagementAgent {
     return elements;
   }
 
-  async generateAudioNarration(productionData) {
+  async generateAudioNarration(productionData, assertLease = async () => {}) {
     this.logger.info('Generating AI audio narration...');
     
     try {
@@ -842,7 +847,9 @@ class ProductionManagementAgent {
       }
 
       // Generate audio using AI TTS and retain the provider evidence returned by the generator.
+      await assertLease();
       const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, { direction: audioDirection });
+      await assertLease();
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
 
@@ -870,12 +877,13 @@ class ProductionManagementAgent {
       if (usable) productionData.timeline.audioGenerated = new Date().toISOString();
       return generatedPath;
     } catch (error) {
+      await assertLease();
       this.logger.error('AI audio generation failed:', error);
-      return await this.simulateAudioGeneration(productionData, error);
+      return await this.simulateAudioGeneration(productionData, error, assertLease);
     }
   }
 
-  async generateCaptions(productionData) {
+  async generateCaptions(productionData, assertLease = async () => {}) {
     this.logger.info('Generating captions...');
     
     const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
@@ -900,8 +908,11 @@ class ProductionManagementAgent {
     const captions = await this.createSRTCaptions(productionData);
     validateSrtContent(captions);
     
+    await assertLease();
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
+    await assertLease();
     await fs.writeFile(captionsPath, captions);
+    await assertLease();
     
     productionData.assets.captions = {
       designDirection: productionData.strategy?.approvedVideoConcept?.subtitleDirection || null,
@@ -1003,7 +1014,7 @@ class ProductionManagementAgent {
     return srt;
   }
 
-  async assembleVideo(productionData) {
+  async assembleVideo(productionData, assertLease = async () => {}) {
     this.logger.info('Assembling final AI-generated video...');
     
     try {
@@ -1015,6 +1026,7 @@ class ProductionManagementAgent {
       }
 
       // Use AI Video Generator to create the final video
+      await assertLease();
       const producedPath = await this.aiVideoGenerator.generateVideo(
         productionData.script,
         productionData.assets.video.visualAssets || [],
@@ -1027,6 +1039,7 @@ class ProductionManagementAgent {
           approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
         }
       );
+      await assertLease();
 
       // The generator falls back to a placeholder .info file when it cannot render
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
@@ -1039,7 +1052,9 @@ class ProductionManagementAgent {
       const musicAsset = audioDirection.musicAsset || approvedConcept.backgroundMusic || null;
       if (musicAsset && musicAsset.enabled !== false) {
         const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music_mixed.mp4`);
+        await assertLease();
         const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
+        await assertLease();
         finalVideoPath = mixResult.path;
         productionData.assets.backgroundMusic = {
           ...mixResult,
@@ -1099,6 +1114,7 @@ class ProductionManagementAgent {
           captionCached = false;
         }
         if (!captionCached) {
+          await assertLease();
           await fs.rm(captionTempPath, { force: true });
           await runFFmpeg([
             '-y', '-i', finalVideoPath,
@@ -1107,6 +1123,7 @@ class ProductionManagementAgent {
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
             '-c:a', 'copy', '-movflags', '+faststart', captionTempPath
           ]);
+          await assertLease();
           const captionedStats = await fs.stat(captionTempPath);
           if (!captionedStats.isFile() || captionedStats.size <= 0) {
             throw new Error('Subtitle renderer returned an empty captioned video');
@@ -1116,15 +1133,20 @@ class ProductionManagementAgent {
             throw new Error('Subtitle renderer returned a video without valid media metadata');
           }
           await runFFmpeg(['-v', 'error', '-i', captionTempPath, '-f', 'null', '-']);
+          await assertLease();
           await fs.rm(captionedPath, { force: true });
           await fs.rename(captionTempPath, captionedPath);
+          await assertLease();
           const manifestTempPath = `${captionManifestPath}.tmp`;
+          await assertLease();
           await fs.writeFile(manifestTempPath, JSON.stringify({
             version: 1, fingerprint: captionFingerprint, sourceHash, captionsHash,
             renderedAt: new Date().toISOString()
           }, null, 2));
+          await assertLease();
           await fs.rm(captionManifestPath, { force: true });
           await fs.rename(manifestTempPath, captionManifestPath);
+          await assertLease();
         }
         finalVideoPath = captionedPath;
         productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
@@ -1172,10 +1194,11 @@ class ProductionManagementAgent {
       this.logger.info('AI video assembly complete');
       return finalVideoPath;
     } catch (error) {
+      await assertLease();
       this.logger.error('AI video assembly failed:', error);
       // Preserve the actual failure reason in the blocked artifact so the
       // editing-stage retry and operator diagnostics explain what failed.
-      return await this.simulateVideoAssembly(productionData, error.message || String(error));
+      return await this.simulateVideoAssembly(productionData, error.message || String(error), assertLease);
     }
   }
 
@@ -1249,9 +1272,10 @@ class ProductionManagementAgent {
   }
 
   // Fallback simulation methods
-  async simulateAudioGeneration(productionData, failure = null) {
+  async simulateAudioGeneration(productionData, failure = null, assertLease = async () => {}) {
     const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
     
+    await assertLease();
     await fs.writeFile(audioPath + '.info', JSON.stringify({
       message: 'AI TTS audio would be generated here',
       timestamp: new Date().toISOString()
@@ -1275,7 +1299,7 @@ class ProductionManagementAgent {
     return audioPath + '.info';
   }
 
-  async simulateVideoAssembly(productionData, reason = null) {
+  async simulateVideoAssembly(productionData, reason = null, assertLease = async () => {}) {
     const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
     
     const assemblyInstructions = {
@@ -1285,6 +1309,7 @@ class ProductionManagementAgent {
       timestamp: new Date().toISOString()
     };
     
+    await assertLease();
     await fs.writeFile(
       finalVideoPath + '.assembly.json',
       JSON.stringify(assemblyInstructions, null, 2)
