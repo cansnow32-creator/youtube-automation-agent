@@ -236,7 +236,7 @@ function filterTrendIdeasForApproval(ideas, existingTopics = [], options = {}) {
       continue;
     }
     const duplicate = [...seen, ...accepted.map(item => item.topic)]
-      .some(previous => overlapScore(title, previous) >= 80);
+      .some(previous => overlapScore(title, previous) >= 70);
     if (duplicate) {
       rejected.duplicate++;
       continue;
