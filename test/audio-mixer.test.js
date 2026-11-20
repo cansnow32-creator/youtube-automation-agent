@@ -131,6 +131,15 @@ async function testProductionIntegration(directory) {
     await runFFmpeg(['-v', 'error', '-i', finalPath, '-f', 'null', '-']);
     await runFFmpeg(['-v', 'error', '-i', production.assets.finalVideo.cleanPath, '-f', 'null', '-']);
 
+    const captionManifest = `${finalPath}.render.json`;
+    await fs.access(captionManifest);
+    const captionBeforeRetry = await fs.stat(finalPath);
+    const secondAssembly = await agent.assembleVideo(production);
+    assert.equal(secondAssembly, finalPath);
+    const captionAfterRetry = await fs.stat(finalPath);
+    assert.equal(captionAfterRetry.mtimeMs, captionBeforeRetry.mtimeMs,
+      'identical retries should reuse the validated caption render');
+
     // Compare matching frames: burned-in captions must create visible pixel changes.
     const finalFrame = path.join(directory, 'captioned-frame.png');
     const cleanFrame = path.join(directory, 'clean-frame.png');
@@ -150,7 +159,7 @@ async function testProductionIntegration(directory) {
     }
     assert.ok(visiblyChangedPixels > 100, 'captioned output must visibly differ from the clean source frame');
   } finally {
-    await Promise.all([source, music, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
+    await Promise.all([source, music, mixed, captions, finalPath, `${finalPath}.render.json`].map(file => fs.rm(file, { force: true })));
   }
 }
 async function testMusicMixCache(directory) {
