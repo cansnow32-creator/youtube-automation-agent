@@ -168,15 +168,18 @@ class SceneRepairService {
     return this.db.replaceProductionScenes(bundle.id, scenes);
   }
 
-  async initializeProduction(production, providerResult = {}) {
+  async initializeProduction(production, providerResult = {}, assertLease = async () => {}) {
+    await assertLease();
     const scenes = buildInitialSceneManifest(production, providerResult);
-    await this.initializeAudioSegments(production, scenes);
+    await this.initializeAudioSegments(production, scenes, assertLease);
+    await assertLease();
     const saved = await this.db.replaceProductionScenes(production.id, scenes);
+    await assertLease();
     production.assets.sceneManifest = { count: saved.length, version: 1, updatedAt: new Date().toISOString() };
     return saved;
   }
 
-  async initializeAudioSegments(production, scenes) {
+  async initializeAudioSegments(production, scenes, assertLease = async () => {}) {
     const audioPath = production.assets?.audio?.path;
     const audio = production.assets?.audio || {};
     if (!await this.videoGenerator?.isUsableAudioFile?.(audioPath)) {
@@ -187,12 +190,15 @@ class SceneRepairService {
       return scenes;
     }
     const directory = path.join(this.dataRoot, 'audio', 'scenes', production.id);
+    await assertLease();
     await fs.mkdir(directory, { recursive: true });
     let start = 0;
     for (const scene of scenes) {
+      await assertLease();
       const output = path.join(directory, `${String(scene.position).padStart(3, '0')}_r1.mp3`);
       try {
         await runFFmpeg(['-y', '-ss', start.toFixed(2), '-t', Number(scene.duration).toFixed(2), '-i', audioPath, '-vn', '-c:a', 'libmp3lame', output]);
+        await assertLease();
         scene.audioPath = output;
         scene.narrationStatus = 'current';
         scene.narrationProvider = audio.provider || null;
@@ -202,6 +208,7 @@ class SceneRepairService {
         scene.narrationGeneratedAt = audio.generatedAt || null;
         scene.narrationCost = audio.cost || {};
       } catch (error) {
+        await assertLease();
         this.logger.warn(`Could not split narration for scene ${scene.position + 1}: ${error.message}`);
         scene.audioPath = null;
         scene.narrationStatus = 'unavailable';
