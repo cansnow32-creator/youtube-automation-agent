@@ -48,3 +48,6 @@ This explicit operator decision records an audit entry in schedule metadata and 
 Both mutation endpoints use the same API-key middleware as the other operator APIs. Set `API_KEY` and send it in the `x-api-key` header. If no key is configured, the application must remain bound to loopback; the server refuses non-loopback binding because the dashboard does not have session authentication.
 
 Never attach a video ID based only on its title or a public search result. The authenticated-channel check is mandatory. If the authenticated Google account is not the channel that owns the video, resolve the account/credential configuration first.
+
+
+The automatic recovery path for a previously recorded video ID applies the same ownership and normalized-title checks as operator reconciliation. It updates the schedule only with a compare-and-set against the exact previously observed status and video ID; stale verification results are rejected.
