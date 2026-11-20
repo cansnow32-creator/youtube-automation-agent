@@ -12,6 +12,21 @@ const { requireApprovedVideoConcept } = require('../utils/approved-video-concept
 const { createProductionWorkflow, runProductionStage, prepareProductionWorkflowForResume } = require('../utils/production-stage-workflow');
 const { assertScriptQualityGate } = require('../utils/script-quality-gate');
 
+function getArtifactAttemptId(productionData) {
+  if (!productionData.timeline || typeof productionData.timeline !== 'object') {
+    productionData.timeline = {};
+  }
+  if (!productionData.timeline.artifactAttemptId) {
+    productionData.timeline.artifactAttemptId = crypto.randomUUID();
+  }
+  return String(productionData.timeline.artifactAttemptId).replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+async function removeAttemptFiles(filePaths = []) {
+  const uniquePaths = new Set(filePaths.filter(filePath => typeof filePath === 'string' && filePath));
+  await Promise.all([...uniquePaths].map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
+}
+
 class ProductionManagementAgent {
   constructor(db, credentials, options = {}) {
     this.db = db;
@@ -171,7 +186,8 @@ class ProductionManagementAgent {
           videoGenerated: null,
           captionsGenerated: null,
           readyForUpload: null,
-          jobId
+          jobId,
+          artifactAttemptId: crypto.randomUUID()
         },
         scheduledPublishTime: this.calculatePublishTime(strategy),
         priority: this.calculatePriority(strategy),
@@ -335,7 +351,7 @@ class ProductionManagementAgent {
       thumbnail: stored.thumbnail,
       seo: stored.seo,
       assets: stored.assets || {},
-      timeline: stored.timeline || {},
+      timeline: { ...(stored.timeline || {}), artifactAttemptId: crypto.randomUUID() },
       scheduledPublishTime: stored.scheduled_publish_time,
       priority: stored.priority,
       estimatedDuration: stored.estimated_duration,
@@ -839,11 +855,13 @@ class ProductionManagementAgent {
   async generateAudioNarration(productionData, assertLease = async () => {}) {
     await assertLease();
     this.logger.info('Generating AI audio narration...');
-    
+
+    const attemptId = getArtifactAttemptId(productionData);
+    const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_${attemptId}_narration.mp3`);
+    let generatedPath = null;
+
     try {
-      const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
-      
-      // Reuse narration only when both its source text/direction and the audio file are valid.
+      // Reuse only a fully validated artifact already referenced by this production.
       const ttsText = await fs.readFile(productionData.assets.script.ttsPath, 'utf8');
       const audioDirection = productionData.strategy?.approvedVideoConcept?.audioDirection || {};
       const sourceHash = crypto.createHash('sha256')
@@ -853,16 +871,17 @@ class ProductionManagementAgent {
           existingAudio.status === 'ready' &&
           !existingAudio.simulated &&
           await this.aiVideoGenerator.isUsableAudioFile(existingAudio.path)) {
+        await assertLease();
         this.logger.info('Reusing validated narration; source text and audio direction are unchanged.');
         return existingAudio.path;
       }
 
-      // Generate audio using AI TTS and retain the provider evidence returned by the generator.
       await assertLease();
-      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, { direction: audioDirection });
+      generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, { direction: audioDirection });
       await assertLease();
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
+      await assertLease();
 
       productionData.assets.audio = {
         direction: audioDirection,
@@ -886,8 +905,12 @@ class ProductionManagementAgent {
       };
 
       if (usable) productionData.timeline.audioGenerated = new Date().toISOString();
-      return generatedPath;
+      if (!usable) await removeAttemptFiles([generatedPath, audioPath, audioPath + '.pcm']);
+      return usable ? generatedPath : await this.simulateAudioGeneration(productionData, new Error('No live narration provider returned usable audio'), assertLease);
     } catch (error) {
+      // Provider/FFmpeg work can finish after the generation lease expires.
+      // Remove only this attempt's files; never touch the previously persisted audio path.
+      await removeAttemptFiles([generatedPath, audioPath, audioPath + '.pcm']);
       await assertLease();
       this.logger.error('AI audio generation failed:', error);
       return await this.simulateAudioGeneration(productionData, error, assertLease);
@@ -897,8 +920,9 @@ class ProductionManagementAgent {
   async generateCaptions(productionData, assertLease = async () => {}) {
     await assertLease();
     this.logger.info('Generating captions...');
-    
-    const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
+
+    const attemptId = getArtifactAttemptId(productionData);
+    const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_${attemptId}_captions.srt`);
     const sourceHash = crypto.createHash('sha256')
       .update(JSON.stringify(productionData.script)).digest('hex');
     const existingCaptions = productionData.assets.captions;
@@ -908,6 +932,7 @@ class ProductionManagementAgent {
         if (stats.isFile() && stats.size > 0) {
           const savedCaptions = await fs.readFile(existingCaptions.path, 'utf8');
           validateSrtContent(savedCaptions);
+          await assertLease();
           this.logger.info('Reusing validated captions; script content is unchanged.');
           return existingCaptions.path;
         }
@@ -916,28 +941,30 @@ class ProductionManagementAgent {
       }
     }
 
-    // Generate SRT captions based on script timing
     const captions = await this.createSRTCaptions(productionData);
     validateSrtContent(captions);
-    
-    await assertLease();
-    await fs.mkdir(path.dirname(captionsPath), { recursive: true });
-    await assertLease();
-    await fs.writeFile(captionsPath, captions);
-    await assertLease();
-    
-    productionData.assets.captions = {
-      designDirection: productionData.strategy?.approvedVideoConcept?.subtitleDirection || null,
-      path: captionsPath,
-      sourceHash,
-      format: 'srt',
-      language: 'en',
-      autoGenerated: true
-    };
-    
-    productionData.timeline.captionsGenerated = new Date().toISOString();
-    
-    return captionsPath;
+
+    try {
+      await assertLease();
+      await fs.mkdir(path.dirname(captionsPath), { recursive: true });
+      await assertLease();
+      await fs.writeFile(captionsPath, captions);
+      await assertLease();
+
+      productionData.assets.captions = {
+        designDirection: productionData.strategy?.approvedVideoConcept?.subtitleDirection || null,
+        path: captionsPath,
+        sourceHash,
+        format: 'srt',
+        language: 'en',
+        autoGenerated: true
+      };
+      productionData.timeline.captionsGenerated = new Date().toISOString();
+      return captionsPath;
+    } catch (error) {
+      await removeAttemptFiles([captionsPath]);
+      throw error;
+    }
   }
 
   async createSRTCaptions(productionData) {
@@ -1029,9 +1056,13 @@ class ProductionManagementAgent {
   async assembleVideo(productionData, assertLease = async () => {}) {
     await assertLease();
     this.logger.info('Assembling final AI-generated video...');
-    
+
+    const attemptId = getArtifactAttemptId(productionData);
+    const generatedPaths = [];
+    const previousBackgroundMusic = productionData.assets.backgroundMusic;
     try {
-      const requestedVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+      const requestedVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_final.mp4`);
+      generatedPaths.push(requestedVideoPath);
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
@@ -1052,10 +1083,13 @@ class ProductionManagementAgent {
           approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
         }
       );
+      if (producedPath && typeof producedPath === 'string') generatedPaths.push(producedPath);
       await assertLease();
 
-      // The generator falls back to a placeholder .info file when it cannot render
+      // The generator falls back to a placeholder .info file when it cannot render.
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
+        await removeAttemptFiles(generatedPaths);
+        generatedPaths.length = 0;
         return await this.simulateVideoAssembly(productionData, null, assertLease);
       }
 
@@ -1064,9 +1098,16 @@ class ProductionManagementAgent {
       const audioDirection = approvedConcept.audioDirection || {};
       const musicAsset = audioDirection.musicAsset || approvedConcept.backgroundMusic || null;
       if (musicAsset && musicAsset.enabled !== false) {
-        const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music_mixed.mp4`);
+        const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_music_mixed.mp4`);
+        generatedPaths.push(
+          mixedPath,
+          mixedPath + '.mixing.mp4',
+          mixedPath + '.mix.json',
+          mixedPath + '.mix.json.tmp'
+        );
         await assertLease();
         const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
+        if (mixResult?.path) generatedPaths.push(mixResult.path);
         await assertLease();
         finalVideoPath = mixResult.path;
         productionData.assets.backgroundMusic = {
@@ -1086,9 +1127,10 @@ class ProductionManagementAgent {
       validateSrtContent(captionsContent);
       const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
       if (captionsPath) {
-        const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
+        const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_captioned.mp4`);
         const captionTempPath = `${captionedPath}.rendering.mp4`;
         const captionManifestPath = `${captionedPath}.render.json`;
+        const manifestTempPath = `${captionManifestPath}.tmp`;
         const [sourceHash, captionsHash] = await Promise.all([
           new Promise((resolve, reject) => {
             const hash = crypto.createHash('sha256');
@@ -1127,6 +1169,7 @@ class ProductionManagementAgent {
           captionCached = false;
         }
         if (!captionCached) {
+          generatedPaths.push(captionedPath, captionTempPath, captionManifestPath, manifestTempPath);
           await assertLease();
           await fs.rm(captionTempPath, { force: true });
           await runFFmpeg([
@@ -1150,7 +1193,6 @@ class ProductionManagementAgent {
           await fs.rm(captionedPath, { force: true });
           await fs.rename(captionTempPath, captionedPath);
           await assertLease();
-          const manifestTempPath = `${captionManifestPath}.tmp`;
           await assertLease();
           await fs.writeFile(manifestTempPath, JSON.stringify({
             version: 1, fingerprint: captionFingerprint, sourceHash, captionsHash,
@@ -1207,10 +1249,12 @@ class ProductionManagementAgent {
       this.logger.info('AI video assembly complete');
       return finalVideoPath;
     } catch (error) {
+      await removeAttemptFiles(generatedPaths);
+      productionData.assets.backgroundMusic = previousBackgroundMusic;
+      // Lease loss must propagate after attempt-local files are removed; it is
+      // not a normal rendering failure and must never create a fallback artifact.
       await assertLease();
       this.logger.error('AI video assembly failed:', error);
-      // Preserve the actual failure reason in the blocked artifact so the
-      // editing-stage retry and operator diagnostics explain what failed.
       return await this.simulateVideoAssembly(productionData, error.message || String(error), assertLease);
     }
   }
@@ -1286,16 +1330,24 @@ class ProductionManagementAgent {
 
   // Fallback simulation methods
   async simulateAudioGeneration(productionData, failure = null, assertLease = async () => {}) {
-    const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
-    
-    await assertLease();
-    await fs.writeFile(audioPath + '.info', JSON.stringify({
-      message: 'AI TTS audio would be generated here',
-      timestamp: new Date().toISOString()
-    }, null, 2));
-    
+    const attemptId = getArtifactAttemptId(productionData);
+    const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_${attemptId}_narration.mp3`);
+    const placeholderPath = audioPath + '.info';
+
+    try {
+      await assertLease();
+      await fs.writeFile(placeholderPath, JSON.stringify({
+        message: 'AI TTS audio would be generated here',
+        timestamp: new Date().toISOString()
+      }, null, 2));
+      await assertLease();
+    } catch (error) {
+      await removeAttemptFiles([placeholderPath]);
+      throw error;
+    }
+
     productionData.assets.audio = {
-      path: audioPath + '.info',
+      path: placeholderPath,
       duration: productionData.estimatedDuration,
       format: 'mp3',
       status: 'unavailable',
@@ -1308,35 +1360,40 @@ class ProductionManagementAgent {
       error: failure?.message || this.aiVideoGenerator.lastNarrationResult?.error || 'No live narration provider is configured',
       intentionalSilence: false
     };
-    
-    return audioPath + '.info';
+
+    return placeholderPath;
   }
 
   async simulateVideoAssembly(productionData, reason = null, assertLease = async () => {}) {
-    const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
-    
+    const attemptId = getArtifactAttemptId(productionData);
+    const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_final.mp4`);
+    const placeholderPath = finalVideoPath + '.assembly.json';
+
     const assemblyInstructions = {
       message: 'AI video would be assembled here',
       blockedReason: reason,
       assets: productionData.assets,
       timestamp: new Date().toISOString()
     };
-    
-    await assertLease();
-    await fs.writeFile(
-      finalVideoPath + '.assembly.json',
-      JSON.stringify(assemblyInstructions, null, 2)
-    );
-    
+
+    try {
+      await assertLease();
+      await fs.writeFile(placeholderPath, JSON.stringify(assemblyInstructions, null, 2));
+      await assertLease();
+    } catch (error) {
+      await removeAttemptFiles([placeholderPath]);
+      throw error;
+    }
+
     productionData.assets.finalVideo = {
-      path: finalVideoPath + '.assembly.json',
+      path: placeholderPath,
       fileSize: 0,
       duration: productionData.estimatedDuration,
       simulated: true,
       blockedReason: reason
     };
-    
-    return finalVideoPath + '.assembly.json';
+
+    return placeholderPath;
   }
 }
 
