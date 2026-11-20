@@ -341,3 +341,14 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Regression coverage added for late provider output being discarded and simulated fallback being blocked after lease loss. Existing fallback cleanup test now writes to and verifies the actual attempt path. Both tests are already included in `npm test`.
 - Commits: `963df9d6886807a0544923212191aa5e109639c5`, `a09716ad5e089f1855d7ad5cc1c2bdb7c049e636`, `3afde4bf1c61fe1c12ddc4c6afafdce0df851680`, `e98e5e8039c8a409f9e64f73b1ac73140a2bb549`.
 - Static JS syntax checks and package JSON parsing passed. Runtime tests/lint were not executed. PR #2 remains open/draft; no merge or base changes.
+
+
+## Latest FFmpeg child-process lease cancellation — 2026-11-20
+
+- `utils/ffmpeg.js` previously used promisified `execFile` without an abort signal. A worker could lose its generation lease while FFmpeg continued running and writing its temporary output.
+- `runFFmpeg(args, { assertLease, leaseCheckIntervalMs })` now verifies ownership before spawn and polls it while the child runs. Lease failure aborts the child with `AbortController`; the helper waits for the in-flight lease check and propagates the original lease error. Calls without a lease callback retain the prior behavior.
+- Threaded `assertLease` through CineCode scene renders, hybrid visual timeline renders, slideshow renders, video muxing, render validation decode, background music mix/validation, and Gemini TTS PCM encoding. Production assembly now passes its lease callback into background music mixing and TTS generation.
+- Background music mixing now removes attempt output and manifest files if lease loss happens after the output was published. This complements the existing attempt-scoped paths and caller cleanup.
+- Added regression coverage for an active real FFmpeg process being aborted on lease loss (runs when FFmpeg is available), audio mixer receiving the lease guard, production assembly passing the guard, and post-publication mix cleanup. Existing CineCode/audio tests are wired into `npm test`.
+- Commits: `028cf9a9fa55646c43d6ef6833d43d8d05dc9a56`, `e97f317a784dbc62937a24b16d0edcdfd6162bda`, `0a00d5511bd969560766b9a28244f19e6a3d40dd`, `5c5d80e901dde39e14fc43f155c80cdb901279bf`, `c50bbb5bf42cbb216d5c62a1e905bb49852ba193`, `7bfd7738f447ef30a4cde6b7a404abb25476bfb3`, `2d8b979362851db3d46352772f83f660330e46f5`, `6e397e3b90b4924c9909574da746f9841b27acca`, `38a5fdd8cc08a1c377fcf6ecd44402bc92a63c9f`, `d451ad7fad6cfce18af34cb2df8f102c2c5b1b00`, `b11ec6b07315385aebaf34519808982cd2180c68`.
+- Static JS syntax checks and package JSON parsing passed. Runtime tests/lint were not executed in this environment. PR #2 remains open/draft; no merge or base changes.
