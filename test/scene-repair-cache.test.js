@@ -20,7 +20,11 @@ async function run() {
     );
     service.activeRebuilds.delete('locked-production');
 
-    const failingService = new SceneRepairService({}, {}, { dataRoot: directory });
+    const failingService = new SceneRepairService({
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => true,
+      releaseProductionOperationLock: async () => true
+    }, {}, { dataRoot: directory });
     failingService.rebuildUnlocked = async () => { throw new Error('simulated rebuild failure'); };
     await assert.rejects(failingService.rebuild('retryable-production'), /simulated rebuild failure/);
     assert.equal(failingService.activeRebuilds.has('retryable-production'), false,
