@@ -1,9 +1,28 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { Database } = require('../database/db');
-const { SceneRepairService } = require('../utils/scene-repair-service');
+const { SceneRepairService, replaceFileWithRollback } = require('../utils/scene-repair-service');
 const { ProductionManagementAgent } = require('../agents/production-management-agent');
 
 async function run() {
+  const replacementDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-repair-replace-'));
+  try {
+    const destination = path.join(replacementDir, 'output.mp4');
+    const replacement = path.join(replacementDir, 'output.mp4.writing');
+    await fs.writeFile(destination, 'previous-valid-output');
+    await fs.writeFile(replacement, 'new-valid-output');
+    await replaceFileWithRollback(replacement, destination, 'success');
+    assert.equal(await fs.readFile(destination, 'utf8'), 'new-valid-output');
+
+    await fs.writeFile(destination, 'keep-this-output');
+    await assert.rejects(replaceFileWithRollback(path.join(replacementDir, 'missing-temp'), destination, 'rollback'));
+    assert.equal(await fs.readFile(destination, 'utf8'), 'keep-this-output', 'failed replacement restores the previous output');
+  } finally {
+    await fs.rm(replacementDir, { recursive: true, force: true });
+  }
+
   const database = Object.create(Database.prototype);
   const queries = [];
   database.executeQuery = async (sql, params) => {
