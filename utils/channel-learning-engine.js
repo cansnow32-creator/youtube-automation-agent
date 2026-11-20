@@ -119,20 +119,20 @@ class ChannelLearningEngine {
       ),
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
       source: strategy.planRationale ? 'autonomous_operator' : 'manual',
-      appliedLearnings: this.extractAppliedLearnings(strategy)
+      appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings)
     };
   }
 
-  extractAppliedLearnings(strategy = {}) {
-    const candidates = [];
-    const packaging = strategy.packagingLearning;
-    if (packaging?.recommendationId) {
-      candidates.push({
-        recommendationId: String(packaging.recommendationId),
+  extractAppliedLearnings(strategy = {}, appliedLearnings = []) {
+    const candidates = (Array.isArray(appliedLearnings) ? appliedLearnings : [])
+      .filter(item => item?.recommendationId && item.category === 'packaging_experiment')
+      .map(item => ({
+        recommendationId: String(item.recommendationId),
         category: 'packaging_experiment',
-        appliedTo: ['thumbnail', 'seo']
-      });
-    }
+        appliedTo: Array.isArray(item.appliedTo) ? item.appliedTo.filter(value => ['title', 'thumbnail'].includes(value)) : [],
+        source: item.source || 'unknown'
+      }))
+      .filter(item => item.appliedTo.length > 0);
     for (const item of Array.isArray(strategy.approvedScriptLearnings) ? strategy.approvedScriptLearnings : []) {
       if (!item?.recommendationId) continue;
       candidates.push({
