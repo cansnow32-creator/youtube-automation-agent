@@ -417,3 +417,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added DB methods to list/get unresolved schedule entries and to atomically attach a video or record an absence decision using conditional SQLite updates. A stale or competing action cannot overwrite a different decision.
 - Added `test/publishing-reconciliation.test.js` covering successful attach, wrong-channel rejection, title mismatch, explicit absence confirmation, unresolved listing, and competing CAS decisions. Wired it into `npm test`. Added `docs/PUBLISHING_RECONCILIATION.md` with API and operator instructions.
 - Static JS syntax checks passed for `database/db.js`, `agents/publishing-scheduling-agent.js`, `index.js`, and the new test; package JSON parsed and test wiring was confirmed. Runtime tests/lint were not executed. PR #2 remains open/draft/unmerged; latest head at this checkpoint: `a1b367f96c61d060196f0c7812932febbda8a8da`; no workflow runs found for that head. No merge, rebase, or base change performed.
+
+
+### Follow-up safety and dashboard work — 2026-11-20
+
+- Added a `upload_started_at` SQLite column through the idempotent migration helper and set it atomically when `claimScheduleEntryForUpload()` claims a row. Existing unresolved rows are assigned a conservative timestamp at migration time.
+- `resolveScheduleEntryUploadAbsent()` now has a DB-enforced 10-minute minimum grace period based on `julianday(upload_started_at)`; the service returns `UPLOAD_GRACE_PERIOD_ACTIVE` for a fresh unresolved attempt. This protects against marking an upload absent while a request may still be in flight.
+- Added regression coverage for fresh-attempt rejection and for the claim-table schema change. The unresolved API now returns `uploadStartedAt`; operator docs explain the wait and re-check procedure.
+- Added a dashboard overview panel with unresolved upload cards, status/error/start time, manual video-ID verification, and a two-step confirmed-absence action. The panel uses the existing API-key-aware `api()` helper and the protected endpoints.
+- Static syntax checks passed for DB, publishing agent, API, dashboard JS and regression tests; package JSON parsed. Runtime tests/lint were not executed. Latest PR head should be rechecked after the final dashboard commits; PR remains open/draft/unmerged, no merge/rebase/base change.
