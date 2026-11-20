@@ -302,6 +302,44 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
     assert.equal(reset.output_path, null, 'SQLite update must clear the previous output path');
     assert.equal(reset.status, 'submitting');
     assert.equal(reset.completed_at, null);
+
+    await db.updateMediaGenerationTask(created.id, {
+      externalTaskId: 'production-a-remote-task',
+      outputPath: path.join(directory, 'production-a.mp4'),
+      status: 'running'
+    });
+    const otherProductionTask = await db.createMediaGenerationTask({
+      jobId: null,
+      productionId: 'production-db-other',
+      sceneIndex: 0,
+      provider: 'test-provider',
+      model: 'test-model',
+      request: { prompt: 'other production' }
+    });
+    assert.notEqual(otherProductionTask.id, created.id,
+      'two manual productions must not share the same null-job media task row');
+
+    const repeatedProductionTask = await db.createMediaGenerationTask({
+      jobId: null,
+      productionId: 'production-db-clear',
+      sceneIndex: 0,
+      provider: 'test-provider',
+      model: 'test-model',
+      request: { prompt: 'updated production request' }
+    });
+    assert.equal(repeatedProductionTask.id, created.id,
+      'a retry for the same production must find its existing task row');
+    assert.equal(repeatedProductionTask.external_task_id, 'production-a-remote-task',
+      'same-production retry must preserve the existing remote task ID');
+    assert.equal(repeatedProductionTask.status, 'running');
+    assert.equal(
+      (await db.findMediaGenerationTask(null, 0, 'test-provider', 'production-db-clear')).id,
+      created.id
+    );
+    assert.equal(
+      (await db.findMediaGenerationTask(null, 0, 'test-provider', 'production-db-other')).id,
+      otherProductionTask.id
+    );
   } finally {
     await db.close();
     await fs.rm(directory, { recursive: true, force: true });
