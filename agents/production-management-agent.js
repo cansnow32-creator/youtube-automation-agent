@@ -928,7 +928,7 @@ class ProductionManagementAgent {
         const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
         const captionTempPath = `${captionedPath}.rendering.mp4`;
         const captionManifestPath = `${captionedPath}.render.json`;
-        const [sourceHash, captionsHash, sourceStats] = await Promise.all([
+        const [sourceHash, captionsHash] = await Promise.all([
           new Promise((resolve, reject) => {
             const hash = crypto.createHash('sha256');
             const stream = require('node:fs').createReadStream(finalVideoPath);
@@ -942,8 +942,7 @@ class ProductionManagementAgent {
             stream.on('error', reject);
             stream.on('data', chunk => hash.update(chunk));
             stream.on('end', () => resolve(hash.digest('hex')));
-          }),
-          fs.stat(finalVideoPath)
+          })
         ]);
         const captionFingerprint = crypto.createHash('sha256').update(JSON.stringify({
           sourceHash, captionsHash, subtitleDirection, rendererVersion: 1,
