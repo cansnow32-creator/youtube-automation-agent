@@ -360,5 +360,6 @@ module.exports = {
   scoreViewerValue,
   scoreProductionFit,
   scoreProductionEffort,
+  scoreProductionRequirements,
   filterTrendIdeasForApproval
 };
