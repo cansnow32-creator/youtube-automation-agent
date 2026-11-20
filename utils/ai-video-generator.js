@@ -170,6 +170,7 @@ class AIVideoGenerator {
     let provider = 'simulation';
     let model = null;
     const direction = options.direction && typeof options.direction === 'object' ? options.direction : {};
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
     const hasVoiceDirection = Boolean(direction.narration || direction.pacing);
     let directionApplication = {
       appliedFields: [],
@@ -178,6 +179,7 @@ class AIVideoGenerator {
     };
 
     try {
+      await assertLease();
       let generatedPath;
       if (this.elevenLabsApiKey && this.elevenLabsVoiceId) {
         provider = 'elevenlabs';
@@ -196,7 +198,7 @@ class AIVideoGenerator {
       } else if (this.gemini) {
         provider = 'gemini';
         model = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts';
-        generatedPath = await this.generateGeminiTTS(text, outputPath);
+        generatedPath = await this.generateGeminiTTS(text, outputPath, assertLease);
         directionApplication = {
           appliedFields: [],
           unsupportedFields: ['narration', 'pacing', 'music'],
@@ -211,7 +213,9 @@ class AIVideoGenerator {
         };
       }
 
+      await assertLease();
       const usable = await this.isUsableAudioFile(generatedPath);
+      await assertLease();
       this.lastNarrationResult = {
         status: usable ? 'ready' : 'unavailable',
         path: generatedPath,
@@ -293,7 +297,7 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async generateGeminiTTS(text, outputPath) {
+  async generateGeminiTTS(text, outputPath, assertLease = async () => {}) {
     const model = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts';
     const voiceName = process.env.GEMINI_TTS_VOICE || 'Kore';
 
@@ -318,8 +322,11 @@ class AIVideoGenerator {
     // Gemini returns raw PCM (24kHz, mono, 16-bit); encode to the requested container via FFmpeg
     const pcmPath = outputPath + '.pcm';
     try {
+      await assertLease();
       await fs.writeFile(pcmPath, Buffer.from(audioData, 'base64'));
-      await this.runFFmpeg(['-y', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath, outputPath]);
+      await assertLease();
+      await this.runFFmpeg(['-y', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath, outputPath], { assertLease });
+      await assertLease();
     } finally {
       await fs.unlink(pcmPath).catch(() => {});
     }
