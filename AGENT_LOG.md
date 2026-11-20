@@ -495,3 +495,13 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added real-SQLite regression coverage for valid recovery, invalid ownership/title, and competing verification results. Updated reconciliation documentation.
 - Commits: `efce2165618ff2ed8034a13f4faf1625f9bcc399`, `821ba70667b7a2f28968894685170e2b841e1f69`, `2e710188755e384adc4bdd52a0434544e4f729c8`, `13e2cfbef02784d226e99596de60272892faff49`.
 - Static syntax/package checks passed. Runtime tests/lint not run; no workflow run returned for latest PR head.
+
+## 2026-11-20 — Durable scheduled queue refresh and catch-up
+
+- `processPublishQueue()` now reloads the durable SQLite queue on every scheduler tick rather than trusting the startup in-memory snapshot. Overdue scheduled rows are therefore picked up after restart; paused rows remain excluded from automatic publishing.
+- A database read failure clears the in-memory queue and safely skips that tick, preventing stale memory from initiating uploads.
+- Invalid scheduled timestamps are marked `failed` with a clear error and are never treated as immediately due.
+- Added `test/publishing-queue-recovery.test.js` for restart catch-up, invalid timestamps, DB-read failure/stale-memory suppression, and overlapping queue ticks sharing one in-process publish operation. Wired into `npm test`.
+- Existing SQLite atomic upload claim and unresolved-upload reconciliation continue to protect cross-process uploads and ambiguous outcomes.
+- PR #2 commits for this slice: `ff0baa09606c1d72bf18d6423805cd092cef0af2`, `ae1a2f712463065dd605e1f224c6635893d29636`, `5bacd5b9aa2f2d250ff9899ab02cf3b782027586`.
+- Static JavaScript syntax checks passed for the changed publishing service and new regression test; package JSON parsed. Runtime tests/lint have not been run in this environment.
