@@ -85,6 +85,19 @@ async function run() {
     assert.equal(report.dimensions.pillar.leader.metrics.engagementRate.average, null);
     assert.equal(report.dimensions.pillar.leader.confidence, 'moderate');
 
+    // Three videos in a cohort do not make it rankable when only one has a measured score
+    // and the fallback views metric is also missing for the other videos.
+    const sparseMetricSnapshots = [
+      { videoId: 'sparse-1', measurementWindow: '7d', metrics: { views: 100, performanceScore: 80 }, contentAttributes: { pillar: 'sparse' } },
+      { videoId: 'sparse-2', measurementWindow: '7d', metrics: { views: null, performanceScore: null }, contentAttributes: { pillar: 'sparse' } },
+      { videoId: 'sparse-3', measurementWindow: '7d', metrics: { views: null, performanceScore: null }, contentAttributes: { pillar: 'sparse' } }
+    ];
+    const sparseReport = learning.buildPerformanceInsights(sparseMetricSnapshots, 3, '7d');
+    assert.equal(sparseReport.dimensions.pillar.rankingMetric, null);
+    assert.equal(sparseReport.dimensions.pillar.cohorts[0].rankable, false);
+    assert.equal(sparseReport.dimensions.pillar.leader, null,
+      'cohort size cannot substitute for missing measured ranking metrics');
+
     const exploratory = learning.buildPerformanceInsights(preferred.slice(0, 2));
     assert.equal(exploratory.dimensions.pillar.leader, null,
       'cohorts below three independent videos are not declared winners');
