@@ -226,6 +226,8 @@ async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
   const sourcePath = path.join(tempDir, 'source.jpg');
   const marker = 'thumbnail_lease_' + crypto.randomUUID();
   const originalRandomUUID = crypto.randomUUID;
+  const originalDateNow = Date.now;
+  const fixedTimestamp = Date.now();
   const agent = createAgent();
   let assertions = 0;
   const assertLease = async () => {
@@ -237,11 +239,12 @@ async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
       return { path: path.join(tempDir, 'simulated.info'), simulated: true };
     }
   };
-  const expectedOutput = path.join(__dirname, '..', 'data', 'assets', 'thumbnail_' + Date.now() + '_' + marker + '.jpg');
+  const expectedOutput = path.join(__dirname, '..', 'data', 'assets', 'thumbnail_' + fixedTimestamp + '_' + marker + '.jpg');
 
   try {
     await fs.writeFile(sourcePath, 'thumbnail-source');
     crypto.randomUUID = () => marker;
+    Date.now = () => fixedTimestamp;
     await assert.rejects(
       agent.processThumbnail({ path: sourcePath }, { title: 'Lease test' }, assertLease),
       error => error.code === 'GENERATION_JOB_LEASE_LOST'
@@ -249,6 +252,7 @@ async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
     await assert.rejects(fs.access(expectedOutput), { code: 'ENOENT' });
   } finally {
     crypto.randomUUID = originalRandomUUID;
+    Date.now = originalDateNow;
     await fs.rm(expectedOutput, { force: true });
     await fs.rm(tempDir, { recursive: true, force: true });
   }
