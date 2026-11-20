@@ -511,10 +511,21 @@ class SceneRepairService {
   }
 
   async regenerationEstimate(productionId, sceneId, input = {}) {
-    const bundle = await this.getEditableBundle(productionId);
+    return this.withProductionOperationLease(
+      productionId,
+      assertLease => this.regenerationEstimateUnlocked(productionId, sceneId, input, assertLease),
+      'regeneration estimate'
+    );
+  }
+
+  async regenerationEstimateUnlocked(productionId, sceneId, input = {}, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
+    await assertLease();
     const settings = await this.mediaGeneration?.settings?.() || { provider: 'slideshow', order: [], clipDuration: scene.duration };
+    await assertLease();
     const requestedProvider = input.provider || (scene.provider && scene.provider !== 'image-provider' ? scene.provider : settings.provider);
     const provider = this.mediaGeneration?.registry?.select(requestedProvider, settings.order, { duration: Math.min(scene.duration, settings.clipDuration || scene.duration) });
     const paid = Boolean(provider && provider.id !== 'slideshow');
@@ -536,7 +547,7 @@ class SceneRepairService {
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
     if (scene.locked) throw this.error('Unlock this scene before regenerating it', 409);
-    const estimate = await this.regenerationEstimate(productionId, sceneId, input);
+    const estimate = await this.regenerationEstimateUnlocked(productionId, sceneId, input, assertLease);
     if (estimate.paid && input.confirmPaid !== true) throw this.error('Confirm the paid scene regeneration before starting it', 409, 'PAID_CONFIRMATION_REQUIRED', estimate);
 
     const before = scene;
@@ -568,7 +579,7 @@ class SceneRepairService {
         };
       } else {
         const profile = await this.db.getChannelProfile?.() || {};
-        const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1);
+        const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1, assertLease);
         for (const asset of assets || []) if (asset) attemptFiles.add(asset);
         await assertLease();
         const assetPath = assets[0];
@@ -584,7 +595,7 @@ class SceneRepairService {
         const audioPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}_${crypto.randomUUID()}.mp3`);
         await fs.mkdir(path.dirname(audioPath), { recursive: true });
         attemptFiles.add(audioPath);
-        const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, audioPath);
+        const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, audioPath, { assertLease });
         attemptFiles.add(generatedPath);
         attemptFiles.add(`${generatedPath}.pcm`);
         await assertLease();
@@ -637,7 +648,7 @@ class SceneRepairService {
 
   async replaceAssetUnlocked(productionId, sceneId, file = {}, assertLease = async () => {}) {
     await assertLease();
-    const bundle = await this.getEditableBundle(productionId);
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     await assertLease();
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
