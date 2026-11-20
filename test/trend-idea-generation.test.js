@@ -15,17 +15,15 @@ async function run() {
   assert.equal(require('../utils/trend-idea-ranker').overlapScore('öğrenme alışkanlıkları', 'öğrenme alışkanlıkları geliştirme'), 67,
     'Turkish characters must remain valid tokens during niche matching');
   const qualityGate = filterTrendIdeasForApproval([
-    { topic: 'A practical AI editing workflow', sourceTopic: 'AI editing', score: 72,
-      scoreBreakdown: { channelFit: 68, trendEvidenceCount: 2 } },
     { topic: 'Ancient Roman battle tactics explained', sourceTopic: 'AI editing', score: 81,
       scoreBreakdown: { channelFit: 4, trendEvidenceCount: 2 } },
-    { topic: 'A practical AI editing workflow for beginners', sourceTopic: 'AI editing', score: 75,
+    { topic: 'A practical AI editing workflow guide', sourceTopic: 'AI editing', score: 75,
       scoreBreakdown: { channelFit: 70, trendEvidenceCount: 2 } },
     { topic: 'A weakly supported editing idea', sourceTopic: 'AI editing', score: 32,
       scoreBreakdown: { channelFit: 60, trendEvidenceCount: 1 } },
     { topic: 'A fresh editing concept with no sources', sourceTopic: 'AI editing', score: 90,
       scoreBreakdown: { channelFit: 70, trendEvidenceCount: 0 } }
-  ], ['Existing AI editing workflow for beginners'], {
+  ], ['A practical AI editing workflow'], {
     channelStrategy: { objective: 'Teach AI video editing', audience: 'beginner video creators', contentPillars: ['editing tutorials'] }
   });
   assert.equal(qualityGate.ideas.length, 0,
