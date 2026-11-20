@@ -428,20 +428,32 @@ class ContentStrategyAgent {
         ...template,
         competitorChannelId: competitor.channelId || null
       })))
+      // Ignore incomplete or unranked records: missing metadata must not look
+      // like evidence-backed competitor guidance in the local ideation prompt.
+      .filter(template =>
+        typeof template.patternId === 'string' && template.patternId.trim() &&
+        typeof template.format === 'string' && template.format.trim() &&
+        Number.isFinite(Number(template.rankingScore)) &&
+        Number(template.rankingScore) >= 0 && Number(template.rankingScore) <= 100 &&
+        Number.isFinite(Number(template.sampleCount)) && Number(template.sampleCount) > 0
+      )
       .sort((left, right) =>
-        (Number(right.rankingScore) || 0) - (Number(left.rankingScore) || 0) ||
-        (Number(right.sampleCount) || 0) - (Number(left.sampleCount) || 0)
+        Number(right.rankingScore) - Number(left.rankingScore) ||
+        Number(right.sampleCount) - Number(left.sampleCount)
       )
       .slice(0, 12)
       .map(template => ({
         pattern: template.patternId,
         format: template.format,
-        sampleCount: template.sampleCount,
-        nicheFitScore: template.nicheFitScore,
-        rankingScore: template.rankingScore,
-        rankingBasis: template.rankingBasis,
+        sampleCount: Number(template.sampleCount),
+        nicheFitScore: Number.isFinite(Number(template.nicheFitScore)) ? Number(template.nicheFitScore) : null,
+        rankingScore: Number(template.rankingScore),
+        rankingBasis: template.rankingBasis || 'unspecified',
         competitorChannelId: template.competitorChannelId,
-        exampleTitles: (template.evidence || []).slice(0, 2).map(item => item.title).filter(Boolean)
+        exampleTitles: (Array.isArray(template.evidence) ? template.evidence : [])
+          .map(item => typeof item?.title === 'string' ? item.title.trim().slice(0, 180) : '')
+          .filter(Boolean)
+          .slice(0, 2)
       }));
 
     const ollamaUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
