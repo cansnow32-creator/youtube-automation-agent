@@ -700,10 +700,17 @@ class ChannelLearningEngine {
     if (!days || !publishedAt) return null;
     const start = new Date(publishedAt);
     if (Number.isNaN(start.getTime())) return null;
-    const end = new Date(start.getTime() + days * 86400000);
-    // Do not label an incomplete early-life period as a completed measurement window.
-    if (Date.now() < end.getTime()) return null;
-    return { startDate: this.date(start), endDate: this.date(end) };
+    const completedAt = new Date(start.getTime() + days * 86400000);
+    // YouTube Analytics reports daily buckets, not exact publication-hour slices.
+    // Query exactly N UTC calendar dates and wait until the full N-day age has elapsed.
+    if (Date.now() < completedAt.getTime()) return null;
+    const lastIncludedDay = new Date(start.getTime() + (days - 1) * 86400000);
+    return {
+      startDate: this.date(start),
+      endDate: this.date(lastIncludedDay),
+      windowDays: days,
+      precision: 'utc_calendar_days'
+    };
   }
 
   fingerprint(candidate) {
