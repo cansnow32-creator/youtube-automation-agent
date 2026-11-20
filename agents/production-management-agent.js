@@ -533,18 +533,6 @@ class ProductionManagementAgent {
       }
       await assertLease();
       const finalVideo = productionData.assets.finalVideo;
-          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
-            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
-          }
-          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
-          return {
-            captionsGenerated: Boolean(productionData.assets.captions?.path),
-            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
-            simulated: Boolean(productionData.assets.finalVideo?.simulated)
-          };
-        }, persistWorkflow);
-      }
-      const finalVideo = productionData.assets.finalVideo;
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         throw new Error('Production cannot be marked ready without a real MP4 final video');
       }
