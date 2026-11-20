@@ -1251,6 +1251,26 @@ class Database {
   }
 
   async createMediaGenerationTask(input = {}) {
+    const jobId = input.jobId || null;
+    const productionId = input.productionId || null;
+    if (!jobId && !productionId) {
+      throw new Error('Media generation tasks require a generation job ID or production ID for safe scoping');
+    }
+
+    // NULL job IDs do not participate in SQLite UNIQUE(job_id, scene_index, provider).
+    // Scope those manual-production tasks by production ID instead of allowing
+    // unrelated productions to see or overwrite one another's remote task rows.
+    if (!jobId) {
+      const existing = await this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId);
+      if (existing) {
+        await this.executeQuery(
+          `UPDATE media_generation_tasks SET production_id = ?, request = ?, updated_at = datetime('now') WHERE id = ?`,
+          [productionId, JSON.stringify(input.request || {}), existing.id]
+        );
+        return this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId);
+      }
+    }
+
     const id = this.generateId('media');
     await this.executeQuery(
       `INSERT INTO media_generation_tasks (
@@ -1258,16 +1278,24 @@ class Database {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
       ON CONFLICT(job_id, scene_index, provider) DO UPDATE SET
         production_id = excluded.production_id, request = excluded.request, updated_at = datetime('now')`,
-      [id, input.jobId || null, input.productionId || null, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
+      [id, jobId, productionId, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
     );
-    return this.findMediaGenerationTask(input.jobId, input.sceneIndex, input.provider);
+    return this.findMediaGenerationTask(jobId, input.sceneIndex, input.provider, productionId);
   }
 
-  async findMediaGenerationTask(jobId, sceneIndex, provider) {
-    const row = await this.getRow(
-      'SELECT * FROM media_generation_tasks WHERE job_id IS ? AND scene_index = ? AND provider = ?',
-      [jobId || null, sceneIndex, provider]
-    );
+  async findMediaGenerationTask(jobId, sceneIndex, provider, productionId = null) {
+    if (!jobId && !productionId) {
+      throw new Error('Media generation task lookup requires a generation job ID or production ID');
+    }
+    const row = jobId
+      ? await this.getRow(
+        'SELECT * FROM media_generation_tasks WHERE job_id = ? AND scene_index = ? AND provider = ?',
+        [jobId, sceneIndex, provider]
+      )
+      : await this.getRow(
+        'SELECT * FROM media_generation_tasks WHERE job_id IS NULL AND production_id = ? AND scene_index = ? AND provider = ?',
+        [productionId, sceneIndex, provider]
+      );
     return this.parseMediaGenerationTask(row);
   }
 
