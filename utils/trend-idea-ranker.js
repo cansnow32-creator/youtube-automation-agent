@@ -143,7 +143,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     // Pull weakly-supported trend scores toward neutral. This is deliberately
     // bounded so a single-source topic can still rank well when other signals agree.
     const trendEvidenceConfidence = hasEvidenceMetadata
-      ? clamp(0.35 + Math.min(sourceTypes.length, 2) * 0.15 + Math.min(evidence.length, 3) * 0.1, 0, 0.95) / 100 * 100
+      ? clamp(0.35 + Math.min(sourceTypes.length, 2) * 0.15 + Math.min(evidence.length, 3) * 0.1, 0, 0.95)
       : 1;
     const trendScore = clamp(Math.round(50 + (rawTrendScore - 50) * trendEvidenceConfidence));
     const fit = overlapScore(`${sourceTopic} ${topic}`, profile);
