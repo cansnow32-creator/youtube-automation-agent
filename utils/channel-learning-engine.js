@@ -487,29 +487,43 @@ class ChannelLearningEngine {
               measuredVideos: values.length
             };
           }
-          const sampleSize = videos.length;
-          const rankable = metrics.performanceScore.average !== null || metrics.views.average !== null;
           return {
             name,
-            videoCount: sampleSize,
-            confidence: sampleSize >= 5 ? 'high' : sampleSize >= minimumSamples ? 'moderate' : 'exploratory',
-            sufficientlySampled: sampleSize >= minimumSamples,
-            rankable,
+            videoCount: videos.length,
+            confidence: videos.length >= 5 ? 'high' : videos.length >= minimumSamples ? 'moderate' : 'exploratory',
+            sufficientlySampled: videos.length >= minimumSamples,
             metrics
           };
-        }).sort((a, b) => {
-          const scoreA = a.metrics.performanceScore.average;
-          const scoreB = b.metrics.performanceScore.average;
-          if (scoreA !== null && scoreB !== null) return scoreB - scoreA;
-          return (b.metrics.views.average ?? -1) - (a.metrics.views.average ?? -1);
         });
-        const reliable = cohorts.filter(cohort => cohort.sufficientlySampled && cohort.rankable);
+        // A cohort can only be ranked when every compared cohort has enough
+        // measured values for the same ranking metric. Never mix score and views.
+        const rankingMetric = cohorts.length > 0 && cohorts.every(cohort =>
+          cohort.metrics.performanceScore.measuredVideos >= minimumSamples
+        )
+          ? 'performanceScore'
+          : cohorts.length > 0 && cohorts.every(cohort =>
+            cohort.metrics.views.measuredVideos >= minimumSamples
+          )
+            ? 'views'
+            : null;
+        for (const cohort of cohorts) {
+          cohort.rankingMetric = rankingMetric;
+          cohort.rankable = Boolean(rankingMetric) && cohort.sufficientlySampled;
+        }
+        cohorts.sort((a, b) => {
+          if (!rankingMetric) return a.name.localeCompare(b.name);
+          return b.metrics[rankingMetric].average - a.metrics[rankingMetric].average;
+        });
+        const reliable = rankingMetric && !crossSurface
+          ? cohorts.filter(cohort => cohort.rankable)
+          : [];
         breakdowns[dimension.key] = {
           label: dimension.label,
           minimumSamples,
+          rankingMetric,
           cohorts,
           leader: reliable[0] || null,
-          evidenceStatus: reliable.length ? 'sufficient' : 'insufficient'
+          evidenceStatus: crossSurface ? 'cross_surface_not_comparable' : reliable.length ? 'sufficient' : 'insufficient'
         };
       }
       return breakdowns;
@@ -544,8 +558,8 @@ class ChannelLearningEngine {
       comparedSurfaces: recognizedSurfaces,
       rankingPolicy: crossSurface
         ? 'Combined descriptive cohorts are shown for continuity, but no pooled leader is declared across Shorts and long-form. Compare the separate surfaceBreakdowns instead.'
-        : 'Cohorts are ordered by average performance score when available, otherwise by average views. A cohort without measured ranking metrics cannot be declared a leader.',
-      evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using the exact requested measurement window; shorter or rolling windows are not substituted. Cohorts below the minimum sample size are exploratory and are not declared winners.'
+        : 'A cohort is ranked only when every compared cohort has at least the minimum number of measured values for the same metric; performance score is preferred, with views used only as a complete-cohort fallback.',
+      evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using the exact requested measurement window; shorter or rolling windows are not substituted. Cohorts below the minimum sample size, or without enough measured ranking values, are exploratory and are not declared winners.'
     };
   }
 
