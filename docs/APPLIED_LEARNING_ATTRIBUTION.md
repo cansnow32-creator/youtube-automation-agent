@@ -29,8 +29,8 @@ These are observational associations, not causal conclusions. They do not approv
 
 The current packaging experiment runner rotates title/thumbnail packages sequentially on the same video. YouTube Analytics returns video-level measurements and does not expose randomized viewer assignment or per-arm impression/click attribution for this workflow.
 
-- Arm snapshots may be displayed as descriptive observations only.
-- Sequential CTR differences are not treated as independent randomized samples; no z-score or causal lift is calculated.
+- Samples and arm summaries contain video-level snapshots captured while an arm was active; they are not arm-attributed impressions, clicks, or CTR.
+- Sequential CTR differences are not treated as independent randomized samples; no z-score, arm-level CTR, qualified arm impression count, or causal lift is calculated.
 - The current sequential workflow cannot select a winner, even when an observed CTR difference is large or impression counts exceed the configured threshold.
 - Experiment feedback exposes `comparisonMethod: sequential_same_video_observational`, `exposureAttribution: unavailable_from_youtube_analytics`, and `causalInterpretation: observational_only_no_causal_winner`.
 - Such experiments finish as `inconclusive`; they cannot create an approved learning recommendation or be adopted as a validated winner.
