@@ -123,6 +123,11 @@ async function run() {
   assert.equal(noMetricScore.score, null, 'no measured metrics must not be presented as a zero performance score');
   assert.equal(noMetricScore.grade, 'N/A');
 
+  assert.equal(agent.analyzeSearchPerformance({
+    sources: [{ source: 'SEARCH', percentage: null }]
+  }).searchPercentage, null, 'null source shares must not be coerced into measured zero');
+  assert.equal(agent.calculateMobilePercentage([]), null, 'device mix is unknown without measured views');
+
   const unknownSearch = agent.analyzeSearchPerformance({ sources: [] });
   assert.equal(unknownSearch.searchPercentage, null);
   assert.equal(unknownSearch.searchQuality, 'unknown');
