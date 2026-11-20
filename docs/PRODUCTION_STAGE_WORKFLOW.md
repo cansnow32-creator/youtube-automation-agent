@@ -42,3 +42,8 @@ covered by `test/production-stage-workflow.test.js` and included in `npm test`.
 ## Resuming production
 
 `ProductionManagementAgent.resumeProduction(productionId)` reloads the production bundle and its saved stage state. It revalidates the approved concept, preserves completed stages, and retries the first failed or interrupted stage. The production strategy, script, thumbnail, and SEO snapshot are saved alongside the production record so the job can be reconstructed after a restart. Resuming production does not approve or publish a video.
+
+
+## Dashboard retry behavior
+
+The existing protected `POST /api/content/:productionId/retry` endpoint now resumes a failed or interrupted production when a persisted stage workflow exists. It reuses the saved script, approved concept, and completed stage artifacts, then retries from the first failed or interrupted stage. Older productions without a persisted workflow keep the existing full-generation retry behavior. The endpoint does not schedule or publish content as part of recovery; the separate operator approval and publishing gates remain in force.
