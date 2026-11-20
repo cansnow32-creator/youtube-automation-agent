@@ -5,6 +5,7 @@ const path = require('node:path');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
 const { ScriptWriterAgent } = require('../agents/script-writer-agent');
 const { ThumbnailDesignerAgent } = require('../agents/thumbnail-designer-agent');
+const { SEOOptimizerAgent } = require('../agents/seo-optimizer-agent');
 
 function leaseLostError() {
   return Object.assign(new Error('generation job lease lost'), {
@@ -92,6 +93,28 @@ async function testScriptAndRejectedReviewAreNotSavedAfterLeaseLoss() {
   assert.equal(reviewSaves, 0, 'the quality-review catch path must not swallow a lease-loss error');
 }
 
+async function testSeoIsNotPersistedAfterProviderLeaseLoss() {
+  const agent = Object.create(SEOOptimizerAgent.prototype);
+  agent.logger = { info() {}, warn() {}, error() {} };
+  let saves = 0;
+  let lost = false;
+  agent.db = { saveSEOData: async () => { saves += 1; } };
+  agent.generateSEOWithAI = async () => {
+    lost = true;
+    return { title: 'SEO title', description: 'Description', tags: ['test'] };
+  };
+
+  await assert.rejects(
+    agent.optimize(
+      { title: 'Lease test' },
+      { keywords: ['test'], contentType: 'Explainer' },
+      async () => { if (lost) throw leaseLostError(); }
+    ),
+    error => error.code === 'GENERATION_JOB_LEASE_LOST'
+  );
+  assert.equal(saves, 0, 'SEO data is not persisted after provider work outlives the generation lease');
+}
+
 async function testThumbnailFilesAreRemovedWhenLeaseIsLost() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-thumbnail-lease-'));
   const agent = Object.create(ThumbnailDesignerAgent.prototype);
@@ -175,6 +198,7 @@ async function run() {
   await testStrategyIsNotSavedAfterProviderLeaseLoss();
   await testScriptArtifactIsNotSavedAfterProviderLeaseLoss();
   await testScriptAndRejectedReviewAreNotSavedAfterLeaseLoss();
+  await testSeoIsNotPersistedAfterProviderLeaseLoss();
   await testThumbnailFilesAreRemovedWhenLeaseIsLost();
   await testAbVariantFilesAreRemovedWhenLeaseIsLost();
   console.log('Generation stage artifact cleanup tests passed');
