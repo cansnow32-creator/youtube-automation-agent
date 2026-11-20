@@ -373,7 +373,7 @@ class AnalyticsOptimizationAgent {
     });
     
     const sources = response.data.rows || [];
-    const totalViews = sources.reduce((sum, row) => sum + row[1], 0);
+    const totalViews = sources.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
     
     return {
       sources: sources.map(row => ({
@@ -397,12 +397,12 @@ class AnalyticsOptimizationAgent {
     });
     
     const devices = response.data.rows || [];
-    const totalViews = devices.reduce((sum, row) => sum + row[1], 0);
+    const totalViews = devices.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
     
     return {
       devices: devices.map(row => ({
         device: row[0],
-        views: row[1],
+        views: Number(row[1]) || 0,
         percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
       })),
       mobilePercentage: this.calculateMobilePercentage(devices)
@@ -778,12 +778,12 @@ class AnalyticsOptimizationAgent {
 
   analyzeSearchPerformance(trafficSources) {
     const sources = trafficSources?.sources || [];
-    if (!sources.length || !sources.some(source => Number.isFinite(Number(source.percentage)))) {
+    if (!sources.length || !sources.some(source => source.percentage !== null && source.percentage !== undefined && source.percentage !== '' && Number.isFinite(Number(source.percentage)))) {
       return { searchPercentage: null, searchQuality: 'unknown', organicDiscovery: null };
     }
     const searchSources = sources.filter(source =>
       ['SEARCH', 'YOUTUBE_SEARCH'].includes(source.source) &&
-      Number.isFinite(Number(source.percentage))
+      source.percentage !== null && source.percentage !== undefined && source.percentage !== '' && Number.isFinite(Number(source.percentage))
     );
     const searchPercentage = searchSources.reduce((sum, source) => sum + Number(source.percentage), 0);
     return {
@@ -869,8 +869,8 @@ class AnalyticsOptimizationAgent {
     const mobileDevices = devices.filter(row => 
       ['MOBILE', 'TABLET'].includes(row[0])
     );
-    const total = devices.reduce((sum, row) => sum + row[1], 0);
-    const mobile = mobileDevices.reduce((sum, row) => sum + row[1], 0);
+    const total = devices.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    const mobile = mobileDevices.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
     
     return total > 0 ? Number(((mobile / total) * 100).toFixed(1)) : null;
   }
