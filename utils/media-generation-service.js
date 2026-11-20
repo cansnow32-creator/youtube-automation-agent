@@ -166,6 +166,7 @@ class MediaGenerationService {
       }
     }
 
+    const taskCreatedThisInvocation = !task;
     if (!task) {
       await assertLease();
       task = this.db?.createMediaGenerationTask
@@ -176,22 +177,46 @@ class MediaGenerationService {
         : { id: `media_${Date.now()}_${scene.index}`, status: 'submitting' };
     }
 
+    // A persisted submission without a remote ID is ambiguous: the process may
+    // have crashed after the provider accepted the request but before the ID was
+    // stored. Never submit a second paid request automatically in that state.
+    if (!taskCreatedThisInvocation && !task.external_task_id &&
+        ['submitting', 'submission_unknown', 'reconciliation_required'].includes(task.status)) {
+      const error = new Error(
+        `Media task ${task.id} has an unresolved provider submission without an external task ID. Automatic resubmission is blocked to avoid duplicate provider jobs; reconcile the provider dashboard before retrying.`
+      );
+      error.code = 'MEDIA_TASK_SUBMISSION_UNKNOWN';
+      error.status = 409;
+      throw error;
+    }
+
     let remote;
+    let remoteSubmissionAttempted = false;
     let remoteTaskId = task?.external_task_id || null;
     const downloadPath = `${outputPath}.${crypto.randomUUID()}.part.mp4`;
     let outputPublished = false;
     try {
       await assertLease();
-      if (task.external_task_id && ['queued', 'running', 'submitting'].includes(task.status)) {
+      if (task.external_task_id && [
+        'queued', 'running', 'submitting', 'submission_unknown',
+        'reconciliation_required', 'downloading', 'download_pending'
+      ].includes(task.status)) {
         remote = await provider.getTask(task.external_task_id, task.providerData || {});
       } else {
         await this.assertNotCancelled(jobId, provider, task);
+        remoteSubmissionAttempted = true;
         remote = await provider.createTask(request);
       }
       remoteTaskId = remote?.externalTaskId || remote?.id || remoteTaskId;
+      if (!remoteTaskId) {
+        const error = new Error(`${provider.id} did not return a remote task ID; provider submission outcome is unknown and will not be repeated automatically.`);
+        error.code = 'MEDIA_TASK_SUBMISSION_UNKNOWN';
+        error.status = 409;
+        throw error;
+      }
       await assertLease();
       task = await this.updateTask(task, {
-        status: remote.status === 'succeeded' ? 'running' : remote.status,
+        status: remote.status === 'succeeded' ? 'downloading' : remote.status,
         model: remote.model || task.model,
         externalTaskId: remote.externalTaskId,
         providerData: this.providerData(remote),
@@ -214,7 +239,7 @@ class MediaGenerationService {
         remoteTaskId = remote?.externalTaskId || remote?.id || remoteTaskId;
         await assertLease();
         task = await this.updateTask(task, {
-          status: remote.status === 'succeeded' ? 'running' : remote.status,
+          status: remote.status === 'succeeded' ? 'downloading' : remote.status,
           providerData: this.providerData(remote),
           error: remote.error || null
         });
@@ -252,9 +277,21 @@ class MediaGenerationService {
         }
         throw leaseError;
       }
+      const recoveryStatus = error.code === 'JOB_CANCELLED'
+        ? 'cancelled'
+        : (remoteSubmissionAttempted && !remoteTaskId)
+          ? 'submission_unknown'
+          : (remote?.status === 'succeeded')
+            ? 'download_pending'
+            : (remoteTaskId && remote && !TERMINAL.has(remote.status))
+              ? 'reconciliation_required'
+              : 'failed';
       await this.updateTask(task, {
-        status: error.code === 'JOB_CANCELLED' ? 'cancelled' : 'failed',
-        error: safeModelError(error), completedAt: new Date().toISOString()
+        status: recoveryStatus,
+        error: safeModelError(error),
+        completedAt: ['failed', 'cancelled', 'submission_unknown'].includes(recoveryStatus)
+          ? new Date().toISOString()
+          : null
       });
       throw error;
     }
