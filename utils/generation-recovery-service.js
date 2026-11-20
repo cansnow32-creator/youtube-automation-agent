@@ -18,28 +18,40 @@ class GenerationRecoveryService {
     this.baseDelayMs = Math.max(0, Number(options.baseDelayMs ?? process.env.GENERATION_RETRY_BASE_MS ?? 1000));
   }
 
-  async run(jobId, stage, progress, producer) {
+  async run(jobId, stage, progress, producer, options = {}) {
     if (!GENERATION_STAGES.includes(stage)) throw new Error(`Unknown generation stage: ${stage}`);
-    await this.assertPrerequisites(jobId, stage);
+    if (typeof producer !== 'function') throw new Error('A generation stage producer is required');
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+
+    await assertLease();
+    await this.assertPrerequisites(jobId, stage, assertLease);
     const checkpoint = await this.db.getGenerationCheckpoint(jobId, stage);
+    await assertLease();
     if (checkpoint?.status === 'completed') {
-      if (await this.validateArtifact(stage, checkpoint.artifact)) {
-        await this.markReused(jobId, stage, progress);
+      const valid = await this.validateArtifact(stage, checkpoint.artifact);
+      await assertLease();
+      if (valid) {
+        await this.markReused(jobId, stage, progress, assertLease);
         this.logger.info(`Reusing verified ${stage} checkpoint for ${jobId}`);
         return checkpoint.artifact;
       }
       const stageIndex = GENERATION_STAGES.indexOf(stage);
+      await assertLease();
       await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(stageIndex + 1));
+      await assertLease();
       await this.db.saveGenerationCheckpoint(jobId, stage, {
         status: 'invalid',
         error: 'The saved artifact is missing or no longer valid',
         completedAt: null
       });
+      await assertLease();
     }
 
     let lastError;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      await assertLease();
       await this.updateJobStage(jobId, stage, progress, { attempt });
+      await assertLease();
       const startedAt = new Date().toISOString();
       await this.db.saveGenerationCheckpoint(jobId, stage, {
         status: 'running',
@@ -48,39 +60,53 @@ class GenerationRecoveryService {
         completedAt: null,
         incrementAttempt: true
       });
+      await assertLease();
       try {
-        const artifact = await producer();
-        if (!await this.validateArtifact(stage, artifact)) {
-          throw new Error(`${stage} produced an incomplete or missing artifact`);
-        }
+        const artifact = await producer(assertLease);
+        await assertLease();
+        const valid = await this.validateArtifact(stage, artifact);
+        await assertLease();
+        if (!valid) throw new Error(`${stage} produced an incomplete or missing artifact`);
+        await assertLease();
         await this.db.saveGenerationCheckpoint(jobId, stage, {
           status: 'completed',
           artifact,
           error: null,
           completedAt: new Date().toISOString()
         });
+        await assertLease();
         return artifact;
       } catch (error) {
         lastError = error;
+        // A stale worker must not write a failed checkpoint after losing its lease.
+        await assertLease();
         await this.db.saveGenerationCheckpoint(jobId, stage, {
           status: error.code === 'JOB_CANCELLED' ? 'cancelled' : 'failed',
           error: error.message,
           completedAt: new Date().toISOString()
         });
+        await assertLease();
         if (error.code === 'JOB_CANCELLED' || attempt >= this.maxAttempts || !this.isRetryable(error)) throw error;
         const delayMs = this.baseDelayMs * (2 ** (attempt - 1));
         this.logger.warn(`${stage} failed transiently; retrying in ${delayMs}ms: ${error.message}`);
-        if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (delayMs) {
+          await assertLease();
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          await assertLease();
+        }
       }
     }
     throw lastError;
   }
 
-  async assertPrerequisites(jobId, stage) {
+  async assertPrerequisites(jobId, stage, assertLease = async () => {}) {
     const stageIndex = GENERATION_STAGES.indexOf(stage);
     for (const prerequisite of GENERATION_STAGES.slice(0, stageIndex)) {
+      await assertLease();
       const checkpoint = await this.db.getGenerationCheckpoint(jobId, prerequisite);
+      await assertLease();
       const valid = checkpoint?.status === 'completed' && await this.validateArtifact(prerequisite, checkpoint.artifact);
+      await assertLease();
       if (!valid) {
         const error = new Error(`Cannot run ${stage}: prerequisite stage ${prerequisite} is incomplete or its artifact is invalid`);
         error.status = 409;
@@ -126,10 +152,13 @@ class GenerationRecoveryService {
     return ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ENETUNREACH', 'EAI_AGAIN'].includes(code);
   }
 
-  async markReused(jobId, stage, progress) {
+  async markReused(jobId, stage, progress, assertLease = async () => {}) {
+    await assertLease();
     const job = await this.db.getGenerationJob(jobId);
+    await assertLease();
     const reusedStages = Array.from(new Set([...(job?.details?.reusedStages || []), stage]));
     await this.updateJobStage(jobId, stage, progress, { reusedStages });
+    await assertLease();
   }
 
   resumePoint(checkpoints = []) {
@@ -137,10 +166,12 @@ class GenerationRecoveryService {
     return GENERATION_STAGES.find(stage => byStage.get(stage)?.status !== 'completed') || 'quality_review';
   }
 
-  async resetFrom(jobId, requestedStage) {
+  async resetFrom(jobId, requestedStage, assertLease = async () => {}) {
     if (!GENERATION_STAGES.includes(requestedStage)) throw new Error('Resume stage is not supported');
     const index = GENERATION_STAGES.indexOf(requestedStage);
+    await assertLease();
     await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(index));
+    await assertLease();
   }
 }
 
