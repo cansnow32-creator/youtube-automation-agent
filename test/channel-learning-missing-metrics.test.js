@@ -3,6 +3,23 @@ const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
 
 const engine = new ChannelLearningEngine({});
 
+const freshAt = new Date('2026-11-20T12:00:00.000Z');
+const freshEvidence = engine.buildEvidenceFreshness([
+  { measuredAt: '2026-11-01T00:00:00.000Z' },
+  { measuredAt: '2026-11-19T00:00:00.000Z' }
+], freshAt);
+assert.equal(freshEvidence.status, 'fresh');
+assert.equal(freshEvidence.sampleCount, 2);
+assert.equal(freshEvidence.oldestMeasuredAt, '2026-11-01T00:00:00.000Z');
+assert.equal(engine.buildEvidenceFreshness([
+  { measuredAt: '2026-01-01T00:00:00.000Z' },
+  { measuredAt: '2026-11-19T00:00:00.000Z' }
+], freshAt).status, 'stale');
+assert.equal(engine.buildEvidenceFreshness([
+  { measuredAt: null },
+  { measuredAt: '2026-11-19T00:00:00.000Z' }
+], freshAt).status, 'unknown');
+
 const metrics = engine.normalizeMetrics({
   analytics: {
     views: { totalViews: 250, totalImpressions: 1200, averageCTR: null },
