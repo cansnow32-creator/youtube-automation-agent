@@ -163,8 +163,9 @@ class SceneRepairService {
 
   async withProductionOperationLease(productionId, operation, label = 'scene operation') {
     if (typeof this.db.acquireProductionOperationLock !== 'function' ||
+        typeof this.db.renewProductionOperationLock !== 'function' ||
         typeof this.db.releaseProductionOperationLock !== 'function') {
-      throw this.error('Database operation-lock support is required for scene changes', 503, 'SCENE_EDIT_LOCK_UNAVAILABLE');
+      throw this.error('Database acquire, renew, and release operation-lock support is required for scene changes', 503, 'SCENE_EDIT_LOCK_UNAVAILABLE');
     }
     const owner = crypto.randomUUID();
     let acquired = false;
@@ -176,22 +177,18 @@ class SceneRepairService {
       if (leaseFailure) throw leaseFailure;
     };
     try {
-      if (typeof this.db.acquireProductionOperationLock === 'function') {
-        acquired = await this.db.acquireProductionOperationLock(productionId, owner);
-        if (!acquired) throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
-        if (typeof this.db.renewProductionOperationLock === 'function') {
-          heartbeat = setInterval(() => {
-            renewalInFlight = renewalInFlight.then(async () => {
-              if (!acquired || leaseFailure) return;
-              const renewed = await this.db.renewProductionOperationLock(productionId, owner);
-              if (!renewed) leaseFailure = this.error(`The ${label} lease was lost; this operation cannot commit further changes`, 409, 'SCENE_EDIT_LEASE_LOST');
-            }).catch(error => {
-              leaseFailure = this.error(`The ${label} lease could not be verified: ${error.message}`, 503, 'SCENE_EDIT_LEASE_UNVERIFIED');
-            });
-          }, 60 * 1000);
-          heartbeat.unref?.();
-        }
-      }
+      acquired = await this.db.acquireProductionOperationLock(productionId, owner);
+      if (!acquired) throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
+      heartbeat = setInterval(() => {
+        renewalInFlight = renewalInFlight.then(async () => {
+          if (!acquired || leaseFailure) return;
+          const renewed = await this.db.renewProductionOperationLock(productionId, owner);
+          if (!renewed) leaseFailure = this.error(`The ${label} lease was lost; this operation cannot commit further changes`, 409, 'SCENE_EDIT_LEASE_LOST');
+        }).catch(error => {
+          leaseFailure = this.error(`The ${label} lease could not be verified: ${error.message}`, 503, 'SCENE_EDIT_LEASE_UNVERIFIED');
+        });
+      }, 60 * 1000);
+      heartbeat.unref?.();
       await assertLease();
       return await operation(assertLease);
     } finally {
