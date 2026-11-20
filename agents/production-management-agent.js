@@ -8,6 +8,7 @@ const { mixBackgroundMusic } = require('../utils/audio-mixer');
 const { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent } = require('../utils/subtitle-renderer');
 const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
 const { createProductionWorkflow, runProductionStage, prepareProductionWorkflowForResume } = require('../utils/production-stage-workflow');
+const { assertScriptQualityGate } = require('../utils/script-quality-gate');
 
 class ProductionManagementAgent {
   constructor(db, credentials, options = {}) {
@@ -63,6 +64,7 @@ class ProductionManagementAgent {
       this.logger.info('Processing content for production...');
       
       const { strategy: inputStrategy, script, thumbnail, seo, jobId = null } = contentData;
+      assertScriptQualityGate(script);
       const requestedConceptId = contentData.approvedConceptId ||
         inputStrategy?.approvedVideoConceptId ||
         inputStrategy?.approvedVideoConcept?.id;
@@ -212,6 +214,7 @@ class ProductionManagementAgent {
       jobId: stored.timeline?.jobId || null,
       status: 'processing'
     };
+    assertScriptQualityGate(productionData.script);
     const workflow = productionData.timeline.productionWorkflow;
     const nextStage = prepareProductionWorkflowForResume(workflow);
     if (!nextStage) {
