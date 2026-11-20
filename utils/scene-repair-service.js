@@ -538,19 +538,20 @@ class SceneRepairService {
       if (!['current', 'intentional_silence'].includes(scene.narrationStatus)) {
         missing.push(`${scene.label}: narration is ${String(scene.narrationStatus || 'unavailable').replaceAll('_', ' ')}`);
       }
-      if (scene.narrationStatus === 'current' && scene.audioPath) {
+      if (scene.narrationStatus === 'current') {
         const audioUsable = await this.isUsableNarrationSegment(scene);
         currentSceneAudio.push(audioUsable);
-        if (!audioUsable) missing.push(`${scene.label}: narration segment is missing or invalid`);
+        if (scene.audioPath && !audioUsable) missing.push(`${scene.label}: narration segment is missing or invalid`);
       }
       if (scene.status === 'visual_stale') missing.push(`${scene.label}: visual prompt changed but the asset was not regenerated or replaced`);
       if (['failed', 'generating', 'missing_asset'].includes(scene.status)) missing.push(`${scene.label}: scene status is ${scene.status.replaceAll('_', ' ')}`);
       if (!await this.isUsableSceneAsset(scene)) missing.push(`${scene.label}: visual asset is missing or invalid`);
       if (scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed) missing.push(`${scene.label}: media rights are not confirmed`);
     }
-    if (currentSceneAudio.length && currentSceneAudio.some(value => !value)) {
+    const hasAnySceneAudioPath = scenes.some(scene => Boolean(scene.audioPath));
+    if (hasAnySceneAudioPath && currentSceneAudio.some(value => !value)) {
       missing.push('The scene narration mix is incomplete; regenerate every missing or invalid narration segment');
-    } else if (!currentSceneAudio.length && !fullNarrationReady) {
+    } else if (!hasAnySceneAudioPath && !fullNarrationReady) {
       missing.push('No usable production or scene narration audio is available');
     }
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
