@@ -1,0 +1,49 @@
+name: Agent Continuity Check
+
+on:
+  push:
+    branches:
+      - feat/agent-continuity
+  pull_request:
+    paths:
+      - "AGENT_CONTINUITY.md"
+      - "AGENT_STATE.md"
+      - "AGENT_TASKS.md"
+      - "AGENT_RULES.md"
+      - "AGENT_LOG.md"
+      - "DOT_SETUP.md"
+      - ".github/workflows/continuity-check.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate continuity files
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            AGENT_CONTINUITY.md
+            AGENT_STATE.md
+            AGENT_TASKS.md
+            AGENT_RULES.md
+            AGENT_LOG.md
+            DOT_SETUP.md
+          )
+          for file in "${required[@]}"; do
+            test -s "$file" || { echo "::error::Missing or empty continuity file: $file"; exit 1; }
+          done
+          grep -q 'Devam et' AGENT_CONTINUITY.md
+          grep -q 'Must ask first' AGENT_RULES.md
+          grep -q 'No PR merge' AGENT_RULES.md
+          grep -q 'P0' AGENT_TASKS.md
+          echo "Agent continuity handoff files are present and contain required guardrails."
