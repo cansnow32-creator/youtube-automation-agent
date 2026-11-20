@@ -598,10 +598,10 @@ class AIVideoGenerator {
       segments: sourceFingerprint,
       renderOptions: { width: renderOptions.width || 1920, height: renderOptions.height || 1080, fps: 30, codec: 'libx264', pixelFormat: 'yuv420p' }
     })).digest('hex');
-    const audioBuffer = await fs.readFile(audioPath);
+    const audioSha256 = await hashFile(audioPath);
     const assemblyFingerprint = crypto.createHash('sha256').update(JSON.stringify({
       visualFingerprint,
-      audioSha256: crypto.createHash('sha256').update(audioBuffer).digest('hex'),
+      audioSha256,
       mux: { loopVideo: true, videoCodec: 'copy', audioCodec: 'aac', shortest: true }
     })).digest('hex');
     const assemblyManifestPath = outputPath + '.assembly.json';
@@ -664,7 +664,7 @@ class AIVideoGenerator {
         version: 1,
         fingerprint: assemblyFingerprint,
         visualFingerprint,
-        audioSha256: crypto.createHash('sha256').update(audioBuffer).digest('hex'),
+        audioSha256,
         assembledAt: new Date().toISOString()
       }, null, 2));
       await fs.rm(assemblyManifestPath, { force: true });
