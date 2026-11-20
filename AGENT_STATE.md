@@ -256,3 +256,14 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Re-fetched seven implementation/test/package/doc files from GitHub; all JavaScript parsed and package JSON parsed. `test/media-generation-lease.test.js` declares 14 test functions, calls all 14 from its runner, and is already part of `npm test`. This is static syntax validation only; runtime tests/lint were not executed. The execution container cannot resolve github.com, Desktop Commander is monthly quota-blocked, and GitHub returns zero PR-triggered workflow runs; an actual full CI result remains pending.
 - No PR merged, retargeted or rebased. No publishing automation or paid-provider defaults were changed.
 - Next: obtain a real CI run for PR #2; resolve runtime failures if any, then re-evaluate stacked PR mergeability without rewriting history.
+
+
+## 2026-11-20 — Atomic operator reconciliation conflict guard
+
+- Live PR state: PR #1 open/draft/unmerged at `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`, base `master`, mergeable true; PR #2 open/draft/unmerged at `749cb821a895e74ba8636e6b5170e564ba7723a7`, base `feat/local-first-quality-gate`, mergeable false; PR #3 open/draft/unmerged at `41bf15024a0feaf39b3ecc74255cf17219409cea`, base `master`, mergeable true. PR-triggered workflow queries return zero runs for the three current heads. PR #2's stacked base relationship is unchanged.
+- Found that manual provider-task reconciliation and explicit “no remote task” resolution performed an unconditional update after a provider lookup / initial row read. A competing operator or worker could have changed the row in the meantime.
+- Added `Database.compareAndSetMediaGenerationTask()`: one SQLite UPDATE checks the expected status and external task ID in its WHERE clause. Reconciliation and absent-task resolution now require this atomic update and return a 409 conflict if the row changed. The stale action does not overwrite the newer state.
+- Added an SQLite-backed regression assertion: the first compare-and-set wins, and a second stale update using the old expected state is rejected. The existing 14 media regression functions remain wired into `npm test` and are all invoked by the test runner.
+- Commits: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`.
+- Static verification: JS syntax parsing passed for `utils/media-generation-service.js`, `database/db.js` and `test/media-generation-lease.test.js`; `package.json` parsed; docs were re-fetched. This is not runtime execution. Tests/lint remain unexecuted and no CI run is available for current heads.
+- Next: obtain a real PR #2 CI run, address any actual runtime/regression failures, and then review stacked mergeability without changing the dependency. Do not merge.
