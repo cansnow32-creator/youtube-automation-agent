@@ -2,6 +2,14 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Tighten production lease regression assertion
+
+- PR #2 static review found the lease-renewal SQL test regex was too permissive: it matched both the intended question-mark placeholder and a backslash variant.
+- Updated `test/production-operation-lock.test.js` to require the literal SQL placeholder with `/expires_at > \\?/`.
+- Commit: `5c346c23f75aa240c083371a8de42decdd80fed2` on `feat/video-concept-approval`.
+- Re-fetched the file and PR metadata; PR #2 head matches the commit. GitHub still reports zero check-runs. No test execution is claimed.
+- Remaining: run CI, add SQLite-backed concurrency coverage, continue PR #2 audit.
+
 ## 2026-11-20 — Stacked PR CI trigger review
 
 - PR #1 base branch workflow originally listened only for `pull_request` events targeting `master`, while PR #2 targets `feat/local-first-quality-gate`. This meant the base-branch workflow filter did not cover the stacked PR target.
