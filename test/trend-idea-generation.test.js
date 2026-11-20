@@ -209,6 +209,8 @@ async function run() {
         'template guidance should be globally sorted by niche ranking across competitor channels');
       assert.doesNotMatch(body.messages[0].content, /unranked_noise/,
         'incomplete competitor records must not be presented as ranked evidence');
+      assert.doesNotMatch(body.messages[0].content, /stale_noise|Old competitor pattern/,
+        'stale competitor analysis must not be presented as current creative guidance');
       return {
         ok: true,
         json: async () => ({
@@ -255,8 +257,10 @@ async function run() {
     });
 
     const strategy = new ContentStrategyAgent(db, {});
+    const freshCompetitorAnalysisAt = new Date().toISOString();
     strategy.competitorData = [{
       channelId: 'UC-lower-ranked',
+      analyzedAt: freshCompetitorAnalysisAt,
       topPerformingTemplates: [{
         patternId: 'question',
         format: 'explainer',
@@ -268,6 +272,7 @@ async function run() {
       }]
     }, {
       channelId: 'UC-higher-ranked',
+      analyzedAt: freshCompetitorAnalysisAt,
       topPerformingTemplates: [{
         patternId: 'numbered_list',
         format: 'tutorial',
@@ -279,11 +284,22 @@ async function run() {
       }]
     }, {
       channelId: 'UC-incomplete',
+      analyzedAt: freshCompetitorAnalysisAt,
       topPerformingTemplates: [{
         patternId: 'unranked_noise',
         format: 'story',
         sampleCount: 4,
         evidence: [{ title: 'Incomplete ranking metadata' }]
+      }]
+    }, {
+      channelId: 'UC-stale',
+      analyzedAt: '2020-01-01T00:00:00.000Z',
+      topPerformingTemplates: [{
+        patternId: 'stale_noise',
+        format: 'story',
+        sampleCount: 99,
+        rankingScore: 99,
+        evidence: [{ title: 'Old competitor pattern must not be used' }]
       }]
     }];
     const result = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
