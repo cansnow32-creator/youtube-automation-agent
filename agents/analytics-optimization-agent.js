@@ -284,10 +284,11 @@ class AnalyticsOptimizationAgent {
       : null;
 
     return {
-      totalViews,
-      totalImpressions,
+      totalViews: rows.length ? totalViews : null,
+      totalImpressions: rows.length ? totalImpressions : null,
       averageCTR: weightedCTR,
       ctrAvailable: weightedCTR !== null,
+      available: rows.length > 0,
       dailyData: rows
     };
   }
