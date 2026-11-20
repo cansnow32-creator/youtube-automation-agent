@@ -32,6 +32,15 @@ async function run() {
     lowScore: 1, offAudience: 1, duplicate: 1, missingEvidence: 1, invalid: 0
   });
 
+  const angleGate = filterTrendIdeasForApproval([
+    { topic: 'A beginner guide to AI video editing', angle: 'Build a repeatable editing workflow from raw clips', pillar: 'editing', sourceTopic: 'AI editing', score: 70, scoreBreakdown: { channelFit: 65, trendEvidenceCount: 2 } },
+    { topic: 'How to edit videos with AI tools', angle: 'Build a repeatable editing workflow from raw clips', pillar: 'editing', sourceTopic: 'AI editing', score: 72, scoreBreakdown: { channelFit: 65, trendEvidenceCount: 2 } },
+    { topic: 'A lighting setup for home video creators', angle: 'Choose a simple desk lighting arrangement', pillar: 'production', sourceTopic: 'Lighting', score: 68, scoreBreakdown: { channelFit: 60, trendEvidenceCount: 1 } }
+  ], [], {});
+  assert.equal(angleGate.ideas.length, 2,
+    'ideas with different titles but the same editorial angle should be deduplicated');
+  assert.equal(angleGate.rejected.duplicate, 1);
+
   const profileFreeGate = filterTrendIdeasForApproval([
     { topic: 'A useful general editing explainer', sourceTopic: 'Editing', score: 55,
       scoreBreakdown: { channelFit: 0, trendEvidenceCount: 1 } }
