@@ -514,7 +514,7 @@ class ChannelLearningEngine {
       approvedCount: recommendations.filter(item => item.status === 'approved').length,
       pendingCount: recommendations.filter(item => item.status === 'pending').length,
       lastMeasuredAt: snapshots[0]?.measuredAt || null,
-      evidencePolicy: 'Only real YouTube analytics are eligible; simulated fallbacks are excluded.',
+      evidencePolicy: 'Only real YouTube analytics are eligible; simulated fallbacks are excluded. Cohort baselines, recommendations, and performance insights use the exact 7d publication-anchored daily window; 24h and 28d snapshots are reported separately and never substituted into the 7d cohort.',
       outcome: this.buildOutcomeSummary(preferred, strategy),
       performanceInsights: this.buildPerformanceInsights(preferred),
       retention: {
