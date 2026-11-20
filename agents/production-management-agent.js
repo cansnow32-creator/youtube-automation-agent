@@ -168,8 +168,13 @@ class ProductionManagementAgent {
       ? contentData.assertLease
       : async () => {};
     if (!jobId) return this.processContentUnlocked(contentData, upstreamAssertLease);
-    if (typeof this.db.acquireProductionOperationLock !== 'function') {
-      throw new Error('Job production requires database operation-lock support');
+    if (typeof this.db.acquireProductionOperationLock !== 'function' ||
+        typeof this.db.renewProductionOperationLock !== 'function' ||
+        typeof this.db.releaseProductionOperationLock !== 'function') {
+      const error = new Error('Job production requires database acquire, renew, and release operation-lock support');
+      error.code = 'PRODUCTION_JOB_LOCK_UNAVAILABLE';
+      error.status = 503;
+      throw error;
     }
     const lockId = `job:${jobId}`;
     const owner = `job_${process.pid}_${crypto.randomUUID()}`;
@@ -189,19 +194,21 @@ class ProductionManagementAgent {
       if (leaseFailure) throw leaseFailure;
     };
     const heartbeat = setInterval(() => {
-      renewalInFlight = this.db.renewProductionOperationLock(lockId, owner, leaseMs)
-        .then(renewed => {
+      renewalInFlight = renewalInFlight.then(async () => {
+        if (leaseFailure) return;
+        try {
+          const renewed = await this.db.renewProductionOperationLock(lockId, owner, leaseMs);
           if (!renewed) leaseFailure = Object.assign(
             new Error(`Generation job lease lost for ${jobId}`),
             { code: 'PRODUCTION_JOB_LEASE_LOST', status: 409 }
           );
-        })
-        .catch(cause => {
+        } catch (cause) {
           leaseFailure = Object.assign(
             new Error(`Generation job lease could not be verified for ${jobId}: ${cause.message}`),
             { code: 'PRODUCTION_JOB_LEASE_UNVERIFIED', status: 503 }
           );
-        });
+        }
+      });
     }, 30_000);
     heartbeat.unref?.();
     try {
@@ -390,8 +397,13 @@ class ProductionManagementAgent {
   }
 
   async resumeProduction(productionId, upstreamAssertLease = async () => {}) {
-    if (typeof this.db.acquireProductionOperationLock !== 'function') {
-      throw new Error('Production resume requires database operation-lock support');
+    if (typeof this.db.acquireProductionOperationLock !== 'function' ||
+        typeof this.db.renewProductionOperationLock !== 'function' ||
+        typeof this.db.releaseProductionOperationLock !== 'function') {
+      const error = new Error('Production resume requires database acquire, renew, and release operation-lock support');
+      error.code = 'PRODUCTION_OPERATION_LOCK_UNAVAILABLE';
+      error.status = 503;
+      throw error;
     }
     const owner = `resume_${process.pid}_${crypto.randomUUID()}`;
     const leaseMs = 2 * 60 * 60 * 1000;
@@ -411,21 +423,23 @@ class ProductionManagementAgent {
       if (leaseFailure) throw leaseFailure;
     };
     const heartbeat = setInterval(() => {
-      renewalInFlight = this.db.renewProductionOperationLock(productionId, owner, leaseMs)
-        .then(renewed => {
+      renewalInFlight = renewalInFlight.then(async () => {
+        if (leaseFailure) return;
+        try {
+          const renewed = await this.db.renewProductionOperationLock(productionId, owner, leaseMs);
           if (!renewed) {
             leaseFailure = Object.assign(
               new Error(`Production resume lease lost for ${productionId}`),
               { code: 'PRODUCTION_RESUME_LEASE_LOST', status: 409 }
             );
           }
-        })
-        .catch(cause => {
+        } catch (cause) {
           leaseFailure = Object.assign(
             new Error(`Production resume lease could not be verified for ${productionId}: ${cause.message}`),
             { code: 'PRODUCTION_RESUME_LEASE_UNVERIFIED', status: 503 }
           );
-        });
+        }
+      });
     }, 30_000);
     heartbeat.unref?.();
 
