@@ -42,6 +42,17 @@ async function run() {
     assert.notEqual(first, second, 'separate rebuild attempts publish to distinct narration paths');
     assert.equal(await fs.readFile(first, 'utf8'), 'valid-test-audio');
     assert.equal(await fs.readFile(second, 'utf8'), 'valid-test-audio');
+
+    const videosDir = path.join(artifactDir, 'videos');
+    await fs.mkdir(videosDir, { recursive: true });
+    const staleVisualTemp = path.join(videosDir,
+      'prod_repair_fingerprint_123e4567-e89b-12d3-a456-426614174000_visual.mp4.rendering.mp4');
+    await fs.writeFile(staleVisualTemp, 'stale-temp');
+    const oldTime = new Date(Date.now() - 60_000);
+    await fs.utimes(staleVisualTemp, oldTime, oldTime);
+    assert.equal(await repair.cleanupStaleRepairTemps('prod', 1000), 1,
+      'stale attempt-scoped visual render temps are recognized by cleanup');
+    await assert.rejects(fs.access(staleVisualTemp));
   } finally {
     await fs.rm(artifactDir, { recursive: true, force: true });
   }
