@@ -48,6 +48,7 @@ class LocalFirstQualityPipeline {
     this.geminiKey = this.credentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
     this.groqKey = process.env.GROQ_API_KEY;
     this.groqModel = process.env.GROQ_REVIEW_MODEL || DEFAULT_GROQ_MODEL;
+    this.allowRemoteReview = options.allowRemoteReview === true || process.env.QUALITY_ALLOW_REMOTE_REVIEW === 'true';
   }
 
   async requestOllama(prompt) {
@@ -101,8 +102,29 @@ class LocalFirstQualityPipeline {
     return `You are an independent, strict content quality reviewer. Review this ${platform} script and its metadata. Return ONLY JSON: {"score":0,"approved":false,"blockers":[],"findings":[],"revision_instructions":[],"platform_metadata":{"youtube":{"title":"","description":"","hashtags":[],"tags":[]},"instagram_reels":{"caption":"","hashtags":[]},"tiktok":{"caption":"","hashtags":[]}}}. Score 0-100. Check factual accuracy and unsupported claims, originality, audience fit, opening hook (first 5 seconds), logical development, satisfying conclusion and CTA, clarity, pacing, SEO title/description/hashtags/tags, and platform-specific packaging. Do not invent facts, sources, stats, or trend claims. Give actionable findings and concrete revision instructions. Score 80+ only if publish-ready; any serious factual, rights, safety, or misleading-claim issue must be a blocker. Provide separately adapted metadata for YouTube, Instagram Reels, and TikTok; do not assume identical captions/tags work on all platforms.\n\nDRAFT:\n${draft}`;
   }
 
+  async requestOllamaReview(prompt) {
+    const content = await this.requestOllama(prompt);
+    const result = extractJson(content);
+    if (!Number.isFinite(Number(result.score)) || Number(result.score) < 0 || Number(result.score) > 100) {
+      throw new Error('Ollama reviewer returned an invalid score');
+    }
+    if (typeof result.approved !== 'boolean' || !Array.isArray(result.blockers) ||
+        !Array.isArray(result.revision_instructions)) {
+      throw new Error('Ollama reviewer response is missing approval, blockers, or revision instructions');
+    }
+    const metadataIssues = platformMetadataIssues(result.platform_metadata);
+    if (metadataIssues.length) {
+      result.blockers.push(...metadataIssues);
+      result.revision_instructions.push(...metadataIssues.map(issue => `Provide complete, platform-specific metadata: ${issue}`));
+      result.approved = false;
+    }
+    return result;
+  }
+
   async reviewDraft(draft) {
     const prompt = this.buildReviewPrompt(draft, 'YouTube');
+    const ollama = await this.requestOllamaReview(prompt);
+    if (!this.allowRemoteReview) return { ollama };
     const gemini = await this.requestGemini(prompt);
     const groq = await this.requestGroq(prompt);
     for (const [name, result] of [['Gemini', gemini], ['Groq', groq]]) {
@@ -119,7 +141,7 @@ class LocalFirstQualityPipeline {
         result.approved = false;
       }
     }
-    return { gemini, groq };
+    return { ollama, gemini, groq };
   }
 
   async reviseDraft(originalPrompt, draft, reviews) {
@@ -136,12 +158,12 @@ class LocalFirstQualityPipeline {
     const attempts = [];
     for (let revision = 0; revision <= this.maxRevisions; revision++) {
       const reviews = await this.reviewDraft(draft);
-      const scores = [Number(reviews.gemini.score), Number(reviews.groq.score)];
-      const blockers = [...reviews.gemini.blockers, ...reviews.groq.blockers];
+      const reviewerResults = Object.values(reviews);
+      const scores = reviewerResults.map(result => Number(result.score));
+      const blockers = reviewerResults.flatMap(result => result.blockers || []);
       const score = Math.min(...scores);
-      const approved = scores.every(value => value >= this.minimumScore) &&
-        reviews.gemini.approved === true && reviews.groq.approved === true &&
-        blockers.length === 0;
+      const approved = scores.length > 0 && scores.every(value => value >= this.minimumScore) &&
+        reviewerResults.every(result => result.approved === true) && blockers.length === 0;
       attempts.push({
         revision,
         score,
@@ -156,7 +178,9 @@ class LocalFirstQualityPipeline {
           minimumScore: this.minimumScore,
           revisions: revision,
           attempts,
-          platformMetadata: reviews.gemini.platform_metadata || reviews.groq.platform_metadata || null
+          reviewers: Object.keys(reviews),
+          remoteReviewEnabled: this.allowRemoteReview,
+          platformMetadata: reviewerResults.find(result => result.platform_metadata)?.platform_metadata || null
         };
         return draft;
       }
@@ -168,6 +192,8 @@ class LocalFirstQualityPipeline {
       score: attempts[attempts.length - 1]?.score ?? 0,
       minimumScore: this.minimumScore,
       revisions: this.maxRevisions,
+      reviewers: Object.keys(attempts[attempts.length - 1] || {}),
+      remoteReviewEnabled: this.allowRemoteReview,
       attempts
     };
     throw new Error(`Quality gate did not reach ${this.minimumScore}/100 after ${this.maxRevisions} revisions; content held for human review`);
