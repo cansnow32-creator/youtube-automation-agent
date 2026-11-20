@@ -164,7 +164,12 @@ class GrowthExperimentService {
       return this.db.getGrowthExperiment(id);
     }
 
-    const armResult = this.calculateArmResult(arm.baselineMetrics, evidence.metrics);
+    const armResult = {
+      observationOnly: true,
+      latestVideoMetrics: evidence.metrics,
+      measurementPeriod: evidence.measurementPeriod || null,
+      interpretation: 'Video-level snapshot during this sequential arm; not attributable to this arm.'
+    };
     await this.db.updateExperimentArm(arm.id, {
       status: 'completed', finalMetrics: evidence.metrics, result: armResult, endedAt: capturedAt
     });
@@ -321,16 +326,17 @@ class GrowthExperimentService {
       const first = armSamples[0];
       const last = armSamples.at(-1);
       const trafficShift = this.trafficSourceShift(first?.trafficSources, last?.trafficSources);
-      const measuredImpressions = armSamples.reduce((maximum, sample) => {
-        const value = Number(sample.metrics?.impressions);
-        return Number.isFinite(value) ? Math.max(maximum, value) : maximum;
-      }, 0);
+      const latestMetrics = last?.metrics || {};
       return {
         ...arm,
         result: {
-          ...arm.result,
-          measuredImpressions,
+          observationOnly: true,
           sampleCount: armSamples.length,
+          latestVideoImpressions: this.optionalMetric(latestMetrics.impressions),
+          latestVideoCtr: this.optionalMetric(latestMetrics.ctr),
+          latestVideoClicks: this.optionalMetric(latestMetrics.clicks),
+          latestVideoViews: this.optionalMetric(latestMetrics.views),
+          measurementPeriod: latestMetrics.measurementPeriod || null,
           trafficSourceShiftPoints: trafficShift
         }
       };
@@ -346,7 +352,7 @@ class GrowthExperimentService {
       comparisonMethod: 'sequential_same_video_observational',
       exposureAttribution: 'unavailable_from_youtube_analytics',
       minImpressions: experiment.minImpressions,
-      eligibleArms: arms.filter(arm => arm.result.measuredImpressions >= experiment.minImpressions).length,
+      armsWithObservations: arms.filter(arm => arm.result.sampleCount > 0).length,
       totalArms: arms.length,
       winnerArmId: null,
       confidence: 'unverified',
@@ -360,11 +366,12 @@ class GrowthExperimentService {
         armId: arm.id,
         label: arm.label,
         isControl: arm.isControl,
-        measuredImpressions: arm.result.measuredImpressions,
         sampleCount: arm.result.sampleCount,
-        observedCtr: this.optionalMetric(arm.result.ctr),
-        observedClicks: this.optionalMetric(arm.result.clicks),
-        observedViews: this.optionalMetric(arm.result.views),
+        observedVideoImpressions: arm.result.latestVideoImpressions,
+        observedVideoCtr: arm.result.latestVideoCtr,
+        observedVideoClicks: arm.result.latestVideoClicks,
+        observedVideoViews: arm.result.latestVideoViews,
+        measurementPeriod: arm.result.measurementPeriod,
         trafficSourceShiftPoints: this.optionalMetric(arm.result.trafficSourceShiftPoints)
       }))
     };
@@ -443,7 +450,8 @@ class GrowthExperimentService {
         netSubscribers: Number(report.analytics?.outcomes?.netSubscribers || 0),
         estimatedRevenue: Number(report.analytics?.outcomes?.estimatedRevenue || 0)
       },
-      trafficSources: report.analytics?.trafficSources?.sources || []
+      trafficSources: report.analytics?.trafficSources?.sources || [],
+      measurementPeriod: report.analytics?.period || null
     };
   }
 
