@@ -62,7 +62,10 @@ class ProductionManagementAgent {
 
   async processContent(contentData) {
     const jobId = contentData?.jobId;
-    if (!jobId) return this.processContentUnlocked(contentData);
+    const upstreamAssertLease = typeof contentData?.assertLease === 'function'
+      ? contentData.assertLease
+      : async () => {};
+    if (!jobId) return this.processContentUnlocked(contentData, upstreamAssertLease);
     if (typeof this.db.acquireProductionOperationLock !== 'function') {
       throw new Error('Job production requires database operation-lock support');
     }
@@ -79,6 +82,7 @@ class ProductionManagementAgent {
     let leaseFailure = null;
     let renewalInFlight = Promise.resolve();
     const assertLease = async () => {
+      await upstreamAssertLease();
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
@@ -138,7 +142,7 @@ class ProductionManagementAgent {
             throw new Error('A persisted production exists for this job but its script/job identity does not match; refusing duplicate production');
           }
           this.logger.info(`Resuming persisted production ${existing.id} for generation job ${jobId}`);
-          return this.resumeProduction(existing.id);
+          return this.resumeProduction(existing.id, assertLease);
         }
       }
 
@@ -261,7 +265,7 @@ class ProductionManagementAgent {
     }
   }
 
-  async resumeProduction(productionId) {
+  async resumeProduction(productionId, upstreamAssertLease = async () => {}) {
     if (typeof this.db.acquireProductionOperationLock !== 'function') {
       throw new Error('Production resume requires database operation-lock support');
     }
@@ -278,6 +282,7 @@ class ProductionManagementAgent {
     let leaseFailure = null;
     let renewalInFlight = Promise.resolve();
     const assertLease = async () => {
+      await upstreamAssertLease();
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
