@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
 const { getAppliedPackagingLearning } = require('../utils/packaging-learning');
+const { verifyAppliedScriptLearnings } = require('../utils/script-learning-verification');
 
 const engine = new ChannelLearningEngine({});
 
@@ -54,6 +55,41 @@ const guidance = engine.extractLearningGuidance(scriptGuidance);
 assert.deepEqual(guidance.map(item => item.recommendationId), ['hook-1', 'format-1']);
 assert.ok(guidance.every(item => item.status === 'provided_to_generation_not_verified_as_applied'),
   'script guidance must remain separately auditable and must not be reported as verified application');
+
+const hookGuidance = [
+  { recommendationId: 'hook-concise', category: 'hookLength', proposedChange: { prefer: 'concise' } },
+  { recommendationId: 'hook-extended', category: 'hookLength', proposedChange: { prefer: 'extended' } },
+  { recommendationId: 'format-unknown', category: 'format', proposedChange: { prefer: 'list' } },
+  { recommendationId: 'hook-free-text', category: 'hookLength', proposedChange: { prefer: 'make the hook engaging' } }
+];
+const verifiedHook = verifyAppliedScriptLearnings(hookGuidance, {
+  hook: { text: 'A short hook that clearly states the viewer benefit.' }
+});
+assert.deepEqual(verifiedHook.map(item => item.recommendationId), ['hook-concise'],
+  'only exact, measurable hook-length preferences matching generated output may be verified');
+assert.equal(verifiedHook[0].observedWordCount, 10);
+assert.equal(verifiedHook[0].verificationMethod, 'generated_hook_word_count_threshold_40');
+const appliedScriptAttributes = engine.extractAttributes(
+  { videoDetails: { title: 'A Sample Title' } },
+  {
+    strategy: { approvedScriptLearnings: hookGuidance },
+    script: { hook: { text: 'A short hook that clearly states the viewer benefit.' }, metadata: { verifiedAppliedLearnings: verifiedHook } }
+  }
+);
+assert.deepEqual(appliedScriptAttributes.appliedLearnings, [{
+  recommendationId: 'hook-concise',
+  category: 'hookLength',
+  appliedTo: ['hook'],
+  source: 'script_output_deterministic_verification'
+}]);
+assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-concise').status, 'verified_applied');
+assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-extended').status,
+  'provided_to_generation_not_verified_as_applied');
+assert.deepEqual(engine.extractAppliedLearnings(
+  { approvedScriptLearnings: [{ recommendationId: 'unapproved', category: 'hookLength', proposedChange: { prefer: 'concise' } }] },
+  [],
+  { metadata: { verifiedAppliedLearnings: [{ ...verifiedHook[0], recommendationId: 'unapproved' }] } }
+), [], 'unmatched or unapproved verification metadata must not be attributed');
 
 const snapshot = (id, recommendationId, category, delta, impressions = 1200, window = '7d') => ({
   id,
