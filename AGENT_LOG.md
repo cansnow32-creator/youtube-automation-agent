@@ -1,3 +1,14 @@
+## 2026-11-20 — Cancel supported remote video tasks after generation lease loss
+
+- Reviewed `utils/video-providers.js`: base providers default to no cancellation; the Seedance/Replicate provider declares `capabilities.cancellation: true` and implements remote prediction cancellation. Other current provider implementations do not advertise cancellation support.
+- `MediaGenerationService.generateClip()` now captures the remote task ID immediately after `createTask()` / `getTask()` returns, before task-row persistence. If the following lease assertion fails, it attempts `provider.cancelTask(remoteTaskId)` only for an active/non-terminal task and only when the provider explicitly advertises cancellation.
+- Cancellation failures and unsupported providers are logged as warnings. No stale task-row failure/success update is attempted after lease loss. Local attempt downloads and published output cleanup remain in place.
+- Added a regression test to `test/media-generation-lease.test.js`: remote provider returns a queued task, the lease is lost before the ID can be persisted, and the service must cancel the remote ID, skip task-row writes and leave no local files. The test file is already part of `npm test`.
+- Commits on `feat/video-concept-approval`: `5aa8fe8ae38a6387246227618f51d155d7b97701` (implementation), `e7820bc6a94e08dd9bc479fb9cbf7f8c6137410e` (regression test).
+- Re-fetched media service, provider registry and test through GitHub; JavaScript syntax parsed. Static validation only; runtime tests/lint were not executed. PR #2 current head `e7820bc6a94e08dd9bc479fb9cbf7f8c6137410e` has 0 workflow runs.
+- Limitation: only providers with explicit cancellation support (currently Seedance) can be stopped remotely. For unsupported providers, remote work may continue after lease loss, but stale local file publication and task-state persistence are fenced.
+- Next: continue remote task retry/idempotency/reconciliation audit for non-cancellable providers and obtain a real CI run. Do not merge.
+ 
 ## 2026-11-20 — Fence media clip providers and CineCode rendering with the generation lease
 
 - Extended the production lease through `ProductionManagementAgent.assembleVideo()` into `AIVideoGenerator.generateVideo()`. The attempt UUID and lease assertion now flow to media provider clips, CineCode scenes, hybrid FFmpeg rendering, slideshow rendering, audio mux and simulation.
