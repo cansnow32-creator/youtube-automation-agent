@@ -232,6 +232,17 @@ async function run() {
     assert.ok(scoreViewerValue({ angle: 'Compare three editing workflows step by step', rationale: 'A practical checklist for beginners' }) >
       scoreViewerValue({ angle: 'A general look at editing', rationale: 'An overview' }),
       'specific, actionable angles should rank above vague descriptions');
+    assert.ok(ranked[0].scoreBreakdown.viewerValue >= 70,
+      'clear practical angles should receive a stronger viewer-value score');
+    assert.equal(ranked[0].scoreBreakdown.productionFit, 100,
+      'ideas matching the channel preferred format should receive full production-fit score');
+    const { scoreProductionFit, scoreViewerValue } = require('../utils/trend-idea-ranker');
+    assert.equal(scoreProductionFit({ format: 'story' }, { default_format: 'tutorial' }), 65);
+    assert.equal(scoreProductionFit({ format: 'tutorial' }, {}), 75,
+      'missing production preferences should remain neutral rather than invent constraints');
+    assert.ok(scoreViewerValue({ angle: 'Compare three editing workflows step by step', rationale: 'A practical checklist for beginners' }) >
+      scoreViewerValue({ angle: 'A general look at editing', rationale: 'An overview' }),
+      'specific, actionable angles should rank above vague descriptions');
     assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 2,
       'multiple measurement windows for one video count as one independent sample');
 
