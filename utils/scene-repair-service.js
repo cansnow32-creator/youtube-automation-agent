@@ -197,7 +197,7 @@ class SceneRepairService {
       await assertLease();
       const output = path.join(directory, `${String(scene.position).padStart(3, '0')}_r1.mp3`);
       try {
-        await runFFmpeg(['-y', '-ss', start.toFixed(2), '-t', Number(scene.duration).toFixed(2), '-i', audioPath, '-vn', '-c:a', 'libmp3lame', output]);
+        await this.runFFmpeg(['-y', '-ss', start.toFixed(2), '-t', Number(scene.duration).toFixed(2), '-i', audioPath, '-vn', '-c:a', 'libmp3lame', output]);
         await assertLease();
         scene.audioPath = output;
         scene.narrationStatus = 'current';
