@@ -977,21 +977,43 @@ class Database {
     return production.id;
   }
 
-  async updateProductionData(production) {
-    await this.executeQuery(
+  leaseGuard(lease, productionId) {
+    if (!lease) return { sql: '', params: [] };
+    if (lease.productionId !== productionId || !lease.owner) {
+      throw Object.assign(new Error('Production operation lease context is invalid'), { code: 'SCENE_EDIT_LEASE_INVALID', status: 409 });
+    }
+    return {
+      sql: ` AND EXISTS (SELECT 1 FROM production_operation_locks
+        WHERE production_id = ? AND owner = ? AND expires_at > ?)`,
+      params: [productionId, lease.owner, Date.now()]
+    };
+  }
+
+  async requireLeaseWrite(result, lease) {
+    if (lease && result.changes !== 1) {
+      throw Object.assign(new Error('Production operation lease was lost before the database write'), { code: 'SCENE_EDIT_LEASE_LOST', status: 409 });
+    }
+    return result;
+  }
+
+  async updateProductionData(production, lease = null) {
+    const guard = this.leaseGuard(lease, production.id);
+    const result = await this.executeQuery(
       `UPDATE productions SET 
         status = ?, assets = ?, timeline = ?, 
         scheduled_publish_time = ?, priority = ?
-      WHERE id = ?`,
+      WHERE id = ?${guard.sql}`,
       [
         production.status,
         JSON.stringify(production.assets),
         JSON.stringify(production.timeline),
         production.scheduledPublishTime,
         production.priority,
-        production.id
+        production.id,
+        ...guard.params
       ]
     );
+    await this.requireLeaseWrite(result, lease);
   }
 
   async getProductionPipeline() {
@@ -1490,11 +1512,12 @@ class Database {
     ));
   }
 
-  async updateProductionScene(productionId, sceneId, changes = {}) {
+  async updateProductionScene(productionId, sceneId, changes = {}, lease = null) {
     const current = await this.getProductionScene(productionId, sceneId);
     if (!current) return null;
     const next = { ...current, ...changes };
-    await this.executeQuery(
+    const guard = this.leaseGuard(lease, productionId);
+    const result = await this.executeQuery(
       `UPDATE production_scenes SET
         position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
         asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
@@ -1504,7 +1527,7 @@ class Database {
         locked = ?, rights_confirmed = ?, provenance_source_ids = ?,
         contains_synthetic_media = ?, estimated_cost = ?, actual_cost = ?,
         updated_at = datetime('now')
-       WHERE production_id = ? AND id = ?`,
+       WHERE production_id = ? AND id = ?${guard.sql}`,
       [
         next.position, next.label, next.scriptText || '', next.prompt || '', next.duration,
         next.assetType || 'missing', next.assetOrigin || 'generated', next.assetPath || null,
@@ -1515,9 +1538,10 @@ class Database {
         next.locked ? 1 : 0, next.rightsConfirmed ? 1 : 0,
         JSON.stringify(next.provenanceSourceIds || []), next.containsSyntheticMedia ? 1 : 0,
         JSON.stringify(next.estimatedCost || {}), JSON.stringify(next.actualCost || {}),
-        productionId, sceneId
+        productionId, sceneId, ...guard.params
       ]
     );
+    await this.requireLeaseWrite(result, lease);
     return this.getProductionScene(productionId, sceneId);
   }
 
@@ -1540,20 +1564,23 @@ class Database {
     return this.listProductionScenes(productionId);
   }
 
-  async saveProductionSceneRevision(input = {}) {
+  async saveProductionSceneRevision(input = {}, lease = null) {
     const id = this.generateId('scene_revision');
-    await this.executeQuery(
+    const result = await this.executeQuery(
       `INSERT INTO production_scene_revisions (
         id, production_id, scene_id, action, status, before_state, after_state,
         cost_evidence, error, completed_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM production_operation_locks WHERE production_id = ? AND owner = ? AND expires_at > ?)`,
       [
         id, input.productionId, input.sceneId, input.action, input.status || 'completed',
         JSON.stringify(input.before || {}), JSON.stringify(input.after || {}),
         JSON.stringify(input.costEvidence || {}), input.error || null,
-        input.completedAt || new Date().toISOString()
+        input.completedAt || new Date().toISOString(),
+        input.productionId, lease?.owner || '', Date.now()
       ]
     );
+    await this.requireLeaseWrite(result, lease);
     return this.getProductionSceneRevision(id);
   }
 
@@ -1855,11 +1882,12 @@ class Database {
     return this.getProductionBundle(productionId);
   }
 
-  async saveContentProvenance(productionId, provenance = {}) {
-    await this.executeQuery(
+  async saveContentProvenance(productionId, provenance = {}, lease = null) {
+    const guard = this.leaseGuard(lease, productionId);
+    const result = await this.executeQuery(
       `INSERT INTO content_provenance (
         production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, datetime('now') WHERE 1 = 1${guard.sql}
       ON CONFLICT(production_id) DO UPDATE SET
         sources = excluded.sources, claims = excluded.claims,
         contains_synthetic_media = excluded.contains_synthetic_media,
@@ -1872,9 +1900,11 @@ class Database {
         Number(provenance.containsSyntheticMedia === true),
         provenance.status || 'not_required',
         JSON.stringify(provenance.summary || {}),
-        provenance.reviewedAt || null
+        provenance.reviewedAt || null,
+        ...guard.params
       ]
     );
+    await this.requireLeaseWrite(result, lease);
     return this.getContentProvenance(productionId);
   }
 
