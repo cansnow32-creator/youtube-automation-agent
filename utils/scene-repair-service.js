@@ -177,6 +177,44 @@ class SceneRepairService {
     }
   }
 
+  async withProductionOperationLease(productionId, operation, label = 'scene operation') {
+    const owner = crypto.randomUUID();
+    let acquired = false;
+    let heartbeat = null;
+    let renewalInFlight = Promise.resolve();
+    let leaseFailure = null;
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    try {
+      if (typeof this.db.acquireProductionOperationLock === 'function') {
+        acquired = await this.db.acquireProductionOperationLock(productionId, owner);
+        if (!acquired) throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
+        if (typeof this.db.renewProductionOperationLock === 'function') {
+          heartbeat = setInterval(() => {
+            renewalInFlight = renewalInFlight.then(async () => {
+              if (!acquired || leaseFailure) return;
+              const renewed = await this.db.renewProductionOperationLock(productionId, owner);
+              if (!renewed) leaseFailure = this.error(`The ${label} lease was lost; this operation cannot commit further changes`, 409, 'SCENE_EDIT_LEASE_LOST');
+            }).catch(error => {
+              leaseFailure = this.error(`The ${label} lease could not be verified: ${error.message}`, 503, 'SCENE_EDIT_LEASE_UNVERIFIED');
+            });
+          }, 60 * 1000);
+          heartbeat.unref?.();
+        }
+      }
+      await assertLease();
+      return await operation(assertLease);
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      await renewalInFlight;
+      if (acquired) await this.db.releaseProductionOperationLock(productionId, owner).catch(error => {
+        this.logger.warn(`Could not release ${label} lease for ${productionId}: ${error.message}`);
+      });
+    }
+  }
+
   async ensureManifest(bundle, assertLease = async () => {}) {
     await assertLease();
     if (bundle.scenes?.length) return bundle.scenes;
@@ -324,7 +362,12 @@ class SceneRepairService {
   }
 
   async regenerateNarration(productionId, sceneId, input = {}) {
-    const bundle = await this.getEditableBundle(productionId);
+    return this.withProductionOperationLease(productionId, assertLease => this.regenerateNarrationUnlocked(productionId, sceneId, input, assertLease), 'narration regeneration');
+  }
+
+  async regenerateNarrationUnlocked(productionId, sceneId, input = {}, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
     if (scene.locked) throw this.error('Unlock this scene before regenerating narration', 409);
@@ -336,18 +379,23 @@ class SceneRepairService {
     const outputPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}.mp3`);
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     try {
+      await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'generating', narrationError: null
       });
       const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath);
+      await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       if (!await this.videoGenerator.isUsableAudioFile(generatedPath)) {
         throw this.error('Narration regeneration returned no usable audio; configure a live TTS provider and retry', 422, 'NARRATION_UNAVAILABLE');
       }
+      await assertLease();
       const duration = await this.narrationDuration(generatedPath, scene);
+      await assertLease();
       const cost = evidence.cost || {
         provider: evidence.provider || 'configured-tts', amount: null, currency: null, invoiceRequired: true
       };
+      await assertLease();
       const next = await this.db.updateProductionScene(productionId, sceneId, {
         audioPath: generatedPath,
         duration,
@@ -361,15 +409,18 @@ class SceneRepairService {
         status: scene.status === 'visual_stale' ? 'visual_stale' : 'needs_rebuild',
         revision: scene.revision + 1
       });
+      await assertLease();
       await this.updateProductionAudioState(bundle, {
         status: 'partial', path: null, simulated: false, intentionalSilence: false,
         error: 'Scene narration changed; rebuild the final narration mix before approval'
       });
+      await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate_narration', before, after: next, costEvidence: cost
       });
       return next;
     } catch (error) {
+      await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'failed', narrationProvider: evidence.provider || scene.narrationProvider,
@@ -386,7 +437,12 @@ class SceneRepairService {
   }
 
   async setSilenceOverride(productionId, input = {}) {
-    const bundle = await this.getEditableBundle(productionId);
+    return this.withProductionOperationLease(productionId, assertLease => this.setSilenceOverrideUnlocked(productionId, input, assertLease), 'silence override');
+  }
+
+  async setSilenceOverrideUnlocked(productionId, input = {}, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     const enabled = input.enabled === true;
     const reason = String(input.reason || '').trim();
     if (enabled && input.confirmed !== true) {
@@ -408,11 +464,14 @@ class SceneRepairService {
           externalTaskId: null, generatedAt: changedAt, cost: { billed: false },
           error: 'Narration is required; regenerate every missing scene before approval'
         };
+    await assertLease();
     await this.updateProductionAudioState(bundle, audioChanges);
     const updated = [];
     for (const scene of bundle.scenes) {
+      await assertLease();
       const before = scene;
       const hasAudio = !enabled && scene.audioPath && await this.pathExists(scene.audioPath);
+      await assertLease();
       const next = await this.db.updateProductionScene(productionId, scene.id, {
         audioPath: enabled ? null : scene.audioPath,
         narrationStatus: enabled ? 'intentional_silence' : hasAudio ? 'current' : 'unavailable',
@@ -425,6 +484,7 @@ class SceneRepairService {
         status: scene.status === 'visual_stale' ? 'visual_stale' : 'needs_rebuild',
         revision: scene.revision + 1
       });
+      await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId: scene.id, action: enabled ? 'confirm_intentional_silence' : 'require_narration',
         before, after: next, costEvidence: { billed: false }
@@ -461,7 +521,12 @@ class SceneRepairService {
   }
 
   async regenerate(productionId, sceneId, input = {}) {
-    const bundle = await this.getEditableBundle(productionId);
+    return this.withProductionOperationLease(productionId, assertLease => this.regenerateUnlocked(productionId, sceneId, input, assertLease), 'visual regeneration');
+  }
+
+  async regenerateUnlocked(productionId, sceneId, input = {}, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
     if (scene.locked) throw this.error('Unlock this scene before regenerating it', 409);
@@ -472,6 +537,7 @@ class SceneRepairService {
     let visual = {};
     let narration = {};
     try {
+      await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, { status: 'generating' });
       if (estimate.paid) {
         const provider = this.mediaGeneration.registry.get(estimate.provider);
@@ -486,6 +552,7 @@ class SceneRepairService {
           jobId: `repair_${productionId}_${scene.id}_${scene.revision + 1}`,
           productionId, scene: { index: scene.position, prompt: scene.prompt }, provider, outputPath, request
         });
+        await assertLease();
         visual = {
           assetType: 'video', assetOrigin: 'generated', assetPath: result.outputPath,
           provider: provider.id, model: result.task.model, externalTaskId: result.task.external_task_id,
@@ -494,6 +561,7 @@ class SceneRepairService {
       } else {
         const profile = await this.db.getChannelProfile?.() || {};
         const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1);
+        await assertLease();
         const assetPath = assets[0];
         const generatedImageUsable = assetPath && IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase())
           && await this.isUsableSceneAsset({ assetType: 'image', assetPath });
@@ -507,6 +575,7 @@ class SceneRepairService {
         const audioPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}.mp3`);
         await fs.mkdir(path.dirname(audioPath), { recursive: true });
         const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, audioPath);
+        await assertLease();
         if (!await this.videoGenerator.isUsableAudioFile(generatedPath)) {
           throw this.error('Narration regeneration returned a simulation; configure a live TTS provider before rebuilding edited narration', 422, 'NARRATION_UNAVAILABLE');
         }
@@ -519,17 +588,20 @@ class SceneRepairService {
         };
       }
 
+      await assertLease();
       const next = await this.db.updateProductionScene(productionId, sceneId, {
         ...visual, ...narration, status: 'needs_rebuild', revision: scene.revision + 1,
         estimatedCost: estimate,
         actualCost: { generatedSeconds: estimate.generatedSeconds, provider: estimate.provider, amount: null, currency: null, invoiceRequired: estimate.paid }
       });
+      await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', before, after: next,
         costEvidence: next.actualCost
       });
       return { scene: next, estimate };
     } catch (error) {
+      await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, { status: 'failed' }).catch(() => {});
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', status: 'failed', before,
