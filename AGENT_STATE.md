@@ -407,3 +407,13 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Static JS syntax and package JSON/test-wiring checks passed. Runtime tests/lint were not executed. PR #2 remains open/draft/unmerged; no retarget/rebase/merge performed.
 
 - Follow-up: aligned the manual `/publish/:contentId` API guard with the publishing service so a Short in `failed` state can be retried after a definite failure, provided its prior approval/evidence remain valid. Uncertain `uploading`/`reconciliation_required` states remain blocked. Commit on PR #2: `d8fdd192f54a6b53f6f8b98c37f601bcfa7cdc99`.
+
+
+## 2026-11-20 — Operator reconciliation for ambiguous YouTube uploads
+
+- Added `GET /api/publishing/unresolved` to list schedule rows stuck in `uploading` or `reconciliation_required`, with a bounded limit and minimal operator-facing fields.
+- Added `POST /api/publishing/:scheduleId/reconcile`. It accepts an 11-character YouTube video ID, verifies the video with `videos.list`, verifies channel ownership against the authenticated account's `channels.list(mine=true)`, and requires normalized title equality before attaching the ID.
+- Added `POST /api/publishing/:scheduleId/resolve-no-upload`. It requires `confirmedAbsent: true`, records the operator decision in schedule metadata, and moves only an unresolved row with no video ID to `failed`, enabling the existing manual retry path. There is no automatic retry for ambiguous outcomes.
+- Added DB methods to list/get unresolved schedule entries and to atomically attach a video or record an absence decision using conditional SQLite updates. A stale or competing action cannot overwrite a different decision.
+- Added `test/publishing-reconciliation.test.js` covering successful attach, wrong-channel rejection, title mismatch, explicit absence confirmation, unresolved listing, and competing CAS decisions. Wired it into `npm test`. Added `docs/PUBLISHING_RECONCILIATION.md` with API and operator instructions.
+- Static JS syntax checks passed for `database/db.js`, `agents/publishing-scheduling-agent.js`, `index.js`, and the new test; package JSON parsed and test wiring was confirmed. Runtime tests/lint were not executed. PR #2 remains open/draft/unmerged; latest head at this checkpoint: `a1b367f96c61d060196f0c7812932febbda8a8da`; no workflow runs found for that head. No merge, rebase, or base change performed.
