@@ -179,3 +179,10 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Re-fetched six implementation/test files from GitHub and parsed JavaScript sources; JSON package manifest parsed and the new test is in `npm test`. No tests or lint were executed. Desktop Commander execution quota is exhausted; GitHub Actions reports 0 runs for the current PR #2 head.
 - Cooperative assertions still do not create an atomic transaction spanning the lease row and each subsequent DB/file mutation. Existing lease-loss guards reduce stale writes, but the gap between assertion and mutation remains a known limitation.
 - Next: continue auditing production recovery and final video/asset publication for stale-worker side effects; then obtain CI via GitHub Actions UI or authorized workflow dispatch. No dispatch action is available through the current connector. Preserve stacked PRs; do not merge.
+
+
+## Next PR #2 media-output audit finding — 2026-11-20
+
+- Static inspection of `ProductionManagementAgent` found remaining production-ID-stable output paths in `generateAudioNarration()` (`_narration.mp3` and simulation sidecar), `generateCaptions()` (`_captions.srt`), `assembleVideo()` (`_final.mp4`, `_music_mixed.mp4`, `_captioned.mp4`, `.rendering.mp4`, render manifest/temp), and `simulateVideoAssembly()` (`.assembly.json`).
+- These functions do have cooperative lease assertions, but a long-running provider/FFmpeg failure or lease loss can leave intermediate files at shared production paths. This audit finding is not yet changed; next step is attempt-scoped paths and cleanup while preserving reusable, already-persisted artifacts.
+- Current PR #2 head remains `bce6c2c718f81754ac99013a997fc62c620d69d0` at the time of this note, open/draft/unmerged, mergeable false, and with zero workflow runs. Re-fetch live PR metadata before any next change.
