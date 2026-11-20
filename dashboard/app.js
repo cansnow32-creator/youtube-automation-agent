@@ -98,6 +98,8 @@ async function refreshDashboard(silent = false) {
   if (!silent) $('#loading').classList.add('active');
   try {
     ui.state = await api('/api/dashboard');
+    const qualityQueue = await api('/api/script-quality-reviews?status=pending&limit=50');
+    ui.state.scriptQualityReviews = qualityQueue.reviews || [];
     renderDashboard();
   } catch (error) {
     $('#system-label').textContent = 'Dashboard unavailable';
