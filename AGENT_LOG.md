@@ -2,6 +2,15 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Fence scene rebuild manifest and shared-output cleanup with lease checks
+
+- Static review found `rebuildUnlocked()` called `getEditableBundle()` which could create a missing scene manifest through `ensureManifest()` without receiving the active rebuild lease. It also validated and hashed scene files without periodic lease checks, and could delete a shared visual/final output after a validation failure before verifying ownership.
+- Threaded the rebuild lease into `getEditableBundle()` and `ensureManifest()`, added checks during scene validation and fingerprint hashing, and asserted ownership before deleting invalid shared outputs and before returning a cached narration mix.
+- Added a regression test proving lease loss during missing-manifest initialization prevents `replaceProductionScenes()` from running.
+- Commits on `feat/video-concept-approval`: `711bc570229cfbd170d04328001bfa9451000d7e`, `6222a5cf7deb033f02634afc8b64e3e83a0a4971`.
+- Re-fetched changed source and tests. PR #2 remains open/draft/unmerged, stacked on PR #1, and GitHub reports zero workflow runs for current head `6222a5cf7deb033f02634afc8b64e3e83a0a4971`. Tests/lint were not executed; no pass is claimed.
+- Next: audit scene-edit endpoints for cross-process serialization/lease coverage; establish CI execution. Do not merge.
+
 ## 2026-11-20 — Harden scene-manifest lease regression test
 
 - Follow-up review found the scene-manifest test had been duplicated during concurrent edits, which would redeclare `const` variables in the same test scope. Removed the duplicate case and retained the stronger assertion that lease loss remains persistent through the FFmpeg catch path.
