@@ -1,11 +1,19 @@
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs').promises;
+const sharp = require('sharp');
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
+const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
+const { mixBackgroundMusic } = require('../utils/audio-mixer');
+const { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent } = require('../utils/subtitle-renderer');
+const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
+const { createProductionWorkflow, runProductionStage, prepareProductionWorkflowForResume } = require('../utils/production-stage-workflow');
+const { assertScriptQualityGate } = require('../utils/script-quality-gate');
 
 class ProductionManagementAgent {
-  constructor(db, credentials) {
+  constructor(db, credentials, options = {}) {
     this.db = db;
     this.credentials = credentials;
     this.logger = new Logger('ProductionManagement');
@@ -13,6 +21,12 @@ class ProductionManagementAgent {
     this.assets = new Map();
     this.aiVideoGenerator = new AIVideoGenerator(credentials, { db });
     this.sceneRepair = new SceneRepairService(db, this.aiVideoGenerator, { logger: this.logger });
+    this.audioMixer = options.audioMixer || mixBackgroundMusic;
+    this.audioMixerDependencies = {
+      runFFmpeg: options.runFFmpeg || runFFmpeg,
+      getMediaInfo: options.getMediaInfo || getMediaInfo,
+      getAudioInfo: options.getAudioInfo || getAudioInfo
+    };
   }
 
   async initialize() {
@@ -47,15 +61,91 @@ class ProductionManagementAgent {
   }
 
   async processContent(contentData) {
+    const jobId = contentData?.jobId;
+    if (!jobId) return this.processContentUnlocked(contentData);
+    if (typeof this.db.acquireProductionOperationLock !== 'function') {
+      throw new Error('Job production requires database operation-lock support');
+    }
+    const lockId = `job:${jobId}`;
+    const owner = `job_${process.pid}_${crypto.randomUUID()}`;
+    const leaseMs = 2 * 60 * 60 * 1000;
+    const acquired = await this.db.acquireProductionOperationLock(lockId, owner, leaseMs);
+    if (!acquired) {
+      const error = new Error(`Generation job ${jobId} is already being processed`);
+      error.code = 'PRODUCTION_JOB_LOCKED';
+      error.status = 409;
+      throw error;
+    }
+    let leaseFailure = null;
+    let renewalInFlight = Promise.resolve();
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    const heartbeat = setInterval(() => {
+      renewalInFlight = this.db.renewProductionOperationLock(lockId, owner, leaseMs)
+        .then(renewed => {
+          if (!renewed) leaseFailure = Object.assign(
+            new Error(`Generation job lease lost for ${jobId}`),
+            { code: 'PRODUCTION_JOB_LEASE_LOST', status: 409 }
+          );
+        })
+        .catch(cause => {
+          leaseFailure = Object.assign(
+            new Error(`Generation job lease could not be verified for ${jobId}: ${cause.message}`),
+            { code: 'PRODUCTION_JOB_LEASE_UNVERIFIED', status: 503 }
+          );
+        });
+    }, 30_000);
+    heartbeat.unref?.();
+    try {
+      return await this.processContentUnlocked(contentData, assertLease);
+    } finally {
+      clearInterval(heartbeat);
+      await renewalInFlight.catch(() => {});
+      await this.db.releaseProductionOperationLock(lockId, owner).catch(error => {
+        this.logger.error('Failed to release generation job lock:', error);
+      });
+    }
+  }
+
+  async processContentUnlocked(contentData, assertLease = async () => {}) {
+    await assertLease();
+    let productionData = null;
     try {
       this.logger.info('Processing content for production...');
       
-      const { strategy, script, thumbnail, seo, jobId = null } = contentData;
-      
+      const { strategy: inputStrategy, script, thumbnail, seo, jobId = null } = contentData;
+      assertScriptQualityGate(script);
+      const requestedConceptId = contentData.approvedConceptId ||
+        inputStrategy?.approvedVideoConceptId ||
+        inputStrategy?.approvedVideoConcept?.id;
+      const approvedConcept = await requireApprovedVideoConcept(this.db, requestedConceptId);
+      const strategy = {
+        ...(inputStrategy || {}),
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      };
+
+      // A failed generation-stage retry must resume the persisted production for
+      // this job instead of creating a duplicate production and repeating media work.
+      if (jobId && typeof this.db.getProductionBundleByJobId === 'function') {
+        const existing = await this.db.getProductionBundleByJobId(jobId);
+        await assertLease();
+        if (existing) {
+          if (existing.script?.title !== script?.title ||
+              existing.timeline?.jobId !== jobId) {
+            throw new Error('A persisted production exists for this job but its script/job identity does not match; refusing duplicate production');
+          }
+          this.logger.info(`Resuming persisted production ${existing.id} for generation job ${jobId}`);
+          return this.resumeProduction(existing.id);
+        }
+      }
+
       // Create production entry
       const productionId = this.generateProductionId();
       
-      const productionData = {
+      productionData = {
         id: productionId,
         strategy,
         script,
@@ -76,7 +166,8 @@ class ProductionManagementAgent {
           audioGenerated: null,
           videoGenerated: null,
           captionsGenerated: null,
-          readyForUpload: null
+          readyForUpload: null,
+          jobId
         },
         scheduledPublishTime: this.calculatePublishTime(strategy),
         priority: this.calculatePriority(strategy),
@@ -84,37 +175,73 @@ class ProductionManagementAgent {
         createdAt: new Date().toISOString()
       };
       productionData.jobId = jobId;
+      productionData.timeline.productionWorkflow = createProductionWorkflow(approvedConcept.id);
+      const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
       
       // Add to pipeline
       this.pipeline.push(productionData);
       
       // Save to database
+      await assertLease();
       await this.db.saveProductionData(productionData);
+      await assertLease();
+      await this.db.saveProductionSnapshot(productionData);
       
-      // Generate video content
-      await this.generateVideoContent(productionData);
-      
-      // Generate audio narration
-      await this.generateAudioNarration(productionData);
-      
-      // Generate captions
-      await this.generateCaptions(productionData);
-      
-      // Final assembly
-      await this.assembleVideo(productionData);
-
-      // Persist a scene-addressable production manifest for selective review and repair.
-      await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+      // Persist stage transitions so interrupted or failed work is visible in the production record.
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'visuals',
+        async () => {
+          const assets = await this.generateVideoContent(productionData);
+          const realAssets = Array.isArray(assets)
+            ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
+            : [];
+          if (!realAssets.length) throw new Error('Visual stage produced placeholder assets only; configure a working image provider before retrying');
+          return { assetCount: realAssets.length };
+        },
+        persistWorkflow
+      );
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'narration',
+        async () => {
+          const audioPath = await this.generateAudioNarration(productionData);
+          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+          }
+          return { audioPath, provider: productionData.assets.audio.provider || null };
+        },
+        persistWorkflow
+      );
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'editing',
+        async () => {
+          await this.generateCaptions(productionData);
+          await this.assembleVideo(productionData);
+          const finalVideo = productionData.assets.finalVideo;
+          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
+          }
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          return {
+            captionsGenerated: Boolean(productionData.assets.captions?.path),
+            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+            simulated: Boolean(productionData.assets.finalVideo?.simulated)
+          };
+        },
+        persistWorkflow
+      );
 
       // Mark as ready — or simulated, when no real video could be produced
-      const simulated = Boolean(productionData.assets.finalVideo?.simulated);
-      if (simulated) {
-        productionData.status = 'simulated';
-        this.logger.warn(`Content ${productionId} produced PLACEHOLDER assets only — it will NOT be uploaded. Check your AI provider keys and FFmpeg installation.`);
-      } else {
-        productionData.status = 'ready';
-        productionData.timeline.readyForUpload = new Date().toISOString();
+      await assertLease();
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        throw new Error('Production cannot be marked ready without a real MP4 final video');
       }
+      await assertLease();
+      productionData.status = 'ready';
+      productionData.timeline.readyForUpload = new Date().toISOString();
 
       await this.db.updateProductionData(productionData);
 
@@ -122,6 +249,168 @@ class ProductionManagementAgent {
       return productionData;
     } catch (error) {
       this.logger.error('Failed to process content:', error);
+      if (productionData?.id) {
+        await assertLease();
+        productionData.status = 'failed';
+        productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
+        await this.db.updateProductionData(productionData).catch(persistError => {
+          this.logger.error('Failed to persist production failure state:', persistError);
+        });
+      }
+      throw error;
+    }
+  }
+
+  async resumeProduction(productionId) {
+    if (typeof this.db.acquireProductionOperationLock !== 'function') {
+      throw new Error('Production resume requires database operation-lock support');
+    }
+    const owner = `resume_${process.pid}_${crypto.randomUUID()}`;
+    const leaseMs = 2 * 60 * 60 * 1000;
+    const acquired = await this.db.acquireProductionOperationLock(productionId, owner, leaseMs);
+    if (!acquired) {
+      const error = new Error(`Production ${productionId} is already being processed by another worker`);
+      error.code = 'PRODUCTION_OPERATION_LOCKED';
+      error.status = 409;
+      throw error;
+    }
+
+    let leaseFailure = null;
+    let renewalInFlight = Promise.resolve();
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    const heartbeat = setInterval(() => {
+      renewalInFlight = this.db.renewProductionOperationLock(productionId, owner, leaseMs)
+        .then(renewed => {
+          if (!renewed) {
+            leaseFailure = Object.assign(
+              new Error(`Production resume lease lost for ${productionId}`),
+              { code: 'PRODUCTION_RESUME_LEASE_LOST', status: 409 }
+            );
+          }
+        })
+        .catch(cause => {
+          leaseFailure = Object.assign(
+            new Error(`Production resume lease could not be verified for ${productionId}: ${cause.message}`),
+            { code: 'PRODUCTION_RESUME_LEASE_UNVERIFIED', status: 503 }
+          );
+        });
+    }, 30_000);
+    heartbeat.unref?.();
+
+    try {
+      return await this.resumeProductionUnlocked(productionId, assertLease);
+    } finally {
+      clearInterval(heartbeat);
+      await renewalInFlight.catch(() => {});
+      await this.db.releaseProductionOperationLock(productionId, owner).catch(error => {
+        this.logger.error('Failed to release production resume lock:', error);
+      });
+    }
+  }
+
+  async resumeProductionUnlocked(productionId, assertLease = async () => {}) {
+    await assertLease();
+    const stored = await this.db.getProductionBundle(productionId);
+    if (!stored) throw new Error(`Production not found: ${productionId}`);
+    const approvedConcept = await requireApprovedVideoConcept(
+      this.db,
+      stored.strategy?.approvedVideoConceptId || stored.strategy?.approvedVideoConcept?.id
+    );
+    const productionData = {
+      id: stored.id,
+      strategy: {
+        ...(stored.strategy || {}),
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      },
+      script: stored.script,
+      thumbnail: stored.thumbnail,
+      seo: stored.seo,
+      assets: stored.assets || {},
+      timeline: stored.timeline || {},
+      scheduledPublishTime: stored.scheduled_publish_time,
+      priority: stored.priority,
+      estimatedDuration: stored.estimated_duration,
+      jobId: stored.timeline?.jobId || null,
+      status: 'processing'
+    };
+    assertScriptQualityGate(productionData.script);
+    const workflow = productionData.timeline.productionWorkflow;
+    const nextStage = prepareProductionWorkflowForResume(workflow);
+    if (!nextStage) {
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        productionData.status = 'failed';
+        productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
+        await assertLease();
+        await this.db.updateProductionData(productionData);
+        throw new Error(productionData.timeline.lastProductionError);
+      }
+      productionData.status = 'ready';
+      await assertLease();
+      await this.db.updateProductionData(productionData);
+      return productionData;
+    }
+    const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
+    try {
+      await assertLease();
+      if (workflow.stages.visuals.status !== 'completed') {
+        await runProductionStage(workflow, 'visuals', async () => {
+          const assets = await this.generateVideoContent(productionData);
+          const realAssets = Array.isArray(assets)
+            ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
+            : [];
+          if (!realAssets.length) throw new Error('Visual stage produced placeholder assets only; configure a working image provider before retrying');
+          return { assetCount: realAssets.length };
+        }, persistWorkflow);
+      }
+      await assertLease();
+      if (workflow.stages.narration.status !== 'completed') {
+        await runProductionStage(workflow, 'narration', async () => {
+          const audioPath = await this.generateAudioNarration(productionData);
+          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+          }
+          return { audioPath, provider: productionData.assets.audio.provider || null };
+        }, persistWorkflow);
+      }
+      await assertLease();
+      if (workflow.stages.editing.status !== 'completed') {
+        await runProductionStage(workflow, 'editing', async () => {
+          await this.generateCaptions(productionData);
+          await this.assembleVideo(productionData);
+          const finalVideo = productionData.assets.finalVideo;
+          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
+          }
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          return {
+            captionsGenerated: Boolean(productionData.assets.captions?.path),
+            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+            simulated: Boolean(productionData.assets.finalVideo?.simulated)
+          };
+        }, persistWorkflow);
+      }
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        throw new Error('Production cannot be marked ready without a real MP4 final video');
+      }
+      productionData.status = 'ready';
+      productionData.timeline.readyForUpload = new Date().toISOString();
+      await assertLease();
+      await this.db.updateProductionData(productionData);
+      const index = this.pipeline.findIndex(item => item.id === productionId);
+      if (index >= 0) this.pipeline[index] = productionData;
+      else this.pipeline.push(productionData);
+      return productionData;
+    } catch (error) {
+      await assertLease();
+      productionData.status = 'failed';
+      productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
+      await this.db.updateProductionData(productionData);
       throw error;
     }
   }
@@ -306,39 +595,130 @@ class ProductionManagementAgent {
   }
 
   async generateVideoContent(productionData) {
-    this.logger.info('Generating AI video content...');
-    
-    try {
-      const { script } = productionData;
-      
-      // Generate visual assets using DALL-E
-      const visualPrompts = this.createVisualPromptsFromScript(script);
-      const visualAssets = [];
-      const profile = await this.db.getChannelProfile?.() || {};
-      const visualStyle = profile.visual_style || 'ethereal';
-      
-      for (const prompt of visualPrompts) {
-        const assets = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
-        visualAssets.push(...assets);
+    this.logger.info('Generating AI video content with resumable scene assets...');
+
+    const { script } = productionData;
+    const approvedConcept = productionData.strategy?.approvedVideoConcept || null;
+    const visualPrompts = this.createVisualPromptsFromScript(script, approvedConcept);
+    const profile = await this.db.getChannelProfile?.() || {};
+    const visualStyle = profile.visual_style || 'ethereal';
+    const existingScenes = Array.isArray(productionData.assets.video?.visualSceneAssets)
+      ? productionData.assets.video.visualSceneAssets
+      : [];
+    const scenesByIndex = new Map(existingScenes.map(scene => [scene.sceneIndex, scene]));
+    const visualAssets = [];
+    const failures = [];
+
+    const isUsableImage = async filePath => {
+      if (typeof filePath !== 'string' || !filePath.trim()) return false;
+      if (!['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(filePath).toLowerCase())) return false;
+      try {
+        const stats = await fs.stat(filePath);
+        if (!stats.isFile() || stats.size <= 0) return false;
+        const metadata = await sharp(filePath, { failOn: 'error' }).metadata();
+        return Boolean(
+          metadata.width &&
+          metadata.height &&
+          ['png', 'jpeg', 'webp'].includes(metadata.format)
+        );
+      } catch (_error) {
+        return false;
       }
-      
-      productionData.assets.video = {
-        visualAssets: visualAssets,
-        duration: productionData.estimatedDuration,
-        format: 'mp4',
-        resolution: '1920x1080',
-        fps: 30,
-        generatedWith: 'AI'
-      };
-      
-      productionData.timeline.videoGenerated = new Date().toISOString();
-      
-      return visualAssets;
-    } catch (error) {
-      this.logger.error('AI video content generation failed:', error);
-      // Fallback to placeholder
-      return await this.createVideoElements(productionData);
+    };
+
+    for (let sceneIndex = 0; sceneIndex < visualPrompts.length; sceneIndex++) {
+      const prompt = visualPrompts[sceneIndex];
+      const promptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ prompt, visualStyle }))
+        .digest('hex');
+      const previous = scenesByIndex.get(sceneIndex);
+
+      if (previous?.promptHash === promptHash && await isUsableImage(previous.path)) {
+        visualAssets.push(previous.path);
+        continue;
+      }
+
+      try {
+        const generated = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
+        const imagePath = Array.isArray(generated)
+          ? generated.find(candidate => typeof candidate === 'string' && path.extname(candidate).toLowerCase() !== '.info')
+          : null;
+        if (!await isUsableImage(imagePath)) {
+          throw new Error('Image provider returned no valid image file; placeholder assets are not accepted');
+        }
+
+        const sceneRecord = {
+          sceneIndex,
+          promptHash,
+          prompt,
+          path: imagePath,
+          status: 'ready',
+          generatedAt: new Date().toISOString()
+        };
+        scenesByIndex.set(sceneIndex, sceneRecord);
+        visualAssets.push(imagePath);
+        productionData.assets.video = {
+          ...(productionData.assets.video || {}),
+          visualAssets: [...visualAssets],
+          visualSceneAssets: [...scenesByIndex.values()].sort((a, b) => a.sceneIndex - b.sceneIndex),
+          duration: productionData.estimatedDuration,
+          format: 'mp4',
+          resolution: '1920x1080',
+          fps: 30,
+          generatedWith: 'AI'
+        };
+        productionData.timeline.visualGeneration = {
+          totalScenes: visualPrompts.length,
+          completedScenes: visualAssets.length,
+          failedScenes: failures.map(item => item.sceneIndex),
+          updatedAt: new Date().toISOString()
+        };
+        // Persist immediately: a later scene failure must not lose earlier images.
+        await this.db.updateProductionData(productionData);
+      } catch (error) {
+        failures.push({ sceneIndex, message: String(error?.message || error).slice(0, 300) });
+        this.logger.warn(`Visual scene ${sceneIndex + 1}/${visualPrompts.length} failed: ${error.message}`);
+        // Stop at the first provider failure to avoid spending on later scenes
+        // while the provider is unavailable; successful earlier scenes are safe.
+        break;
+      }
     }
+
+    const validAssets = [];
+    for (let sceneIndex = 0; sceneIndex < visualPrompts.length; sceneIndex++) {
+      const scene = scenesByIndex.get(sceneIndex);
+      const expectedHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ prompt: visualPrompts[sceneIndex], visualStyle })).digest('hex');
+      if (scene?.promptHash === expectedHash && await isUsableImage(scene.path)) validAssets.push(scene.path);
+    }
+
+    productionData.assets.video = {
+      ...(productionData.assets.video || {}),
+      visualAssets: validAssets,
+      visualSceneAssets: [...scenesByIndex.values()].sort((a, b) => a.sceneIndex - b.sceneIndex),
+      duration: productionData.estimatedDuration,
+      format: 'mp4',
+      resolution: '1920x1080',
+      fps: 30,
+      generatedWith: 'AI'
+    };
+    productionData.timeline.visualGeneration = {
+      totalScenes: visualPrompts.length,
+      completedScenes: validAssets.length,
+      failedScenes: visualPrompts.map((_, index) => index).filter(index => !validAssets.some(filePath => filePath === scenesByIndex.get(index)?.path)),
+      updatedAt: new Date().toISOString()
+    };
+    await this.db.updateProductionData(productionData);
+
+    if (validAssets.length !== visualPrompts.length) {
+      const failedCount = visualPrompts.length - validAssets.length;
+      const details = failures.map(item => `scene ${item.sceneIndex + 1}: ${item.message}`).join(' | ');
+      throw new Error(`Visual generation incomplete: ${validAssets.length}/${visualPrompts.length} scenes ready; ${failedCount} scene(s) will be retried. ${details}`);
+    }
+
+    productionData.timeline.videoGenerated = new Date().toISOString();
+    await this.db.updateProductionData(productionData);
+    return validAssets;
   }
 
   async createVideoElements(productionData) {
@@ -435,15 +815,30 @@ class ProductionManagementAgent {
     try {
       const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
       
-      // Read the TTS script
+      // Reuse narration only when both its source text/direction and the audio file are valid.
       const ttsText = await fs.readFile(productionData.assets.script.ttsPath, 'utf8');
-      
+      const audioDirection = productionData.strategy?.approvedVideoConcept?.audioDirection || {};
+      const sourceHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ ttsText, audioDirection })).digest('hex');
+      const existingAudio = productionData.assets.audio;
+      if (existingAudio?.sourceHash === sourceHash &&
+          existingAudio.status === 'ready' &&
+          !existingAudio.simulated &&
+          await this.aiVideoGenerator.isUsableAudioFile(existingAudio.path)) {
+        this.logger.info('Reusing validated narration; source text and audio direction are unchanged.');
+        return existingAudio.path;
+      }
+
       // Generate audio using AI TTS and retain the provider evidence returned by the generator.
-      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath);
+      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, { direction: audioDirection });
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
 
       productionData.assets.audio = {
+        direction: audioDirection,
+        sourceHash,
+        directionApplied: Boolean(evidence.directionApplied),
+        directionApplication: evidence.directionApplication || null,
         path: generatedPath,
         duration: productionData.estimatedDuration,
         format: 'mp3',
@@ -472,15 +867,34 @@ class ProductionManagementAgent {
     this.logger.info('Generating captions...');
     
     const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
-    
+    const sourceHash = crypto.createHash('sha256')
+      .update(JSON.stringify(productionData.script)).digest('hex');
+    const existingCaptions = productionData.assets.captions;
+    if (existingCaptions?.sourceHash === sourceHash && existingCaptions.path) {
+      try {
+        const stats = await fs.stat(existingCaptions.path);
+        if (stats.isFile() && stats.size > 0) {
+          const savedCaptions = await fs.readFile(existingCaptions.path, 'utf8');
+          validateSrtContent(savedCaptions);
+          this.logger.info('Reusing validated captions; script content is unchanged.');
+          return existingCaptions.path;
+        }
+      } catch (_error) {
+        // Missing, unreadable or invalid captions are regenerated below.
+      }
+    }
+
     // Generate SRT captions based on script timing
     const captions = await this.createSRTCaptions(productionData);
+    validateSrtContent(captions);
     
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
     await fs.writeFile(captionsPath, captions);
     
     productionData.assets.captions = {
+      designDirection: productionData.strategy?.approvedVideoConcept?.subtitleDirection || null,
       path: captionsPath,
+      sourceHash,
       format: 'srt',
       language: 'en',
       autoGenerated: true
@@ -581,7 +995,7 @@ class ProductionManagementAgent {
     this.logger.info('Assembling final AI-generated video...');
     
     try {
-      const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+      const requestedVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
@@ -593,11 +1007,12 @@ class ProductionManagementAgent {
         productionData.script,
         productionData.assets.video.visualAssets || [],
         productionData.assets.audio.path,
-        finalVideoPath,
+        requestedVideoPath,
         {
           jobId: productionData.jobId,
           productionId: productionData.id,
-          estimatedDuration: productionData.estimatedDuration
+          estimatedDuration: productionData.estimatedDuration,
+          approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
         }
       );
 
@@ -606,11 +1021,130 @@ class ProductionManagementAgent {
         return await this.simulateVideoAssembly(productionData);
       }
 
-      // Get file stats
+      let finalVideoPath = producedPath;
+      const approvedConcept = productionData.strategy?.approvedVideoConcept || {};
+      const audioDirection = approvedConcept.audioDirection || {};
+      const musicAsset = audioDirection.musicAsset || approvedConcept.backgroundMusic || null;
+      if (musicAsset && musicAsset.enabled !== false) {
+        const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music_mixed.mp4`);
+        const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
+        finalVideoPath = mixResult.path;
+        productionData.assets.backgroundMusic = {
+          ...mixResult,
+          direction: typeof audioDirection.music === 'string' ? audioDirection.music : null
+        };
+      } else {
+        productionData.assets.backgroundMusic = {
+          status: musicAsset?.enabled === false ? 'disabled' : 'not_configured',
+          direction: typeof audioDirection.music === 'string' ? audioDirection.music : null
+        };
+      }
+
+      const captionsPath = productionData.assets.captions?.path;
+      if (!captionsPath) throw new Error('A generated SRT captions file is required before production can be marked ready');
+      const captionsContent = await fs.readFile(captionsPath, 'utf8');
+      validateSrtContent(captionsContent);
+      const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
+      if (captionsPath) {
+        const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
+        const captionTempPath = `${captionedPath}.rendering.mp4`;
+        const captionManifestPath = `${captionedPath}.render.json`;
+        const [sourceHash, captionsHash] = await Promise.all([
+          new Promise((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const stream = require('node:fs').createReadStream(finalVideoPath);
+            stream.on('error', reject);
+            stream.on('data', chunk => hash.update(chunk));
+            stream.on('end', () => resolve(hash.digest('hex')));
+          }),
+          new Promise((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const stream = require('node:fs').createReadStream(captionsPath);
+            stream.on('error', reject);
+            stream.on('data', chunk => hash.update(chunk));
+            stream.on('end', () => resolve(hash.digest('hex')));
+          })
+        ]);
+        const captionFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+          sourceHash, captionsHash, subtitleDirection, rendererVersion: 1,
+          codec: 'libx264', preset: 'veryfast', crf: 20
+        })).digest('hex');
+        let captionCached = false;
+        try {
+          const [manifest, cachedStats] = await Promise.all([
+            fs.readFile(captionManifestPath, 'utf8').then(JSON.parse),
+            fs.stat(captionedPath)
+          ]);
+          if (manifest.fingerprint === captionFingerprint && cachedStats.isFile() && cachedStats.size > 0) {
+            const cachedInfo = await getMediaInfo(captionedPath);
+            if (cachedInfo.width && cachedInfo.height && Number.isFinite(cachedInfo.duration) && cachedInfo.duration > 0) {
+              await runFFmpeg(['-v', 'error', '-i', captionedPath, '-f', 'null', '-']);
+              captionCached = true;
+              this.logger.info('Reusing validated caption-rendered video.');
+            }
+          }
+        } catch (_cacheError) {
+          captionCached = false;
+        }
+        if (!captionCached) {
+          await fs.rm(captionTempPath, { force: true });
+          await runFFmpeg([
+            '-y', '-i', finalVideoPath,
+            '-vf', buildSubtitleFilter(captionsPath, subtitleDirection),
+            '-map', '0:v:0', '-map', '0:a:0?',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+            '-c:a', 'copy', '-movflags', '+faststart', captionTempPath
+          ]);
+          const captionedStats = await fs.stat(captionTempPath);
+          if (!captionedStats.isFile() || captionedStats.size <= 0) {
+            throw new Error('Subtitle renderer returned an empty captioned video');
+          }
+          const captionedInfo = await getMediaInfo(captionTempPath);
+          if (!captionedInfo.width || !captionedInfo.height || !Number.isFinite(captionedInfo.duration) || captionedInfo.duration <= 0) {
+            throw new Error('Subtitle renderer returned a video without valid media metadata');
+          }
+          await runFFmpeg(['-v', 'error', '-i', captionTempPath, '-f', 'null', '-']);
+          await fs.rm(captionedPath, { force: true });
+          await fs.rename(captionTempPath, captionedPath);
+          const manifestTempPath = `${captionManifestPath}.tmp`;
+          await fs.writeFile(manifestTempPath, JSON.stringify({
+            version: 1, fingerprint: captionFingerprint, sourceHash, captionsHash,
+            renderedAt: new Date().toISOString()
+          }, null, 2));
+          await fs.rm(captionManifestPath, { force: true });
+          await fs.rename(manifestTempPath, captionManifestPath);
+        }
+        finalVideoPath = captionedPath;
+        productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
+      }
+
+      // Validate the actual encoded output, not only the existence of a non-empty file.
       const stats = await fs.stat(finalVideoPath);
-      
+      if (!stats.isFile() || stats.size <= 0) {
+        throw new Error('Final video assembly returned an empty output file');
+      }
+      const finalMediaInfo = await getMediaInfo(finalVideoPath);
+      if (!finalMediaInfo.width || !finalMediaInfo.height || !Number.isFinite(finalMediaInfo.duration) || finalMediaInfo.duration <= 0) {
+        throw new Error('Final video is missing a valid video stream or duration');
+      }
+      if (!finalMediaInfo.hasAudio && productionData.assets.audio?.intentionalSilence !== true) {
+        throw new Error('Final video is missing the required narration/audio stream');
+      }
+
+      // Preserve and independently validate the clean, subtitle-free source for Shorts.
+      const cleanStats = await fs.stat(producedPath);
+      if (!cleanStats.isFile() || cleanStats.size <= 0 || path.resolve(producedPath) === path.resolve(finalVideoPath)) {
+        throw new Error('Clean source video was not preserved separately from the final captioned video');
+      }
+      const cleanMediaInfo = await getMediaInfo(producedPath);
+      if (!cleanMediaInfo.width || !cleanMediaInfo.height || !Number.isFinite(cleanMediaInfo.duration) || cleanMediaInfo.duration <= 0) {
+        throw new Error('Clean source video is missing a valid video stream or duration');
+      }
+
       productionData.assets.finalVideo = {
         path: finalVideoPath,
+        cleanPath: producedPath,
+        cleanFileSize: cleanStats.size,
         fileSize: stats.size,
         duration: productionData.estimatedDuration,
         generatedWith: 'AI',
@@ -627,8 +1161,9 @@ class ProductionManagementAgent {
       return finalVideoPath;
     } catch (error) {
       this.logger.error('AI video assembly failed:', error);
-      // Fallback to simulation
-      return await this.simulateVideoAssembly(productionData);
+      // Preserve the actual failure reason in the blocked artifact so the
+      // editing-stage retry and operator diagnostics explain what failed.
+      return await this.simulateVideoAssembly(productionData, error.message || String(error));
     }
   }
 
@@ -669,11 +1204,20 @@ class ProductionManagementAgent {
   }
 
   // Helper method to create visual prompts from script content
-  createVisualPromptsFromScript(script) {
+  createVisualPromptsFromScript(script, approvedConcept = null) {
     const prompts = [];
+    const direction = approvedConcept?.visualDirection || {};
+    const scenePlan = Array.isArray(approvedConcept?.scenePlan) ? approvedConcept.scenePlan : [];
+    const conceptPrefix = approvedConcept
+      ? 'Follow approved video concept "' + (approvedConcept.name || '') + '". Visual style: ' +
+        JSON.stringify(direction) + '. Keep palette, composition and background treatment consistent. '
+      : '';
+    for (const scene of scenePlan.slice(0, 5)) {
+      if (scene?.visual) prompts.push(conceptPrefix + scene.visual);
+    }
     
     // Title prompt
-    prompts.push(`${script.title}, clear visual storytelling`);
+    prompts.push(conceptPrefix + `${script.title}, clear visual storytelling`);
     
     // Content-based prompts
     if (script.mainContent && script.mainContent.sections) {

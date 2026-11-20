@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs').promises;
+const fsStreams = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const { getMediaDuration, runFFmpeg } = require('./ffmpeg');
@@ -7,6 +8,33 @@ const { ProvenanceService } = require('./provenance-service');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+
+async function replaceFileWithRollback(tempPath, destinationPath, token = crypto.randomUUID()) {
+  const backupPath = `${destinationPath}.${token}.backup`;
+  let backedUp = false;
+  try {
+    await fs.rename(destinationPath, backupPath);
+    backedUp = true;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  try {
+    await fs.rename(tempPath, destinationPath);
+  } catch (error) {
+    if (backedUp) {
+      try {
+        await fs.rename(backupPath, destinationPath);
+      } catch (restoreError) {
+        error.restoreError = restoreError;
+        error.message += `; previous output restore also failed: ${restoreError.message}`;
+      }
+    }
+    throw error;
+  }
+
+  if (backedUp) await fs.unlink(backupPath).catch(() => {});
+}
 
 function textFromSection(section = {}) {
   if (typeof section.content === 'string') return /\[[^\]]*\]/.test(section.content) ? '' : section.content;
@@ -129,6 +157,7 @@ class SceneRepairService {
     this.logger = options.logger || { info() {}, warn() {}, error() {} };
     this.dataRoot = options.dataRoot || path.join(__dirname, '..', 'data');
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
+    this.activeRebuilds = new Set();
   }
 
   async ensureManifest(bundle) {
@@ -432,8 +461,10 @@ class SceneRepairService {
         const profile = await this.db.getChannelProfile?.() || {};
         const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1);
         const assetPath = assets[0];
-        if (!assetPath || !IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase()) || !await this.pathExists(assetPath)) {
-          throw this.error('No real replacement image was generated; configure an image provider or upload an asset', 422, 'SCENE_ASSET_UNAVAILABLE');
+        const generatedImageUsable = assetPath && IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase())
+          && await this.isUsableSceneAsset({ assetType: 'image', assetPath });
+        if (!generatedImageUsable) {
+          throw this.error('No valid replacement image was generated; configure an image provider or upload a usable asset', 422, 'SCENE_ASSET_UNAVAILABLE');
         }
         visual = { assetType: 'image', assetOrigin: 'generated', assetPath, provider: 'image-provider', model: null, externalTaskId: null, containsSyntheticMedia: true };
       }
@@ -498,7 +529,11 @@ class SceneRepairService {
       if (assetType === 'video') {
         if (!await this.mediaGeneration?.isValidVideo?.(outputPath)) throw new Error('Video is not a valid, decodable MP4-compatible asset');
       } else {
-        await sharp(outputPath).metadata();
+        const metadata = await sharp(outputPath, { failOn: 'error' }).metadata();
+        const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
+        if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
+          throw new Error('Image content does not match its file extension or is not a valid image');
+        }
       }
     } catch (error) {
       await fs.unlink(outputPath).catch(() => {});
@@ -527,7 +562,85 @@ class SceneRepairService {
     }
   }
 
+  async cleanupStaleRepairTemps(productionId, maxAgeMs = 24 * 60 * 60 * 1000) {
+    const targets = [
+      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.rendering\.mp4$/i },
+      { directory: path.join(this.dataRoot, 'captions'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing$/i },
+      { directory: path.join(this.dataRoot, 'audio'), prefix: `${productionId}_scene_mix_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing\.m4a$/i }
+    ];
+    const cutoff = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
+    let removed = 0;
+    for (const target of targets) {
+      let entries;
+      try { entries = await fs.readdir(target.directory, { withFileTypes: true }); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.startsWith(target.prefix) || !target.suffix.test(entry.name)) continue;
+        const filePath = path.join(target.directory, entry.name);
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.mtimeMs >= cutoff) continue;
+          await fs.unlink(filePath);
+          removed++;
+        } catch (error) {
+          if (error.code !== 'ENOENT') this.logger.warn(`Could not remove stale scene repair temp ${filePath}: ${error.message}`);
+        }
+      }
+    }
+    return removed;
+  }
   async rebuild(productionId) {
+    if (this.activeRebuilds.has(productionId)) {
+      throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
+    }
+    this.activeRebuilds.add(productionId);
+    const lockOwner = crypto.randomUUID();
+    let databaseLockAcquired = false;
+    let leaseHeartbeat = null;
+    let renewalInFlight = Promise.resolve();
+    let leaseFailure = null;
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    try {
+      if (typeof this.db.acquireProductionOperationLock === 'function') {
+        databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
+        if (!databaseLockAcquired) {
+          throw this.error('Another application process is rebuilding this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
+        }
+        if (typeof this.db.renewProductionOperationLock === 'function') {
+          leaseHeartbeat = setInterval(() => {
+            renewalInFlight = renewalInFlight.then(async () => {
+              if (!databaseLockAcquired || leaseFailure) return;
+              const renewed = await this.db.renewProductionOperationLock(productionId, lockOwner);
+              if (!renewed) {
+                leaseFailure = this.error('Scene rebuild lease was lost; this attempt cannot commit its output', 409, 'SCENE_REBUILD_LEASE_LOST');
+              }
+            }).catch(error => {
+              leaseFailure = this.error(`Scene rebuild lease could not be verified: ${error.message}`, 503, 'SCENE_REBUILD_LEASE_UNVERIFIED');
+            });
+          }, 60 * 1000);
+          leaseHeartbeat.unref?.();
+        }
+      }
+      await assertLease();
+      if (databaseLockAcquired) await this.cleanupStaleRepairTemps(productionId);
+      return await this.rebuildUnlocked(productionId, assertLease);
+    } finally {
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+      await renewalInFlight;
+      if (databaseLockAcquired) {
+        await this.db.releaseProductionOperationLock(productionId, lockOwner).catch(error => {
+          this.logger.warn(`Could not release scene rebuild lease for ${productionId}: ${error.message}`);
+        });
+      }
+      this.activeRebuilds.delete(productionId);
+    }
+  }
+
+  async rebuildUnlocked(productionId, assertLease = async () => {}) {
+    await assertLease();
     const bundle = await this.getEditableBundle(productionId);
     const scenes = await this.db.listProductionScenes(productionId);
     if (!scenes.length) throw this.error('No scene manifest is available', 409);
@@ -538,34 +651,94 @@ class SceneRepairService {
       if (!['current', 'intentional_silence'].includes(scene.narrationStatus)) {
         missing.push(`${scene.label}: narration is ${String(scene.narrationStatus || 'unavailable').replaceAll('_', ' ')}`);
       }
-      if (scene.narrationStatus === 'current') currentSceneAudio.push(Boolean(scene.audioPath && await this.pathExists(scene.audioPath)));
+      if (scene.narrationStatus === 'current') {
+        const audioUsable = await this.isUsableNarrationSegment(scene);
+        currentSceneAudio.push(audioUsable);
+        if (scene.audioPath && !audioUsable) missing.push(`${scene.label}: narration segment is missing or invalid`);
+      }
       if (scene.status === 'visual_stale') missing.push(`${scene.label}: visual prompt changed but the asset was not regenerated or replaced`);
       if (['failed', 'generating', 'missing_asset'].includes(scene.status)) missing.push(`${scene.label}: scene status is ${scene.status.replaceAll('_', ' ')}`);
-      if (!scene.assetPath || !await this.pathExists(scene.assetPath)) missing.push(`${scene.label}: visual asset is missing`);
+      if (!await this.isUsableSceneAsset(scene)) missing.push(`${scene.label}: visual asset is missing or invalid`);
       if (scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed) missing.push(`${scene.label}: media rights are not confirmed`);
     }
-    if (currentSceneAudio.some(Boolean) && currentSceneAudio.some(value => !value)) {
-      missing.push('The scene narration mix is incomplete; regenerate every missing narration segment');
-    } else if (currentSceneAudio.length && currentSceneAudio.every(value => !value) && !fullNarrationReady) {
+    const hasAnySceneAudioPath = scenes.some(scene => Boolean(scene.audioPath));
+    if (hasAnySceneAudioPath && currentSceneAudio.some(value => !value)) {
+      missing.push('The scene narration mix is incomplete; regenerate every missing or invalid narration segment');
+    } else if (!hasAnySceneAudioPath && !fullNarrationReady) {
       missing.push('No usable production or scene narration audio is available');
     }
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
 
-    const timestamp = Date.now();
-    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${timestamp}_visual.mp4`);
-    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${timestamp}.mp4`);
-    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${timestamp}.srt`);
+    await assertLease();
+    const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path);
+    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
+    const attemptId = crypto.randomUUID();
+    const visualTempPath = `${visualPath}.${attemptId}.rendering.mp4`;
+    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}.mp4`);
+    const finalTempPath = `${finalPath}.${attemptId}.rendering.mp4`;
+    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${fingerprint}.srt`);
     await fs.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
-    await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
-      type: scene.assetType, path: scene.assetPath, duration: scene.duration
-    })), visualPath);
 
-    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, timestamp);
+    const validateVideo = async filePath => {
+      if (typeof this.videoGenerator.validateRenderedVideo !== 'function') {
+        throw this.error('Video generator cannot validate rendered repair output', 503, 'VIDEO_VALIDATION_UNAVAILABLE');
+      }
+      return this.videoGenerator.validateRenderedVideo(filePath);
+    };
+    let visualReady = false;
+    try {
+      await validateVideo(visualPath);
+      visualReady = true;
+    } catch (_error) {
+      await fs.unlink(visualPath).catch(() => {});
+    }
+    if (!visualReady) {
+      await fs.unlink(visualTempPath).catch(() => {});
+      try {
+        await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
+          type: scene.assetType, path: scene.assetPath, duration: scene.duration
+        })), visualTempPath);
+        await validateVideo(visualTempPath);
+        await assertLease();
+        await replaceFileWithRollback(visualTempPath, visualPath, attemptId);
+      } catch (error) {
+        await fs.unlink(visualTempPath).catch(() => {});
+        throw error;
+      }
+    }
+
+    await assertLease();
+    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint);
+    await assertLease();
     const allIntentionalSilence = scenes.every(scene => scene.narrationStatus === 'intentional_silence');
-    await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalPath, { allowSilent: allIntentionalSilence });
-    await fs.unlink(visualPath).catch(() => {});
-    await fs.writeFile(captionsPath, this.buildSRT(scenes));
+    let finalReady = false;
+    try {
+      await validateVideo(finalPath);
+      finalReady = true;
+    } catch (_error) {
+      await fs.unlink(finalPath).catch(() => {});
+    }
+    if (!finalReady) {
+      await fs.unlink(finalTempPath).catch(() => {});
+      try {
+        await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
+        await validateVideo(finalTempPath);
+        await assertLease();
+        await replaceFileWithRollback(finalTempPath, finalPath, attemptId);
+      } catch (error) {
+        await fs.unlink(finalTempPath).catch(() => {});
+        throw error;
+      }
+    }
+    const captions = this.buildSRT(scenes);
+    const existingCaptions = await fs.readFile(captionsPath, 'utf8').catch(() => null);
+    if (existingCaptions !== captions) {
+      const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
+      await fs.writeFile(captionsTempPath, captions);
+      await assertLease();
+      await replaceFileWithRollback(captionsTempPath, captionsPath, attemptId);
+    }
     const stats = await fs.stat(finalPath);
     const previousPath = bundle.assets?.finalVideo?.path || null;
     const containsSyntheticMedia = scenes.some(scene => scene.containsSyntheticMedia);
@@ -593,27 +766,76 @@ class SceneRepairService {
       sceneManifest: { count: scenes.length, version: 1, updatedAt: new Date().toISOString() }
     };
     const timeline = { ...bundle.timeline, sceneRepairAt: new Date().toISOString(), captionsGenerated: new Date().toISOString(), readyForUpload: new Date().toISOString() };
+    await assertLease();
     await this.db.updateProductionData({
       id: productionId, status: 'ready', assets, timeline,
       scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
     });
-    for (const scene of scenes) await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
+    for (const scene of scenes) {
+      await assertLease();
+      await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
+    }
     if (containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia) {
+      await assertLease();
       await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null });
     }
+    await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId: scenes[0].id, action: 'rebuild', before: { finalVideo: previousPath },
       after: { finalVideo: finalPath, captions: captionsPath },
       costEvidence: { billed: false, reusedScenes: scenes.length }
     });
+    await assertLease();
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
   }
 
-  async rebuildNarration(productionId, scenes, fallbackAudioPath, timestamp) {
+  async buildRebuildFingerprint(scenes, fallbackAudioPath) {
+    const hash = crypto.createHash('sha256');
+    const inputs = [];
+    for (const scene of scenes) {
+      const entry = {
+        id: scene.id, revision: scene.revision, assetType: scene.assetType,
+        duration: Number(scene.duration), narrationStatus: scene.narrationStatus,
+        scriptText: scene.scriptText || ''
+      };
+      if (scene.assetPath) entry.assetSha256 = await this.hashFile(scene.assetPath);
+      if (scene.audioPath && scene.narrationStatus === 'current') entry.audioSha256 = await this.hashFile(scene.audioPath);
+      inputs.push(entry);
+    }
+    const fallback = fallbackAudioPath && !scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current')
+      ? await this.hashFile(fallbackAudioPath) : null;
+    hash.update(JSON.stringify({ version: 2, inputs, fallback }));
+    return hash.digest('hex').slice(0, 24);
+  }
+
+  async hashFile(filePath) {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fsStreams.createReadStream(filePath);
+      stream.on('error', reject);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.on('end', () => resolve(hash.digest('hex')));
+    });
+  }
+
+  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint) {
     const hasSceneAudio = scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current');
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
     if (!hasSceneAudio && allCurrentWithoutSegments) return fallbackAudioPath;
-    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${timestamp}.m4a`);
+    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}.m4a`);
+    try {
+      const stat = await fs.stat(outputPath);
+      if (stat.isFile() && stat.size > 0) {
+        const duration = await this.getMediaDuration(outputPath);
+        if (Number.isFinite(duration) && duration > 0) {
+          await runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+          return outputPath;
+        }
+      }
+    } catch (_error) {
+      // Missing or corrupt cached narration mix is rebuilt below.
+    }
+    const tempPath = `${outputPath}.${crypto.randomUUID()}.writing.m4a`;
     const args = ['-y'];
     for (const scene of scenes) {
       if (scene.narrationStatus === 'intentional_silence') {
@@ -624,9 +846,20 @@ class SceneRepairService {
     }
     const filters = scenes.map((scene, index) => `[${index}:a]aresample=48000,apad,atrim=duration=${Number(scene.duration).toFixed(2)},asetpts=PTS-STARTPTS[a${index}]`);
     filters.push(`${scenes.map((_, index) => `[a${index}]`).join('')}concat=n=${scenes.length}:v=0:a=1[aout]`);
-    args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', outputPath);
-    await runFFmpeg(args);
-    return outputPath;
+    args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', tempPath);
+    try {
+      await runFFmpeg(args);
+      const stat = await fs.stat(tempPath);
+      if (!stat.isFile() || stat.size <= 0) throw new Error('Narration mix output is empty');
+      const duration = await this.getMediaDuration(tempPath);
+      if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
+      await runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
+      await replaceFileWithRollback(tempPath, outputPath);
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(tempPath).catch(() => {});
+      throw error;
+    }
   }
 
   buildSRT(scenes) {
@@ -674,6 +907,44 @@ class SceneRepairService {
     return Array.isArray(value) ? value.map(item => String(item)) : [];
   }
 
+  async isUsableSceneAsset(scene) {
+    if (!scene?.assetPath) return false;
+    try {
+      const stat = await fs.stat(scene.assetPath);
+      if (!stat.isFile() || stat.size <= 0) return false;
+      if (scene.assetType === 'image') {
+        if (!IMAGE_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
+        const metadata = await sharp(scene.assetPath, { failOn: 'error' }).metadata();
+        const extension = path.extname(scene.assetPath).toLowerCase();
+        const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
+        return Boolean(metadata.width && metadata.height && metadata.format === expectedFormat);
+      }
+      if (scene.assetType === 'video') {
+        if (!VIDEO_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
+        if (typeof this.mediaGeneration?.isValidVideo === 'function') {
+          return Boolean(await this.mediaGeneration.isValidVideo(scene.assetPath));
+        }
+        if (typeof this.videoGenerator?.validateRenderedVideo === 'function') {
+          await this.videoGenerator.validateRenderedVideo(scene.assetPath);
+          return true;
+        }
+        return false;
+      }
+      return false;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async isUsableNarrationSegment(scene) {
+    if (!scene?.audioPath || scene.narrationStatus !== 'current') return false;
+    try {
+      return Boolean(await this.videoGenerator?.isUsableAudioFile?.(scene.audioPath));
+    } catch (_error) {
+      return false;
+    }
+  }
+
   async pathExists(filePath) {
     try {
       const stat = await fs.stat(filePath);
@@ -692,4 +963,4 @@ class SceneRepairService {
   }
 }
 
-module.exports = { SceneRepairService, buildInitialSceneManifest, scriptScenes };
+module.exports = { SceneRepairService, buildInitialSceneManifest, scriptScenes, replaceFileWithRollback };

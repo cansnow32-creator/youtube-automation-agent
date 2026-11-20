@@ -10,7 +10,7 @@
     "growth:snapshot": "node scripts/growth/snapshot-github.js",
     "docs:screenshots": "node scripts/docs/capture-screenshots.js",
     "scheduler": "node schedules/daily-automation.js",
-    "test": "node test.js && node test/local-first-quality-pipeline.test.js && node test/trend-snapshot.test.js && node test/trend-idea-generation.test.js && node test/content-idea-lifecycle.test.js && node test/channel-performance-insights.test.js && node test/performance-plan-guidance.test.js && node test/performance-plan-integration.test.js && node test/growth-experiment-evidence.test.js && node test/packaging-learning.test.js && node test/packaging-experiment-pipeline.test.js && node test/packaging-learning-consumption.test.js && node test/packaging-learning-orchestration.test.js && node test/packaging-variant-approval.test.js && node test/production-readiness-gate.test.js",
+    "test": "node test.js && node test/script-quality-gate.test.js && node test/approved-script-continuation.test.js && node test/script-writer-quality-integration.test.js && node test/generation-recovery-prerequisites.test.js && node test/daily-scheduler-concept-gate.test.js && node test/local-first-quality-pipeline.test.js && node test/trend-snapshot.test.js && node test/trend-idea-generation.test.js && node test/content-idea-lifecycle.test.js && node test/channel-performance-insights.test.js && node test/performance-plan-guidance.test.js && node test/performance-plan-integration.test.js && node test/growth-experiment-evidence.test.js && node test/packaging-learning.test.js && node test/packaging-experiment-pipeline.test.js && node test/packaging-learning-consumption.test.js && node test/packaging-learning-orchestration.test.js && node test/packaging-variant-approval.test.js && node test/production-readiness-gate.test.js && node test/video-concept-service.test.js && node test/approved-video-concept-gate.test.js && node test/subtitle-renderer.test.js && node test/tts-direction.test.js && node test/reference-video-service.test.js && node test/reference-video-analysis.test.js && node test/cinecode-renderer.test.js && node test/shorts-repurposing.test.js && node test/audio-mixer.test.js && node test/production-stage-workflow.test.js && node test/production-retry-reuse.test.js && node test/production-scene-retry.test.js && node test/production-media-reuse.test.js && node test/scene-repair-validation.test.js && node test/scene-repair-cache.test.js && node test/production-operation-lock.test.js",
     "agent:strategy": "node agents/content-strategy-agent.js",
     "agent:script": "node agents/script-writer-agent.js",
     "agent:thumbnail": "node agents/thumbnail-designer-agent.js",
@@ -22,23 +22,22 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@google-cloud/local-auth": "^3.0.0",
     "@google/genai": "^2.9.0",
     "axios": "^1.7.0",
     "chalk": "^4.1.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "form-data": "^4.0.4",
-    "googleapis": "^173.0.0",
+    "googleapis": "^190.0.0",
     "inquirer": "^8.2.6",
     "microsoft-cognitiveservices-speech-sdk": "^1.45.0",
     "moment": "^2.29.4",
-    "node-cron": "^3.0.2",
+    "node-cron": "^4.6.0",
     "openai": "^6.0.0",
     "playwright": "^1.54.2",
     "replicate": "^1.4.0",
-    "sharp": "^0.34.5",
-    "sqlite3": "^5.1.6",
+    "sharp": "^0.35.5",
+    "sqlite3": "^6.0.1",
     "winston": "^3.11.0"
   },
   "optionalDependencies": {
@@ -50,6 +49,6 @@
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20.17.0"
   }
 }

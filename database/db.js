@@ -408,6 +408,21 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (production_id) REFERENCES productions(id)
       )`,
+      `CREATE TABLE IF NOT EXISTS script_quality_reviews (
+        id TEXT PRIMARY KEY,
+        job_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        topic TEXT,
+        strategy TEXT NOT NULL DEFAULT '{}',
+        draft TEXT NOT NULL,
+        quality_report TEXT NOT NULL DEFAULT '{}',
+        decision_notes TEXT,
+        decided_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_script_quality_reviews_status
+       ON script_quality_reviews(status, created_at)`,
       `CREATE TABLE IF NOT EXISTS content_provenance (
         production_id TEXT PRIMARY KEY,
         sources TEXT NOT NULL DEFAULT '[]',
@@ -638,6 +653,34 @@ class Database {
       )`,
       `CREATE INDEX IF NOT EXISTS idx_trend_snapshots_captured_at
         ON trend_snapshots(captured_at DESC)`,
+      // Versioned creative briefs; only approved concepts may be used for production.
+      `CREATE TABLE IF NOT EXISTS video_concepts (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL,
+        concept_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        revision_of TEXT,
+        feedback TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        approved_at TEXT,
+        FOREIGN KEY (revision_of) REFERENCES video_concepts(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_video_concepts_topic_created ON video_concepts(topic, created_at DESC)`,
+      // User-supplied reference videos are stored locally and analyzed for style only.
+      `CREATE TABLE IF NOT EXISTS reference_videos (
+        id TEXT PRIMARY KEY,
+        original_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        duration_seconds REAL NOT NULL,
+        frame_paths_json TEXT NOT NULL,
+        analysis_json TEXT,
+        analysis_status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_reference_videos_created ON reference_videos(created_at DESC)`,
       // System Settings
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -669,13 +712,16 @@ class Database {
     await this.ensureColumns('discoverability_audits', {
       error_code: 'TEXT'
     });
+    await this.ensureColumns('script_quality_reviews', {
+      job_id: 'TEXT'
+    });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -960,6 +1006,54 @@ class Database {
 
   async updateProductionStatus(productionId, status) {
     await this.executeQuery('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
+  }
+
+  async acquireProductionOperationLock(productionId, owner, leaseMs = 2 * 60 * 60 * 1000) {
+    await this.executeQuery(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+      production_id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const now = Date.now();
+    const result = await this.executeQuery(
+      `INSERT INTO production_operation_locks (production_id, owner, expires_at, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(production_id) DO UPDATE SET
+         owner = excluded.owner,
+         expires_at = excluded.expires_at,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE production_operation_locks.expires_at <= ? OR production_operation_locks.owner = ?`,
+      [productionId, owner, now + leaseMs, now, owner]
+    );
+    return result.changes === 1;
+  }
+
+  async renewProductionOperationLock(productionId, owner, leaseMs = 2 * 60 * 60 * 1000) {
+    const now = Date.now();
+    const result = await this.executeQuery(
+      `UPDATE production_operation_locks
+       SET expires_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE production_id = ? AND owner = ? AND expires_at > ?`,
+      [now + leaseMs, productionId, owner, now]
+    );
+    return result.changes === 1;
+  }
+
+  async releaseProductionOperationLock(productionId, owner) {
+    await this.executeQuery(
+      'DELETE FROM production_operation_locks WHERE production_id = ? AND owner = ?',
+      [productionId, owner]
+    );
+  }
+
+  async getProductionBundleByJobId(jobId) {
+    if (!jobId) return null;
+    const row = await this.getRow(
+      "SELECT id FROM productions WHERE json_extract(timeline, '$.jobId') = ? ORDER BY created_at DESC LIMIT 1",
+      [jobId]
+    );
+    return row?.id ? this.getProductionBundle(row.id) : null;
   }
 
   async getProductionBundle(productionId) {
@@ -1464,6 +1558,97 @@ class Database {
     );
   }
 
+  async saveScriptQualityReview(review = {}) {
+    const id = this.generateId('quality_review');
+    await this.executeQuery(
+      `INSERT INTO script_quality_reviews
+       (id, job_id, status, topic, strategy, draft, quality_report)
+       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
+      [
+        id,
+        review.jobId || null,
+        review.topic || null,
+        JSON.stringify(review.strategy || {}),
+        String(review.draft || ''),
+        JSON.stringify(review.qualityReport || {})
+      ]
+    );
+    return this.getScriptQualityReview(id);
+  }
+
+  async listScriptQualityReviews(status = 'pending', limit = 50) {
+    const rows = await this.getAllRows(
+      `SELECT * FROM script_quality_reviews
+       WHERE (? = 'all' OR (? = 'pending' AND status IN ('pending', 'revision_requested')) OR status = ?)
+       ORDER BY created_at DESC LIMIT ?`,
+      [status, status, status, Math.min(Math.max(Number(limit) || 50, 1), 200)]
+    );
+    return rows.map(row => ({
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    }));
+  }
+
+  async getScriptQualityReviewByJobId(jobId) {
+    const row = await this.getRow(
+      'SELECT * FROM script_quality_reviews WHERE job_id = ? ORDER BY created_at DESC LIMIT 1',
+      [jobId]
+    );
+    return row ? {
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    } : null;
+  }
+
+  async getScriptQualityReview(reviewId) {
+    const row = await this.getRow('SELECT * FROM script_quality_reviews WHERE id = ?', [reviewId]);
+    return row ? {
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    } : null;
+  }
+
+  async updateScriptQualityReviewDraft(reviewId, draft, qualityReport) {
+    const result = await this.executeQuery(
+      `UPDATE script_quality_reviews
+       SET status = 'pending', draft = ?, quality_report = ?,
+           decision_notes = NULL, decided_at = NULL, updated_at = datetime('now')
+       WHERE id = ? AND status IN ('pending', 'revision_requested')`,
+      [String(draft || ''), JSON.stringify(qualityReport || {}), reviewId]
+    );
+    if (!result.changes) {
+      const existing = await this.getScriptQualityReview(reviewId);
+      if (!existing) return null;
+      const error = new Error('This review is no longer open for revision');
+      error.status = 409;
+      throw error;
+    }
+    return this.getScriptQualityReview(reviewId);
+  }
+
+  async decideScriptQualityReview(reviewId, decision, notes = '') {
+    const allowed = ['human_approved', 'rejected', 'revision_requested'];
+    if (!allowed.includes(decision)) throw new Error('Invalid quality review decision');
+    const result = await this.executeQuery(
+      `UPDATE script_quality_reviews
+       SET status = ?, decision_notes = ?, decided_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE id = ? AND status IN ('pending', 'revision_requested')`,
+      [decision, String(notes || '').slice(0, 3000), reviewId]
+    );
+    if (!result.changes) {
+      const existing = await this.getScriptQualityReview(reviewId);
+      if (!existing) return null;
+      const error = new Error('This review already has a final human decision');
+      error.status = 409;
+      throw error;
+    }
+    return this.getScriptQualityReview(reviewId);
+  }
+
   async saveContentReview(productionId, review = {}) {
     await this.executeQuery(
       `INSERT INTO content_reviews (
@@ -1647,6 +1832,76 @@ class Database {
     return this.getDiscoverabilityFinding(findingId);
   }
 
+  async saveVideoConcept(record) {
+    await this.executeQuery('INSERT INTO video_concepts (id, topic, concept_json, status, revision_of, feedback) VALUES (?, ?, ?, ?, ?, ?)', [record.id, record.topic, JSON.stringify(record.concept), record.status || 'pending', record.revisionOf || null, record.feedback || null]);
+    return this.getVideoConcept(record.id);
+  }
+
+  async getVideoConcept(id) {
+    const row = await this.getRow('SELECT * FROM video_concepts WHERE id = ?', [id]);
+    if (!row) return null;
+    return { id: row.id, topic: row.topic, concept: JSON.parse(row.concept_json), status: row.status, revisionOf: row.revision_of, feedback: row.feedback, createdAt: row.created_at, updatedAt: row.updated_at, approvedAt: row.approved_at };
+  }
+
+  async listVideoConcepts(limit = 20) {
+    const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 20));
+    const rows = await this.getAllRows('SELECT id FROM video_concepts ORDER BY created_at DESC LIMIT ?', [safeLimit]);
+    return Promise.all(rows.map(row => this.getVideoConcept(row.id)));
+  }
+
+  async saveReferenceVideo(record) {
+    await this.executeQuery(
+      `INSERT INTO reference_videos (id, original_name, file_path, mime_type, size_bytes, duration_seconds, frame_paths_json, analysis_json, analysis_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.originalName, record.filePath, record.mimeType, record.sizeBytes, record.durationSeconds,
+        JSON.stringify(record.framePaths || []), record.analysis ? JSON.stringify(record.analysis) : null, record.analysisStatus || 'pending']
+    );
+    return this.getReferenceVideo(record.id);
+  }
+
+  async getReferenceVideo(id) {
+    const row = await this.getRow('SELECT * FROM reference_videos WHERE id = ?', [id]);
+    if (!row) return null;
+    return {
+      id: row.id, originalName: row.original_name, filePath: row.file_path,
+      mimeType: row.mime_type, sizeBytes: row.size_bytes,
+      durationSeconds: row.duration_seconds, framePaths: JSON.parse(row.frame_paths_json || '[]'),
+      analysis: row.analysis_json ? JSON.parse(row.analysis_json) : null,
+      analysisStatus: row.analysis_status, createdAt: row.created_at
+    };
+  }
+
+  async updateReferenceVideoAnalysis(id, analysis, status = 'complete') {
+    await this.executeQuery(
+      'UPDATE reference_videos SET analysis_json = ?, analysis_status = ? WHERE id = ?',
+      [analysis ? JSON.stringify(analysis) : null, status, id]
+    );
+    return this.getReferenceVideo(id);
+  }
+
+  async updateVideoConcept(id, concept) {
+    const result = await this.executeQuery(
+      "UPDATE video_concepts SET concept_json = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
+      [JSON.stringify(concept), id]
+    );
+    if (!result.changes) {
+      const current = await this.getVideoConcept(id);
+      if (!current) return null;
+      throw new Error('Approved concepts are immutable. Attach music before approval or create a new concept.');
+    }
+    return this.getVideoConcept(id);
+  }
+
+  async approveVideoConcept(id) {
+    const result = await this.executeQuery("UPDATE video_concepts SET status = 'approved', approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'", [id]);
+    if (!result.changes) {
+      const current = await this.getVideoConcept(id);
+      if (!current) return null;
+      if (current.status === 'approved') return current;
+      throw new Error('Concept cannot be approved from status: ' + current.status);
+    }
+    return this.getVideoConcept(id);
+  }
   async getChannelProfile() {
     const row = await this.getRow("SELECT * FROM channel_profiles WHERE id = 'default'");
     return row ? { ...row, bannedTopics: JSON.parse(row.banned_topics || '[]') } : null;

@@ -20,6 +20,7 @@ class GenerationRecoveryService {
 
   async run(jobId, stage, progress, producer) {
     if (!GENERATION_STAGES.includes(stage)) throw new Error(`Unknown generation stage: ${stage}`);
+    await this.assertPrerequisites(jobId, stage);
     const checkpoint = await this.db.getGenerationCheckpoint(jobId, stage);
     if (checkpoint?.status === 'completed') {
       if (await this.validateArtifact(stage, checkpoint.artifact)) {
@@ -73,6 +74,22 @@ class GenerationRecoveryService {
       }
     }
     throw lastError;
+  }
+
+  async assertPrerequisites(jobId, stage) {
+    const stageIndex = GENERATION_STAGES.indexOf(stage);
+    for (const prerequisite of GENERATION_STAGES.slice(0, stageIndex)) {
+      const checkpoint = await this.db.getGenerationCheckpoint(jobId, prerequisite);
+      const valid = checkpoint?.status === 'completed' && await this.validateArtifact(prerequisite, checkpoint.artifact);
+      if (!valid) {
+        const error = new Error(`Cannot run ${stage}: prerequisite stage ${prerequisite} is incomplete or its artifact is invalid`);
+        error.status = 409;
+        error.code = 'GENERATION_PREREQUISITE_MISSING';
+        error.prerequisiteStage = prerequisite;
+        error.requestedStage = stage;
+        throw error;
+      }
+    }
   }
 
   async validateArtifact(stage, artifact) {

@@ -5,7 +5,8 @@ const ui = {
   toastTimer: null,
   retentionSnapshotId: null,
   engagementVideoId: null,
-  engagementDetail: null
+  engagementDetail: null,
+  currentConceptId: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -97,6 +98,8 @@ async function refreshDashboard(silent = false) {
   if (!silent) $('#loading').classList.add('active');
   try {
     ui.state = await api('/api/dashboard');
+    const qualityQueue = await api('/api/script-quality-reviews?status=all&limit=50');
+    ui.state.scriptQualityReviews = qualityQueue.reviews || [];
     renderDashboard();
   } catch (error) {
     $('#system-label').textContent = 'Dashboard unavailable';
@@ -136,6 +139,7 @@ function renderDashboard() {
   renderSchedule(state.schedule.slice(0, 5), '#next-schedule');
   renderNotifications(state.notifications, state.events);
   renderPipeline(state.pipeline);
+  renderScriptQualityReviews(state.scriptQualityReviews || []);
   renderCalendar(state.schedule);
   renderIdeas(state.ideas);
   renderAnalytics(state.analytics, state.learning);
@@ -162,7 +166,7 @@ function renderReadiness(readiness = {}) {
   $('#readiness-title').textContent = titles[status] || titles.unverified;
   const counts = readiness.summary || {};
   $('#readiness-summary').textContent = status === 'unverified'
-    ? 'The check makes small live text and narration requests, verifies channel access, builds a local audio/video MP4, and validates queued metadata. It never creates or uploads a YouTube video.'
+    ? 'The check verifies Node.js and local folder permissions, FFmpeg / FFprobe paths, H.264 and AAC encoders, CineCode motion filters, live text and narration, YouTube channel access, and queued metadata. It never creates or uploads a YouTube video.'
     : `${counts.passed || 0} passed, ${counts.warnings || 0} warning${counts.warnings === 1 ? '' : 's'}, and ${counts.failed || 0} failed.`;
   $('#readiness-meta').textContent = readiness.completed_at
     ? `Last run ${formatDate(readiness.completed_at)}${readiness.stale ? ' · older than 24 hours' : ''}`
@@ -173,6 +177,10 @@ function renderReadiness(readiness = {}) {
     <article class="readiness-check ${escapeHTML(check.status)}">
       <div class="readiness-check-heading"><span class="readiness-icon" aria-hidden="true">${check.status === 'passed' ? '✓' : check.status === 'failed' ? '×' : '!'}</span><div><strong>${escapeHTML(check.label)}</strong><div class="meta-line">${escapeHTML(label(check.status))}${check.blocking ? ' · blocking' : ' · optional'} · ${(check.durationMs || 0) / 1000}s</div></div></div>
       <p>${escapeHTML(check.message)}</p>
+      ${Object.entries(check.details || {}).filter(([, value]) => value !== null && value !== undefined && value !== '').map(([key, value]) => {
+        const display = Array.isArray(value) ? value.join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+        return `<div class="readiness-detail"><span>${escapeHTML(label(key))}</span><code>${escapeHTML(display)}</code></div>`;
+      }).join('')}
       ${check.remediation ? `<small><strong>Next:</strong> ${escapeHTML(check.remediation)}</small>` : ''}
     </article>`).join('') : empty('Run the verified check to inspect every production dependency.');
 }
@@ -206,6 +214,7 @@ function renderJobs(jobs) {
     const mediaProviders = [...new Set(mediaTasks.map(item => label(item.provider)))].join(', ');
     const resumeFrom = stages.find(stage => !completed.has(stage)) || 'quality_review';
     const recoverable = ['failed', 'interrupted'].includes(job.status);
+    const awaitingScriptReview = Boolean(job.details?.qualityReviewId);
     return `
     <article class="job-card">
       <div class="job-meta">
@@ -213,10 +222,12 @@ function renderJobs(jobs) {
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
+        ${awaitingScriptReview ? `<div class="checkpoint-line quality-review-job-note">Script review ${escapeHTML(job.details.qualityReviewId)} is linked to this job. Resolve the saved draft before any retry.</div>` : ''}
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       </div>
       ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancel</button>` : ''}
-      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${recoverable && !awaitingScriptReview ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${awaitingScriptReview ? `<button class="button secondary small" data-view="pipeline">Open script review queue</button>` : ''}
     </article>`;
   }).join('');
 }
@@ -250,6 +261,38 @@ function renderNotifications(notifications, events) {
 
 function currentPipelineFilter() {
   return $('#pipeline-filter').value || 'all';
+}
+
+function renderScriptQualityReviews(reviews) {
+  const container = $('#script-quality-review-list');
+  const count = $('#quality-review-count');
+  const pendingCount = reviews.filter(review => ['pending', 'revision_requested'].includes(review.status)).length;
+  count.textContent = `${pendingCount} pending · ${reviews.length} total`;
+  if (!reviews.length) {
+    container.innerHTML = empty('No rejected scripts are waiting for a human decision.');
+    return;
+  }
+  container.innerHTML = reviews.map(review => {
+    const report = review.quality_report || {};
+    const attempts = Array.isArray(report.attempts) ? report.attempts : [];
+    const latest = attempts[attempts.length - 1] || {};
+    const reviewerResults = Object.values(latest.reviewers || {});
+    const blockers = reviewerResults.flatMap(item => Array.isArray(item.blockers) ? item.blockers : []);
+    const revisions = reviewerResults.flatMap(item => Array.isArray(item.revision_instructions) ? item.revision_instructions : []);
+    return `<article class="script-quality-review-card">
+      <div class="script-quality-review-heading"><div><strong>${escapeHTML(review.topic || 'Untitled script')}</strong><small>${escapeHTML(timeAgo(review.created_at))} · ${escapeHTML(report.revisions ?? 0)} revisions${review.job_id ? ' · Job ' + escapeHTML(review.job_id) : ''}</small></div><span class="status needs_attention">${escapeHTML(report.score ?? 0)}/100 · human review</span></div>
+      <div class="script-quality-review-columns">
+        <div><strong>Blockers</strong>${blockers.length ? `<ul>${blockers.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No structured blockers returned.</p>'}</div>
+        <div><strong>Revision guidance</strong>${revisions.length ? `<ul>${revisions.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No revision guidance returned.</p>'}</div>
+      </div>
+      <details><summary>Review and edit saved draft</summary><textarea class="quality-review-draft-editor" data-quality-draft spellcheck="false">${escapeHTML(review.draft || '')}</textarea><button class="button secondary small" data-quality-resubmit="${escapeHTML(review.id)}">Save changes &amp; run local re-review</button></details>
+      ${['pending', 'revision_requested'].includes(review.status) ? `<div class="script-quality-review-actions">
+        <button class="button secondary small" data-quality-decision="revision_requested" data-quality-review-id="${escapeHTML(review.id)}">Request revision</button>
+        <button class="button secondary small" data-quality-decision="rejected" data-quality-review-id="${escapeHTML(review.id)}">Reject</button>
+        <button class="button primary small" data-quality-decision="human_approved" data-quality-review-id="${escapeHTML(review.id)}">Human approve</button>
+      </div>` : `<p class="quality-review-final-note">Final human decision: ${escapeHTML(label(review.status))}${review.decision_notes ? ' · ' + escapeHTML(review.decision_notes) : ''}</p>${review.status === 'human_approved' && review.job_id ? `<button class="button primary small" data-continue-approved-script="${escapeHTML(review.id)}">Continue production with approved draft</button>` : ''}`}
+    </article>`;
+  }).join('');
 }
 
 function renderPipeline(items) {
@@ -906,9 +949,87 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   }
   const selected = providers.find(provider => provider.id === videoMapping.videoProvider);
   $('#video-provider-status').textContent = videoMapping.videoProvider === 'auto'
-    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
+    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow' && provider.id !== 'cinecode').length} paid provider(s) available; local slideshow remains the final fallback.`
     : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
-      : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+      : videoMapping.videoProvider === 'cinecode' ? 'CineCode local renderer is selected. Camera motion, grading and transitions run locally; image generation still uses the configured image provider and may be billed.'
+        : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+}
+
+async function loadVideoConcepts() {
+  const container = $('#concept-list');
+  if (!container) return;
+  container.innerHTML = empty('Loading concepts…');
+  try {
+    const data = await api('/api/concepts');
+    const concepts = data.concepts || [];
+    container.innerHTML = concepts.length ? concepts.map(item => `
+      <article class="idea-card">
+        <div class="idea-meta"><strong>${escapeHTML(item.concept?.name || item.topic)}</strong><div class="meta-line">${escapeHTML(item.topic)} · ${statusChip(item.status)}${item.revisionOf ? ' · revised' : ''}</div></div>
+        <button type="button" class="button secondary small" data-select-concept="${escapeHTML(item.id)}">Review</button>
+      </article>`).join('') : empty('No concepts yet. Start by proposing one above.');
+    if (ui.currentConceptId && concepts.some(item => item.id === ui.currentConceptId)) {
+      const selected = concepts.find(item => item.id === ui.currentConceptId);
+      renderVideoConcept(selected);
+    } else if (concepts[0]) {
+      ui.currentConceptId = concepts[0].id;
+      renderVideoConcept(concepts[0]);
+    }
+  } catch (error) {
+    container.innerHTML = empty(error.message);
+  }
+}
+
+function renderVideoConcept(record) {
+  if (!record) return;
+  ui.currentConceptId = record.id;
+  $('#concept-status').textContent = label(record.status);
+  const concept = record.concept || {};
+  const musicAsset = concept.audioDirection?.musicAsset || null;
+  const musicSummary = musicAsset
+    ? `<p class="callout">Music attached: ${escapeHTML(musicAsset.title || 'Untitled track')} · ${escapeHTML(musicAsset.licenseType || 'license pending')} · ${escapeHTML(musicAsset.trackDuration ? Math.round(musicAsset.trackDuration) + ' sec' : 'duration checked')}</p>`
+    : '';
+  const musicForm = record.status === 'pending' ? `
+    <form id="concept-music-form" class="settings-form">
+      <h4>Background music (optional)</h4>
+      <p class="meta-line">Upload a track you own or are licensed to use. It will be mixed locally under narration after video rendering.</p>
+      ${musicSummary}
+      <label><span>Audio file <small>MP3, WAV, M4A, AAC, OGG, FLAC or WebM · maximum 50 MB</small></span><input name="musicFile" type="file" accept="audio/*" required></label>
+      <label><span>License type</span><select name="licenseType" required>
+        <option value="user_owned">I created / own this track</option>
+        <option value="commercial_license">Commercial license</option>
+        <option value="public_domain">Public domain</option>
+        <option value="cc0">Creative Commons CC0</option>
+        <option value="cc_by">Creative Commons BY</option>
+        <option value="cc_by_sa">Creative Commons BY-SA</option>
+      </select></label>
+      <label><span>Track title</span><input name="title" maxlength="200" placeholder="Track title"></label>
+      <label><span>Creator / rights holder</span><input name="creator" maxlength="200" placeholder="Creator or rights holder"></label>
+      <label><span>Attribution <small>Required for CC BY and CC BY-SA</small></span><textarea name="attribution" rows="2" maxlength="1000" placeholder="Credit text, author, and license"></textarea></label>
+      <label><span>Commercial license name</span><input name="licenseName" maxlength="200" placeholder="License or purchase reference"></label>
+      <label><span>License URL</span><input name="licenseUrl" type="url" maxlength="1000" placeholder="https://..."></label>
+      <label><span>Source URL</span><input name="sourceUrl" type="url" maxlength="1000" placeholder="https://..."></label>
+      <label><span>Background music volume <small>0.01–0.50 · default 0.18</small></span><input name="volume" type="number" min="0.01" max="0.5" step="0.01" value="0.18" required></label>
+      <label class="checkbox-row"><input name="rightsConfirmed" type="checkbox" required><span>I confirm that I own this music or have permission for commercial use in this video.</span></label>
+      <div class="form-actions"><button type="submit" class="button secondary">Upload & attach music</button></div>
+    </form>` : musicSummary;
+  const sceneRows = Array.isArray(concept.scenePlan) ? concept.scenePlan.map(scene => `
+    <article class="idea-card"><strong>Scene ${escapeHTML(scene.scene)}</strong><div class="meta-line">${escapeHTML(scene.purpose || '')}</div><p>${escapeHTML(scene.visual || '')}</p><small>${escapeHTML(scene.narrationIntent || '')} · ${escapeHTML(scene.durationSeconds || '?')} sec</small></article>`).join('') : '';
+  $('#concept-detail').innerHTML = `
+    <h3>${escapeHTML(concept.name || record.topic)}</h3>
+    <p>${escapeHTML(concept.premise || '')}</p>
+    <p><strong>Audience:</strong> ${escapeHTML(concept.audience || '')}</p>
+    <p><strong>Emotional objective:</strong> ${escapeHTML(concept.emotionalObjective || '')}</p>
+    <h4>Story arc</h4><p>${escapeHTML(Array.isArray(concept.storyArc) ? concept.storyArc.join(' → ') : concept.storyArc || '')}</p>
+    <h4>Visual direction</h4><pre>${escapeHTML(JSON.stringify(concept.visualDirection || {}, null, 2))}</pre>
+    <h4>Audio & subtitles</h4><pre>${escapeHTML(JSON.stringify({ audio: concept.audioDirection || {}, subtitles: concept.subtitleDirection || {}, transitions: concept.transitions || '' }, null, 2))}</pre>
+    ${musicForm}
+    <h4>Scene plan</h4><div class="card-list">${sceneRows}</div>
+    <div class="form-actions">
+      ${record.status === 'pending' ? '<button type="button" class="button secondary" data-concept-revise>Revise concept</button><button type="button" class="button primary" data-concept-approve>Approve concept</button>' : ''}
+      ${record.status === 'approved' ? '<button type="button" class="button primary" data-concept-generate>Start production</button>' : ''}
+    </div>
+    ${record.status === 'approved' ? '<p class="callout">Approved. Production can now start using this creative brief.</p>' : '<p class="callout">Production is locked until you approve this concept.</p>'}`;
+  $('#concept-revision-form').classList.toggle('hidden', record.status !== 'pending');
 }
 
 function switchView(view) {
@@ -923,13 +1044,15 @@ function switchView(view) {
     analytics: ['PERFORMANCE', 'Turn results into the next move.'],
     engagement: ['AUDIENCE ENGAGEMENT', 'Talk with the people watching.'],
     readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
-    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
+    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.'],
+    concepts: ['CREATIVE DIRECTION', 'Approve the concept before production begins.']
   };
   $('#view-eyebrow').textContent = titles[view][0];
   $('#view-title').textContent = titles[view][1];
   location.hash = view;
   // Loaded on demand rather than in the 8-second dashboard poll to spare API quota.
   if (view === 'analytics') loadChannelSnapshot();
+  if (view === 'concepts') loadVideoConcepts();
 }
 
 function selectOptions(options, selected) {
@@ -1331,6 +1454,109 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  const conceptSelect = event.target.closest('[data-select-concept]');
+  if (conceptSelect) {
+    ui.currentConceptId = conceptSelect.dataset.selectConcept;
+    try {
+      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId));
+      renderVideoConcept(data.concept);
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+  if (event.target.closest('#concept-refresh-button')) return loadVideoConcepts();
+  if (event.target.closest('[data-concept-revise]')) {
+    $('#concept-revision-form').classList.remove('hidden');
+    $('#concept-revision-form textarea').focus();
+    return;
+  }
+  if (event.target.closest('[data-concept-approve]')) {
+    if (!confirm('Approve this concept? Production will use this approved creative direction.')) return;
+    try {
+      const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/approve', { method: 'POST', body: '{}' });
+      renderVideoConcept(data.concept);
+      showToast('Concept approved. Production is now unlocked.');
+      await loadVideoConcepts();
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+  if (event.target.closest('[data-concept-generate]')) {
+    if (!confirm('Start production using this approved concept?')) return;
+    try {
+      await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/generate', { method: 'POST', body: JSON.stringify({ length: 'medium' }) });
+      showToast('Production job started.');
+      await refreshDashboard(true);
+      switchView('pipeline');
+    } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+
+  const qualityResubmit = event.target.closest('[data-quality-resubmit]');
+  if (qualityResubmit) {
+    const card = qualityResubmit.closest('.script-quality-review-card');
+    const draft = card?.querySelector('[data-quality-draft]')?.value || '';
+    if (!draft.trim()) return showToast('Revised draft cannot be empty.', 'error');
+    if (!confirm('Send this edited draft to the local Ollama reviewer? It will return to the human review queue.')) return;
+    qualityResubmit.disabled = true;
+    try {
+      const result = await api('/api/script-quality-reviews/' + encodeURIComponent(qualityResubmit.dataset.qualityResubmit) + '/revise', {
+        method: 'POST',
+        body: JSON.stringify({ draft })
+      });
+      showToast(result.automatedReviewPassed
+        ? 'Local re-review passed. Human approval is still required.'
+        : 'Draft re-reviewed and kept in the human review queue.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      qualityResubmit.disabled = false;
+    }
+    return;
+  }
+
+  const continueApproved = event.target.closest('[data-continue-approved-script]');
+  if (continueApproved) {
+    if (!confirm('Continue production using this exact saved, human-approved script? Thumbnail, SEO and video production will run. This action will not schedule or publish the video.')) return;
+    continueApproved.disabled = true;
+    try {
+      await api('/api/script-quality-reviews/' + encodeURIComponent(continueApproved.dataset.continueApprovedScript) + '/continue', {
+        method: 'POST',
+        body: '{}'
+      });
+      showToast('Production resumed with the approved script. Publishing remains disabled.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      continueApproved.disabled = false;
+    }
+    return;
+  }
+
+  const qualityDecision = event.target.closest('[data-quality-decision]');
+  if (qualityDecision) {
+    const decision = qualityDecision.dataset.qualityDecision;
+    const message = decision === 'human_approved'
+      ? 'Human approval records your editorial decision only. It will not launch production or publish.'
+      : decision === 'rejected'
+        ? 'Reject this saved script draft?'
+        : 'Request a revision. The draft will remain in the review queue.';
+    if (!confirm(message)) return;
+    const notes = prompt('Optional review notes / revision instructions:', '') ;
+    if (notes === null) return;
+    qualityDecision.disabled = true;
+    try {
+      await api('/api/script-quality-reviews/' + encodeURIComponent(qualityDecision.dataset.qualityReviewId) + '/decision', {
+        method: 'POST',
+        body: JSON.stringify({ decision, notes })
+      });
+      showToast(decision === 'human_approved' ? 'Human decision saved. No production was started.' : 'Review decision saved.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      qualityDecision.disabled = false;
+    }
+    return;
+  }
+
   const nav = event.target.closest('[data-view]');
   if (nav) return switchView(nav.dataset.view);
   const go = event.target.closest('[data-go]');
@@ -1347,7 +1573,13 @@ document.addEventListener('click', async event => {
 
   const idea = event.target.closest('[data-generate-idea]');
   if (idea) {
-    await mutate(`/api/ideas/${encodeURIComponent(idea.dataset.generateIdea)}/generate`, 'POST', { length: 'medium' }, 'Idea queued for generation.').catch(() => {});
+    const record = (ui.state?.ideas || []).find(item => item.id === idea.dataset.generateIdea);
+    if (!record) return showToast('Idea not found. Refresh the dashboard and try again.', 'error');
+    const topicInput = $('#concept-propose-form [name="topic"]');
+    if (topicInput) topicInput.value = record.topic || '';
+    switchView('concepts');
+    showToast('Idea added to the concept studio. Review and approve its creative direction before production.');
+    return;
   }
 
   const resume = event.target.closest('[data-resume-job]');
@@ -1766,7 +1998,7 @@ document.addEventListener('change', event => {
   }
 });
 
-$('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#generate-button').addEventListener('click', () => switchView('concepts'));
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
 $('#channel-snapshot-refresh').addEventListener('click', () => loadChannelSnapshot(true));
@@ -1847,6 +2079,120 @@ $('#resume-operator-run').addEventListener('click', async event => {
   }
 });
 
+$('#reference-video-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const file = form.elements.referenceVideo.files?.[0];
+  const button = form.querySelector('button[type="submit"]');
+  const result = $('#reference-video-result');
+  if (!file) return showToast('Choose a reference video first.', 'error');
+  button.disabled = true;
+  result.classList.remove('hidden');
+  result.innerHTML = empty('Uploading and sampling frames locally…');
+  try {
+    const data = await api('/api/concepts/reference-videos', {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Content-Type': file.type,
+        'x-file-name': encodeURIComponent(file.name)
+      }
+    });
+    const reference = data.referenceVideo;
+    $('#concept-propose-form [name="referenceVideoId"]').value = reference.id;
+    const frames = (reference.frameUrls || []).map((url, index) =>
+      `<img src="${escapeHTML(url)}" alt="Reference frame ${index + 1}" loading="lazy" style="width:100%;max-width:180px;border-radius:10px">`
+    ).join('');
+    const analysis = reference.analysis?.error
+      ? `<p class="callout">${escapeHTML(reference.analysis.error)}</p>`
+      : `<pre>${escapeHTML(JSON.stringify(reference.analysis || {}, null, 2))}</pre>`;
+    result.innerHTML = `
+      <div class="callout">Reference saved: ${escapeHTML(reference.originalName)} · ${Math.round(reference.durationSeconds)} sec · ${reference.analysisStatus === 'complete' ? 'local style analysis complete' : 'analysis needs another attempt'}</div>
+      <div class="card-list" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">${frames}</div>
+      ${analysis}
+      <p class="callout">This reference is attached to the next concept proposal as style-only guidance.</p>`;
+    form.reset();
+    showToast(data.analysisError ? 'Video saved; local visual analysis needs another attempt.' : 'Reference video analyzed locally and attached to the concept form.');
+  } catch (error) {
+    result.innerHTML = empty(error.message);
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#concept-propose-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const data = await api('/api/concepts/propose', { method: 'POST', body: JSON.stringify(values) });
+    ui.currentConceptId = data.concept.id;
+    renderVideoConcept(data.concept);
+    event.currentTarget.reset();
+    showToast('Concept proposed by local Ollama. Review it before production.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally { button.disabled = false; }
+});
+
+$('#concept-detail').addEventListener('submit', async event => {
+  const form = event.target.closest('#concept-music-form');
+  if (!form) return;
+  event.preventDefault();
+  if (!ui.currentConceptId) return;
+  const values = Object.fromEntries(new FormData(form));
+  const file = form.elements.musicFile.files?.[0];
+  if (!file) return showToast('Choose an audio file first.', 'error');
+  if (file.size > 50 * 1024 * 1024) return showToast('Music files must be 50 MB or smaller.', 'error');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const headers = {
+      'Content-Type': file.type,
+      'X-Music-Title': encodeURIComponent(values.title || ''),
+      'X-Music-Creator': encodeURIComponent(values.creator || ''),
+      'X-License-Type': values.licenseType,
+      'X-Rights-Confirmed': form.elements.rightsConfirmed.checked ? 'true' : 'false',
+      'X-Music-Attribution': encodeURIComponent(values.attribution || ''),
+      'X-License-Name': encodeURIComponent(values.licenseName || ''),
+      'X-License-Url': encodeURIComponent(values.licenseUrl || ''),
+      'X-Source-Url': encodeURIComponent(values.sourceUrl || ''),
+      'X-Music-Volume': values.volume || '0.18'
+    };
+    const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/music', {
+      method: 'POST', headers, body: file
+    });
+    renderVideoConcept(data.concept);
+    showToast('Music uploaded, rights recorded and attached to the concept.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#concept-revision-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!ui.currentConceptId) return;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const data = await api('/api/concepts/' + encodeURIComponent(ui.currentConceptId) + '/revise', { method: 'POST', body: JSON.stringify(values) });
+    ui.currentConceptId = data.concept.id;
+    event.currentTarget.reset();
+    renderVideoConcept(data.concept);
+    showToast('New concept revision created. Review it again.');
+    await loadVideoConcepts();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally { button.disabled = false; }
+});
+
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -1890,6 +2236,6 @@ $('#api-key-button').addEventListener('click', () => {
 });
 
 const initialView = location.hash.slice(1);
-if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'engagement', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
+if (['overview', 'concepts', 'operator', 'pipeline', 'calendar', 'analytics', 'engagement', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
 refreshDashboard();
 setInterval(() => refreshDashboard(true), 8000);

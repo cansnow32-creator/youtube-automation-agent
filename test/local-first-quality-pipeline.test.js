@@ -67,19 +67,66 @@ async function run() {
     return { gemini: reviewer(), groq: reviewer() };
   };
   let rejected = false;
+  let blockedError = null;
   try { await blocked.generateAndReview('Write a script'); } catch (error) {
+    blockedError = error;
     rejected = /human review/i.test(error.message);
   }
   if (!rejected || blocked.lastReport.status !== 'human_review_required') {
     throw new Error('A draft below 80 was not held for human review');
   }
+  if (blockedError?.code !== 'QUALITY_REVIEW_REQUIRED' ||
+      blockedError?.draft !== '{"title":"Below threshold"}' ||
+      blockedError?.qualityReport?.status !== 'human_review_required') {
+    throw new Error('A rejected draft and its quality report were not attached for durable review');
+  }
+
+  const localOnly = new LocalFirstQualityPipeline({}, { enabled: true });
+  let remoteCalls = 0;
+  localOnly.requestOllama = async () => JSON.stringify({
+    score: 88, approved: true, blockers: [], findings: [],
+    revision_instructions: [], platform_metadata: completeMetadata
+  });
+  localOnly.requestGemini = async () => { remoteCalls++; throw new Error('Remote reviewer must remain disabled by default'); };
+  localOnly.requestGroq = async () => { remoteCalls++; throw new Error('Remote reviewer must remain disabled by default'); };
+  const localReview = await localOnly.reviewDraft('Local draft');
+  if (!localReview.ollama || localReview.gemini || localReview.groq || remoteCalls !== 0) {
+    throw new Error('Default quality review must use local Ollama only');
+  }
+  if (localOnly.allowRemoteReview !== false) throw new Error('Remote review must be opt-in');
+
+  const localEndToEnd = new LocalFirstQualityPipeline({}, { enabled: true, maxRevisions: 0 });
+  let localRequests = 0;
+  localEndToEnd.requestOllama = async () => {
+    localRequests++;
+    if (localRequests === 1) return '{"title":"Local draft"}';
+    return JSON.stringify({
+      score: 89, approved: true, blockers: [], findings: [],
+      revision_instructions: [], platform_metadata: completeMetadata
+    });
+  };
+  localEndToEnd.requestGemini = async () => { throw new Error('Gemini must not be called'); };
+  localEndToEnd.requestGroq = async () => { throw new Error('Groq must not be called'); };
+  const localDraft = await localEndToEnd.generateAndReview('Write a complete script');
+  if (localDraft !== '{"title":"Local draft"}' || localRequests !== 2) {
+    throw new Error('Local generation and review did not complete through Ollama');
+  }
+  if (localEndToEnd.lastReport.status !== 'approved' ||
+      localEndToEnd.lastReport.reviewers.join(',') !== 'ollama' ||
+      localEndToEnd.lastReport.remoteReviewEnabled !== false) {
+    throw new Error('Local-only quality report is incomplete or incorrectly identifies its reviewer');
+  }
 
   const order = [];
-  const ordered = new LocalFirstQualityPipeline({}, { enabled: true });
+  const ordered = new LocalFirstQualityPipeline({}, { enabled: true, allowRemoteReview: true });
+  ordered.requestOllama = async () => {
+    order.push('Ollama');
+    return JSON.stringify({ score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata });
+  };
   ordered.requestGemini = async () => { order.push('Gemini'); return { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }; };
   ordered.requestGroq = async () => { order.push('Groq'); return { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }; };
   await ordered.reviewDraft('draft');
-  if (order.join(',') !== 'Gemini,Groq') throw new Error('Reviewers did not run in Gemini then Groq order');
+  if (order.join(',') !== 'Ollama,Gemini,Groq') throw new Error('Opt-in reviewers did not run in local-first order');
 
   console.log('Local-first quality pipeline tests passed');
 }

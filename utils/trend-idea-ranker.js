@@ -1,8 +1,8 @@
 function tokenize(value) {
   return new Set(String(value || '').toLowerCase().normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z0-9]+/i)
-    .filter(token => token.length > 2));
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(token => [...token].length > 2));
 }
 
 function overlapScore(left, right) {
@@ -117,6 +117,106 @@ function historicalPerformanceForIdea(idea, sourceTopic, snapshots = []) {
   };
 }
 
+function scoreViewerValue(idea = {}, audienceDemand = null) {
+  const angle = String(idea.angle || '').trim();
+  const rationale = String(idea.rationale || '').trim();
+  const combined = `${angle} ${rationale}`.toLowerCase();
+  if (!combined.trim()) return 45;
+  const benefitTerms = /step|steps|guide|checklist|workflow|compare|comparison|avoid|fix|solve|learn|build|create|save|improve|choose|explained|tutorial|beginner|practical/i;
+  const hasConcreteBenefit = benefitTerms.test(combined);
+  const hasSpecificAngle = tokenize(angle).size >= 5;
+  const hasAudienceDemand = Boolean(audienceDemand);
+  return clamp(45 + (hasConcreteBenefit ? 25 : 0) + (hasSpecificAngle ? 20 : 0) + (hasAudienceDemand ? 10 : 0));
+}
+
+function scoreProductionFit(idea = {}, channelStrategy = {}) {
+  const preferredFormat = String(channelStrategy.default_format || '').trim().toLowerCase();
+  const ideaFormat = String(idea.format || '').trim().toLowerCase();
+  if (!preferredFormat || !ideaFormat) return 75;
+  return preferredFormat === ideaFormat ? 100 : 65;
+}
+
+function scoreProductionRequirements(idea = {}, channelStrategy = {}) {
+  const text = `${idea.topic || ''} ${idea.angle || ''} ${idea.rationale || ''}`.toLowerCase();
+  if (!text.trim()) {
+    return { research: 75, visuals: 75, narration: 75, editing: 75, capabilityPenalty: 0 };
+  }
+
+  const has = pattern => pattern.test(text);
+  const scores = {
+    research: has(/documentary|investigation|deep dive|in-depth|case study|field research|fact.?check|data analysis|belgesel|araştırma|inceleme|vaka analizi/)
+      ? 45 : has(/comparison|review|historical|timeline|statistics|comparison|karşılaştırma|inceleme|tarihsel|istatistik/)
+        ? 70 : 90,
+    visuals: has(/3d animation|original animation|frame-by-frame|motion graphics|visual effects|archival footage|maps? and charts|animasyon|hareketli grafik|arşiv görüntüsü|harita ve grafik/)
+      ? 40 : has(/screen recording|product demo|charts|diagrams|stock footage|ekran kaydı|ürün demosu|grafik|şema/)
+        ? 70 : 90,
+    narration: has(/interview|multiple speakers|voice actors|dialogue|on location|röportaj|birden fazla konuşmacı|seslendirmen|diyalog|saha çekimi/)
+      ? 40 : has(/voiceover|narration|scripted story|storytelling|seslendirme|anlatım|hikâye anlatımı/)
+        ? 70 : 90,
+    editing: has(/frame-by-frame|multi-location|rapid cuts|complex transitions|synchronized|documentary|archival footage|çoklu mekân|hızlı kurgu|karmaşık geçiş|eşzamanlı|belgesel/)
+      ? 40 : has(/shorts|captions|subtitles|b-roll|screen recording|short video|altyazı|ekran kaydı/)
+        ? 70 : 90
+  };
+
+  // Capabilities are optional, explicit channel-owner settings; absence is not a limitation.
+  const capabilities = Array.isArray(channelStrategy.productionCapabilities)
+    ? channelStrategy.productionCapabilities.map(value => String(value).toLowerCase())
+    : null;
+  let capabilityPenalty = 0;
+  if (capabilities?.length) {
+    const requirements = [
+      { terms: /interview|on location|field research|röportaj|saha çekimi/, capability: 'interviews', key: 'narration' },
+      { terms: /3d animation|original animation|frame-by-frame|animasyon/, capability: 'animation', key: 'visuals' },
+      { terms: /documentary|investigation|field research|belgesel|araştırma/, capability: 'research', key: 'research' },
+      { terms: /voiceover|narration|seslendirme|anlatım/, capability: 'voiceover', key: 'narration' },
+      { terms: /motion graphics|visual effects|hareketli grafik/, capability: 'motion graphics', key: 'visuals' }
+    ];
+    for (const requirement of requirements) {
+      if (requirement.terms.test(text) && !capabilities.includes(requirement.capability)) {
+        scores[requirement.key] -= 15;
+        capabilityPenalty += 15;
+      }
+    }
+  }
+
+  for (const key of ['research', 'visuals', 'narration', 'editing']) {
+    scores[key] = clamp(scores[key]);
+  }
+  return { ...scores, capabilityPenalty };
+}
+
+function buildProductionPlan(requirements = {}) {
+  const stages = [
+    { key: 'research', label: 'Research and fact-checking', order: 1 },
+    { key: 'visuals', label: 'Visual assets and animation', order: 2 },
+    { key: 'narration', label: 'Script, narration and interviews', order: 3 },
+    { key: 'editing', label: 'Editing, captions and assembly', order: 4 }
+  ].map(stage => {
+    const score = clamp(requirements[stage.key] ?? 75);
+    return {
+      key: stage.key,
+      label: stage.label,
+      effort: score >= 80 ? 'low' : score >= 60 ? 'medium' : 'high',
+      readinessScore: score,
+      sequence: stage.order
+    };
+  });
+  return {
+    stages,
+    highestEffortStage: [...stages].sort((a, b) => a.readinessScore - b.readinessScore)[0]?.key || null,
+    capabilityPenalty: clamp(requirements.capabilityPenalty || 0)
+  };
+}
+
+function scoreProductionEffort(idea = {}, channelStrategy = {}) {
+  const requirements = scoreProductionRequirements(idea, channelStrategy);
+  return clamp(Math.round(
+    requirements.research * 0.35 +
+    requirements.visuals * 0.25 +
+    requirements.narration * 0.2 +
+    requirements.editing * 0.2
+  ));
+}
 function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSnapshots = [], audienceDemand = []) {
   const trends = new Map((trendTopics || []).map(item => [String(item.topic || '').toLowerCase(), item]));
   const maxTrend = Math.max(1, ...(trendTopics || []).map(item => Number(item.score) || 0));
@@ -135,12 +235,25 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     if (!trend || !topic) return null;
 
     const rawTrend = Math.max(0, Number(trend.score) || 0);
-    const trendScore = clamp(Math.round((Math.log1p(rawTrend) / Math.log1p(maxTrend)) * 100));
+    const rawTrendScore = clamp(Math.round((Math.log1p(rawTrend) / Math.log1p(maxTrend)) * 100));
+    const sourceTypes = [...new Set((Array.isArray(trend.sources) ? trend.sources : [])
+      .filter(source => typeof source === 'string' && source.trim()))];
+    const evidence = Array.isArray(trend.evidence) ? trend.evidence : [];
+    const hasEvidenceMetadata = Array.isArray(trend.sources) || Array.isArray(trend.evidence);
+    // Pull weakly-supported trend scores toward neutral. This is deliberately
+    // bounded so a single-source topic can still rank well when other signals agree.
+    const trendEvidenceConfidence = hasEvidenceMetadata
+      ? clamp(0.35 + Math.min(sourceTypes.length, 2) * 0.15 + Math.min(evidence.length, 3) * 0.1, 0, 0.95)
+      : 1;
+    const trendScore = clamp(Math.round(50 + (rawTrendScore - 50) * trendEvidenceConfidence));
     const fit = overlapScore(`${sourceTopic} ${topic}`, profile);
     const channelFit = fit === null ? 50 : fit;
     const demand = audienceDemandForTopic(`${sourceTopic} ${topic}`, audienceDemand);
     const historical = historicalPerformanceForIdea(idea, sourceTopic, snapshots);
     const performance = historical?.score ?? null;
+    const viewerValue = scoreViewerValue(idea, demand);
+    const productionFit = scoreProductionFit(idea, channelStrategy);
+    const productionRequirements = scoreProductionRequirements(idea, channelStrategy);\n    const productionEffort = scoreProductionEffort(idea, channelStrategy);
 
     let weights;
     let score;
@@ -161,6 +274,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
       score = Math.round(trendScore * weights.trend + channelFit * weights.channelFit);
     }
 
+    score = Math.round(score * 0.8 + viewerValue * 0.1 + productionFit * 0.05 + productionEffort * 0.05);
+
     return {
       ...idea,
       sourceTopic,
@@ -171,7 +286,16 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
       score,
       scoreBreakdown: {
         trend: trendScore,
+        rawTrend: rawTrendScore,
+        trendEvidenceConfidence: Number(trendEvidenceConfidence.toFixed(2)),
+        trendSourceCount: sourceTypes.length,
+        trendEvidenceCount: evidence.length,
         channelFit,
+        viewerValue,
+        productionFit,
+        productionEffort,
+        productionRequirements,
+        productionPlan: buildProductionPlan(productionRequirements),
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
         historicalSampleSize: historical?.sampleSize || 0,
@@ -189,4 +313,78 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
   }).filter(Boolean).sort((a, b) => b.score - a.score);
 }
 
-module.exports = { scoreTrendIdeas, overlapScore, buildAudienceDemand, audienceDemandForTopic };
+function filterTrendIdeasForApproval(ideas, existingTopics = [], options = {}) {
+  const minimumScore = Number.isFinite(Number(options.minimumScore)) ? Number(options.minimumScore) : 40;
+  const minimumChannelFit = Number.isFinite(Number(options.minimumChannelFit)) ? Number(options.minimumChannelFit) : 12;
+  const profile = [
+    options.channelStrategy?.objective,
+    options.channelStrategy?.audience,
+    options.channelStrategy?.value_proposition || options.channelStrategy?.valueProposition,
+    ...(options.channelStrategy?.contentPillars || [])
+  ].filter(Boolean).join(' ');
+  const hasChannelProfile = Boolean(profile.trim());
+  const seen = (existingTopics || []).map(topic => {
+    if (typeof topic === 'string') return topic.trim();
+    return { topic: String(topic?.topic || '').trim(), angle: String(topic?.angle || '').trim(), pillar: String(topic?.pillar || '').trim() };
+  }).filter(topic => typeof topic === 'string' ? Boolean(topic) : Boolean(topic.topic));
+  const accepted = [];
+  const rejected = { lowScore: 0, offAudience: 0, duplicate: 0, missingEvidence: 0, invalid: 0 };
+
+  for (const idea of ideas || []) {
+    const title = String(idea?.topic || '').trim();
+    if (!title || title.length < 12 || !idea.sourceTopic) {
+      rejected.invalid++;
+      continue;
+    }
+    if (Number(idea.score) < minimumScore) {
+      rejected.lowScore++;
+      continue;
+    }
+    if (hasChannelProfile && Number(idea.scoreBreakdown?.channelFit ?? 50) < minimumChannelFit) {
+      rejected.offAudience++;
+      continue;
+    }
+    if (Number(idea.scoreBreakdown?.trendEvidenceCount || 0) < 1) {
+      rejected.missingEvidence++;
+      continue;
+    }
+    const angle = String(idea.angle || '').trim();
+    const pillar = String(idea.pillar || '').trim();
+    const duplicate = [...seen, ...accepted.map(item => item)]
+      .some(previous => {
+        const previousTitle = typeof previous === 'string' ? previous : String(previous.topic || '').trim();
+        const previousAngle = typeof previous === 'string' ? '' : String(previous.angle || '').trim();
+        const previousPillar = typeof previous === 'string' ? '' : String(previous.pillar || '').trim();
+        const titleSimilarity = overlapScore(title, previousTitle);
+        const angleSimilarity = angle && previousAngle ? overlapScore(angle, previousAngle) : null;
+        const crossSimilarity = angle && previousTitle ? overlapScore(angle, previousTitle) : null;
+        const reverseCrossSimilarity = previousAngle ? overlapScore(title, previousAngle) : null;
+        const sharedPillar = pillar && previousPillar &&
+          pillar.toLocaleLowerCase() === previousPillar.toLocaleLowerCase();
+        return (titleSimilarity !== null && titleSimilarity >= 70) ||
+          (angleSimilarity !== null && angleSimilarity >= 60) ||
+          (sharedPillar && titleSimilarity !== null && titleSimilarity >= 55) ||
+          (crossSimilarity !== null && crossSimilarity >= 65) ||
+          (reverseCrossSimilarity !== null && reverseCrossSimilarity >= 65);
+      });
+    if (duplicate) {
+      rejected.duplicate++;
+      continue;
+    }
+    accepted.push(idea);
+  }
+  return { ideas: accepted, rejected };
+}
+
+module.exports = {
+  scoreTrendIdeas,
+  overlapScore,
+  buildAudienceDemand,
+  audienceDemandForTopic,
+  scoreViewerValue,
+  scoreProductionFit,
+  scoreProductionEffort,
+  scoreProductionRequirements,
+  buildProductionPlan,
+  filterTrendIdeasForApproval
+};

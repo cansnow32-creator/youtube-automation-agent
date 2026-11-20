@@ -30,83 +30,83 @@ class DailyAutomation {
   async setupScheduledTasks() {
     // Daily content generation at 6:00 AM
     this.scheduledTasks.set('daily-content-generation', 
-      cron.schedule('0 6 * * *', async () => {
+      cron.createTask('0 6 * * *', async () => {
         if (this.isEnabled) {
           await this.runDailyContentGeneration();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Publishing queue processing every 15 minutes
     this.scheduledTasks.set('publish-queue-processing',
-      cron.schedule('*/15 * * * *', async () => {
+      cron.createTask('*/15 * * * *', async () => {
         if (this.isEnabled) {
           await this.processPublishQueue();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Analytics collection at 9:00 AM daily
     this.scheduledTasks.set('daily-analytics',
-      cron.schedule('0 9 * * *', async () => {
+      cron.createTask('0 9 * * *', async () => {
         if (this.isEnabled) {
           await this.collectDailyAnalytics();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Refresh trend research before the weekly strategy review.
     this.scheduledTasks.set('weekly-trend-refresh',
-      cron.schedule('30 7 * * 0', async () => {
+      cron.createTask('30 7 * * 0', async () => {
         if (this.isEnabled) {
           await this.refreshWeeklyTrends();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Weekly strategy review on Sundays at 8:00 AM
     this.scheduledTasks.set('weekly-strategy-review',
-      cron.schedule('0 8 * * 0', async () => {
+      cron.createTask('0 8 * * 0', async () => {
         if (this.isEnabled) {
           await this.weeklyStrategyReview();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Optimization tasks daily at 10:00 PM
     this.scheduledTasks.set('daily-optimization',
-      cron.schedule('0 22 * * *', async () => {
+      cron.createTask('0 22 * * *', async () => {
         if (this.isEnabled) {
           await this.runDailyOptimization();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Database maintenance weekly on Saturdays at 3:00 AM
     this.scheduledTasks.set('database-maintenance',
-      cron.schedule('0 3 * * 6', async () => {
+      cron.createTask('0 3 * * 6', async () => {
         if (this.isEnabled) {
           await this.databaseMaintenance();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Audience comment sync every 4 hours; the service's own taper decides which videos are due
     this.scheduledTasks.set('audience-engagement-sync',
-      cron.schedule('0 */4 * * *', async () => {
+      cron.createTask('0 */4 * * *', async () => {
         if (this.isEnabled) {
           await this.collectAudienceEngagement();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Collect controlled experiment evidence and advance only pre-approved arms.
     this.scheduledTasks.set('growth-experiment-refresh',
-      cron.schedule('30 */4 * * *', async () => {
+      cron.createTask('30 */4 * * *', async () => {
         if (this.isEnabled) {
           await this.refreshGrowthExperiments();
         }
-      }, { scheduled: false })
+      })
     );
 
     // Start all scheduled tasks
@@ -130,8 +130,25 @@ class DailyAutomation {
         return;
       }
 
+      // Every scheduler entry point, including injected queue adapters, must
+      // be bound to an approved concept before it can enqueue or generate work.
+      const approvedConcepts = await this.db.listVideoConcepts(100);
+      const approvedConcept = Array.isArray(approvedConcepts)
+        ? approvedConcepts.find(item => item?.status === 'approved')
+        : null;
+      if (!approvedConcept) {
+        const error = new Error('Daily generation is blocked until a video concept is approved in Concept Studio.');
+        error.status = 409;
+        error.code = 'APPROVED_CONCEPT_REQUIRED';
+        throw error;
+      }
+
       if (this.generateContent) {
-        const job = await this.generateContent({ source: 'scheduler' });
+        const job = await this.generateContent({
+          source: 'scheduler',
+          approvedVideoConcept: approvedConcept.concept,
+          approvedVideoConceptId: approvedConcept.id
+        });
         await this.db.setSetting('last_content_generation', new Date().toISOString());
         timer.end();
         this.logger.success(`Daily content generation queued: ${job.id}`);
@@ -139,8 +156,14 @@ class DailyAutomation {
         return;
       }
 
-      // Generate content strategy
-      const strategy = await this.agents.strategy.generateContentStrategy();
+      // Generate content strategy and bind the approved concept before any
+      // downstream agent can spend provider credits or create production assets.
+      const generatedStrategy = await this.agents.strategy.generateContentStrategy();
+      const strategy = {
+        ...generatedStrategy,
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      };
       this.logger.info(`Generated strategy: ${strategy.topic}`);
 
       // Generate script

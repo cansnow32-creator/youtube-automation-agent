@@ -26,6 +26,9 @@ const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service
 const { AudienceEngagementService } = require('./utils/audience-engagement-service');
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
+const { VideoConceptService } = require('./utils/video-concept-service');
+const { requireApprovedVideoConcept } = require('./utils/approved-video-concept-gate');
+const { ReferenceVideoService } = require('./utils/reference-video-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
@@ -63,6 +66,7 @@ class YouTubeAutomationAgent {
     this.experiments = null;
     this.discoverability = null;
     this.setupRequired = false;
+    this.references = null;
   }
 
   async initialize() {
@@ -409,6 +413,156 @@ class YouTubeAutomationAgent {
       });
     });
 
+    // Local-first video concept proposal, revision and approval.
+    this.concepts = new VideoConceptService(this.db);
+    this.references = new ReferenceVideoService(this.db);
+    this.app.post(
+      '/api/concepts/reference-videos',
+      this.requireAPIKey(),
+      express.raw({ type: ['video/mp4', 'video/quicktime', 'video/webm'], limit: '200mb' }),
+      async (req, res) => {
+        let record = null;
+        try {
+          let fileName = req.get('x-file-name') || 'reference-video';
+          try { fileName = decodeURIComponent(fileName); } catch (_error) { /* retain the supplied safe fallback */ }
+          record = await this.references.upload(req.body, fileName, req.get('content-type'));
+          let analysisError = null;
+          try {
+            record = await this.concepts.analyzeReferenceVideo(record.id);
+          } catch (error) {
+            analysisError = error.message;
+            record = await this.db.updateReferenceVideoAnalysis(record.id, { error: error.message }, 'failed');
+          }
+          return res.status(201).json({
+            success: true,
+            referenceVideo: this.references.toPublicRecord(record),
+            analysisError
+          });
+        } catch (error) {
+          return res.status(error.status || 400).json({ success: false, error: error.message });
+        }
+      }
+    );
+    this.app.get('/api/concepts/reference-videos/:referenceId/frames/:frameIndex', this.requireAPIKey(), async (req, res) => {
+      try {
+        const framePath = await this.references.getFrame(req.params.referenceId, req.params.frameIndex);
+        if (!framePath) return res.status(404).json({ success: false, error: 'Reference frame not found' });
+        return res.sendFile(framePath);
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+    this.app.get('/api/concepts', this.requireAPIKey(), async (_req, res) => {
+      try {
+        return res.json({ success: true, concepts: await this.db.listVideoConcepts(30) });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/propose', this.requireAPIKey(), async (req, res) => {
+      try {
+        const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+        const direction = typeof req.body?.direction === 'string' ? req.body.direction.trim() : '';
+        const referenceNotes = typeof req.body?.referenceNotes === 'string' ? req.body.referenceNotes.trim().slice(0, 3000) : '';
+        const referenceVideoId = typeof req.body?.referenceVideoId === 'string' ? req.body.referenceVideoId : null;
+        if (!topic) return res.status(400).json({ success: false, error: 'Topic is required' });
+        const profile = await this.db.getChannelProfile();
+        const concept = await this.concepts.propose({ topic, direction, profile, referenceNotes, referenceVideoId });
+        return res.status(201).json({ success: true, concept });
+      } catch (error) {
+        return res.status(503).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/concepts/:conceptId', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.get(req.params.conceptId);
+        return concept ? res.json({ success: true, concept }) : res.status(404).json({ success: false, error: 'Video concept not found' });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post(
+      '/api/concepts/:conceptId/music',
+      this.requireAPIKey(),
+      express.raw({
+        type: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/ogg', 'audio/flac', 'audio/x-flac', 'audio/webm'],
+        limit: '50mb'
+      }),
+      async (req, res) => {
+        try {
+          const headerText = name => {
+            const value = req.get(name) || '';
+            try { return decodeURIComponent(value); } catch (_error) { return value; }
+          };
+          const concept = await this.concepts.attachMusicAsset(req.params.conceptId, req.body, {
+            mimeType: req.get('content-type'),
+            title: headerText('x-music-title'),
+            creator: headerText('x-music-creator'),
+            licenseType: req.get('x-license-type'),
+            rightsConfirmed: req.get('x-rights-confirmed') === 'true',
+            attribution: headerText('x-music-attribution'),
+            licenseName: headerText('x-license-name'),
+            licenseUrl: headerText('x-license-url'),
+            sourceUrl: headerText('x-source-url'),
+            volume: req.get('x-music-volume') === undefined ? 0.18 : Number(req.get('x-music-volume')),
+            loop: req.get('x-music-loop') !== 'false',
+            fadeInSeconds: req.get('x-music-fade-in') === undefined ? 2 : Number(req.get('x-music-fade-in')),
+            fadeOutSeconds: req.get('x-music-fade-out') === undefined ? 3 : Number(req.get('x-music-fade-out'))
+          });
+          return res.json({ success: true, concept });
+        } catch (error) {
+          const status = /not found/i.test(error.message) ? 404
+            : /immutable|before concept approval/i.test(error.message) ? 409 : 400;
+          return res.status(status).json({ success: false, error: error.message });
+        }
+      }
+    );
+
+    this.app.post('/api/concepts/:conceptId/revise', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.revise({
+          conceptId: req.params.conceptId,
+          feedback: req.body?.feedback,
+          direction: req.body?.direction
+        });
+        return res.status(201).json({ success: true, concept });
+      } catch (error) {
+        const status = /not found/i.test(error.message) ? 404 : /Approved concepts|Describe what/i.test(error.message) ? 409 : 503;
+        return res.status(status).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/:conceptId/approve', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.concepts.approve(req.params.conceptId);
+        return concept ? res.json({ success: true, concept }) : res.status(404).json({ success: false, error: 'Video concept not found' });
+      } catch (error) {
+        return res.status(409).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/concepts/:conceptId/generate', this.requireAPIKey(), async (req, res) => {
+      try {
+        const concept = await this.db.getVideoConcept(req.params.conceptId);
+        if (!concept) return res.status(404).json({ success: false, error: 'Video concept not found' });
+        if (concept.status !== 'approved') return res.status(409).json({ success: false, error: 'Approve the video concept before production can start' });
+        const result = await this.startGenerationJob({
+          topic: concept.topic,
+          style: req.body?.style || null,
+          length: req.body?.length || 'medium',
+          source: 'manual',
+          requireApprovedConcept: true,
+          approvedConceptId: concept.id
+        });
+        return res.status(202).json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
     // Manual content generation
     this.app.post('/generate', this.requireAPIKey(), async (req, res) => {
       try {
@@ -495,6 +649,85 @@ class YouTubeAutomationAgent {
 
   setupOperatorAPI() {
     const protect = this.requireAPIKey();
+
+    this.app.get('/api/script-quality-reviews', protect, async (req, res) => {
+      try {
+        const status = ['pending', 'human_approved', 'rejected', 'revision_requested', 'all'].includes(req.query.status)
+          ? req.query.status
+          : 'pending';
+        const reviews = await this.db.listScriptQualityReviews(status, Number(req.query.limit) || 50);
+        return res.json({ success: true, reviews });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/script-quality-reviews/:reviewId/revise', protect, async (req, res) => {
+      try {
+        const draft = typeof req.body?.draft === 'string' ? req.body.draft.trim() : '';
+        if (!draft || draft.length > 100000) {
+          return res.status(400).json({ success: false, error: 'Revised draft must contain 1 to 100000 characters' });
+        }
+        const existing = await this.db.getScriptQualityReview(req.params.reviewId);
+        if (!existing) return res.status(404).json({ success: false, error: 'Quality review not found' });
+        if (!['pending', 'revision_requested'].includes(existing.status)) {
+          return res.status(409).json({ success: false, error: 'Only open quality reviews can be revised' });
+        }
+        const pipeline = this.agents.scriptWriter?.qualityPipeline;
+        if (!pipeline?.enabled) {
+          return res.status(503).json({ success: false, error: 'Enable the local quality pipeline before re-reviewing drafts' });
+        }
+        const reviews = await pipeline.reviewDraft(draft);
+        const reviewerResults = Object.values(reviews);
+        const score = reviewerResults.length
+          ? Math.min(...reviewerResults.map(result => Number(result.score)))
+          : 0;
+        const blockers = reviewerResults.flatMap(result => result.blockers || []);
+        const approved = reviewerResults.length > 0 &&
+          reviewerResults.every(result => result.approved === true && Number(result.score) >= pipeline.minimumScore) &&
+          blockers.length === 0;
+        const qualityReport = {
+          status: approved ? 'awaiting_human_approval' : 'human_review_required',
+          score,
+          minimumScore: pipeline.minimumScore,
+          revisions: Number(existing.quality_report?.revisions || 0) + 1,
+          reviewers: Object.keys(reviews),
+          remoteReviewEnabled: pipeline.allowRemoteReview,
+          attempts: [{ revision: Number(existing.quality_report?.revisions || 0) + 1, score, reviewers: reviews, approved }]
+        };
+        const review = await this.db.updateScriptQualityReviewDraft(req.params.reviewId, draft, qualityReport);
+        return res.json({ success: true, review, automatedReviewPassed: approved, humanDecisionRequired: true });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/script-quality-reviews/:reviewId/continue', protect, async (req, res) => {
+      try {
+        const result = await this.continueApprovedScriptReview(req.params.reviewId);
+        return res.status(202).json({ success: true, result, message: 'Production resumed using the saved human-approved script. Publishing remains disabled.' });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/script-quality-reviews/:reviewId/decision', protect, async (req, res) => {
+      try {
+        const decision = req.body?.decision;
+        if (!['human_approved', 'rejected', 'revision_requested'].includes(decision)) {
+          return res.status(400).json({ success: false, error: 'Decision must be human_approved, rejected, or revision_requested' });
+        }
+        const review = await this.db.decideScriptQualityReview(
+          req.params.reviewId,
+          decision,
+          req.body?.notes || ''
+        );
+        if (!review) return res.status(404).json({ success: false, error: 'Quality review not found' });
+        return res.json({ success: true, review });
+      } catch (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
 
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
@@ -834,13 +1067,30 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/retry', protect, async (req, res) => {
       const bundle = await this.db.getProductionBundle(req.params.productionId);
       if (!bundle) return res.status(404).json({ error: 'Content not found' });
-      const job = await this.startGenerationJob({
-        topic: bundle.strategy.topic || bundle.editorData.title || null,
-        style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
-        length: bundle.strategy.requestedLengthKey || 'medium',
-        source: 'retry'
-      });
-      return res.status(202).json({ success: true, result: job });
+      const approvedConceptId = bundle.strategy?.approvedVideoConceptId;
+      if (!approvedConceptId) {
+        return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'This production has no approved concept linked to it. Create and approve a concept before retrying.' });
+      }
+      try {
+        if (
+          bundle.timeline?.productionWorkflow &&
+          ['failed', 'processing'].includes(bundle.status) &&
+          this.agents.production?.resumeProduction
+        ) {
+          const result = await this.agents.production.resumeProduction(req.params.productionId);
+          return res.json({ success: true, resumed: true, result });
+        }
+        const job = await this.startGenerationJob({
+          topic: bundle.strategy.topic || bundle.editorData.title || null,
+          style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
+          length: bundle.strategy.requestedLengthKey || 'medium',
+          source: 'retry',
+          approvedConceptId
+        });
+        return res.status(202).json({ success: true, resumed: false, result: job });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code || null });
+      }
     });
 
     this.app.get('/api/content/:productionId/asset/:kind', async (req, res) => {
@@ -1241,11 +1491,19 @@ class YouTubeAutomationAgent {
     });
 
     this.app.post('/api/ideas/:ideaId/generate', protect, async (req, res) => {
-      const idea = await this.db.updateContentIdea(req.params.ideaId, { status: 'generating' });
+      const idea = await this.db.getRow('SELECT * FROM content_ideas WHERE id = ?', [req.params.ideaId]);
       if (!idea) return res.status(404).json({ error: 'Idea not found' });
-      const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea' });
-      await this.db.updateContentIdea(idea.id, { status: 'generated' });
-      return res.status(202).json({ success: true, result: job });
+      const approvedConceptId = req.body?.approvedConceptId;
+      if (!approvedConceptId) {
+        return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'Approve a video concept in Video Concept Studio before generating this idea.' });
+      }
+      try {
+        const job = await this.startGenerationJob({ topic: idea.topic, style: idea.style, length: req.body?.length || 'medium', source: 'idea', approvedConceptId });
+        await this.db.updateContentIdea(idea.id, { status: 'generated' });
+        return res.status(202).json({ success: true, result: job });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code || null });
+      }
     });
 
     this.app.post('/api/automation/:action', protect, async (req, res) => {
@@ -1270,7 +1528,7 @@ class YouTubeAutomationAgent {
       }
       const provider = req.body?.video_provider;
       if (provider !== undefined) {
-        const supported = ['slideshow', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
+        const supported = ['slideshow', 'cinecode', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
         if (!supported.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
         await this.db.setSetting('video_provider', provider);
       }
@@ -1321,6 +1579,14 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
+    const requestedConceptId = input.approvedConceptId || input.approvedVideoConceptId || input.strategyContext?.approvedVideoConceptId;
+    const approvedConcept = await requireApprovedVideoConcept(this.db, requestedConceptId);
+    validation.value.strategyContext = {
+      ...(validation.value.strategyContext || {}),
+      approvedVideoConcept: approvedConcept.concept,
+      approvedVideoConceptId: approvedConcept.id
+    };
+
     const job = await this.db.createGenerationJob({
       ...validation.value,
       source: input.source || 'manual'
@@ -1331,6 +1597,99 @@ class YouTubeAutomationAgent {
       .finally(() => this.activeJobs.delete(job.id));
     this.activeJobs.set(job.id, work);
     return job;
+  }
+
+  async continueApprovedScriptReview(reviewId) {
+    const review = await this.db.getScriptQualityReview(reviewId);
+    if (!review) {
+      const error = new Error('Script quality review not found');
+      error.status = 404;
+      throw error;
+    }
+    if (review.status !== 'human_approved') {
+      const error = new Error('Only a human-approved script draft can continue production');
+      error.status = 409;
+      throw error;
+    }
+    const jobId = review.job_id;
+    if (!jobId) {
+      const error = new Error('This review is not linked to a generation job');
+      error.status = 409;
+      throw error;
+    }
+    const job = await this.db.getGenerationJob(jobId);
+    if (!job || !['failed', 'interrupted'].includes(job.status) || job.stage !== 'script') {
+      const error = new Error('The linked job must be failed or interrupted at the script stage');
+      error.status = 409;
+      throw error;
+    }
+    if (this.activeJobs.has(jobId)) {
+      const error = new Error('This generation job is already running');
+      error.status = 409;
+      throw error;
+    }
+    const strategyCheckpoint = await this.db.getGenerationCheckpoint(jobId, 'strategy');
+    if (strategyCheckpoint?.status !== 'completed' || !strategyCheckpoint.artifact?.topic) {
+      const error = new Error('The strategy checkpoint is missing; refusing to continue with an unlinked draft');
+      error.status = 409;
+      throw error;
+    }
+    let parsed;
+    try {
+      parsed = this.agents.scriptWriter.parseAIJsonResponse(review.draft);
+    } catch (_error) {
+      const error = new Error('The saved draft is not valid JSON. Edit and re-review it before continuing.');
+      error.status = 422;
+      throw error;
+    }
+    const strategy = { ...strategyCheckpoint.artifact, ...(review.strategy || {}), jobId };
+    const writer = this.agents.scriptWriter;
+    const sections = writer.normalizeAISections(parsed.sections, strategy);
+    if (!parsed.title || String(parsed.title).trim().length > 100 || !parsed.hook ||
+        !sections.length || !parsed.introduction || !parsed.conclusion) {
+      const error = new Error('The approved draft is missing required title, hook, introduction, sections, or conclusion fields');
+      error.status = 422;
+      throw error;
+    }
+    const report = review.quality_report || {};
+    const script = {
+      title: String(parsed.title).trim(),
+      hook: writer.normalizeAIHook(parsed.hook),
+      introduction: writer.normalizeAIIntroduction(parsed.introduction),
+      mainContent: { sections, totalDuration: writer.calculateSectionsDuration(sections) },
+      conclusion: writer.normalizeAIConclusion(parsed.conclusion),
+      callToAction: writer.normalizeAICTA(parsed.cta, strategy),
+      duration: writer.estimateDuration({ sections }),
+      tone: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.tone || 'informative',
+      pacing: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.pacing || 'steady',
+      keywords: strategy.keywords || [],
+      claims: writer.normalizeAIClaims(parsed.claims, strategy.researchSources || []),
+      metadata: {
+        strategy,
+        generatedAt: new Date().toISOString(),
+        version: '1.0',
+        generationSource: 'human_approved_saved_draft',
+        qualityGate: { ...report, status: 'human_review_required' },
+        humanApproval: { reviewId: review.id, decidedAt: review.decided_at, notes: review.decision_notes || '' }
+      }
+    };
+    script.fullScript = writer.formatFullScript(script);
+    if (!script.fullScript || script.fullScript.length < 100) {
+      const error = new Error('The approved draft did not produce a usable full script');
+      error.status = 422;
+      throw error;
+    }
+    await this.db.saveScript(script);
+    await this.db.saveGenerationCheckpoint(jobId, 'script', {
+      status: 'completed',
+      artifact: script,
+      error: null,
+      completedAt: new Date().toISOString()
+    });
+    await this.db.updateGenerationJob(jobId, {
+      details: { approvedDraftReviewId: review.id, approvedDraftAcceptedAt: new Date().toISOString() }
+    });
+    return this.resumeGenerationJob(jobId, { forceHumanApproval: true });
   }
 
   async resumeGenerationJob(jobId, options = {}) {
@@ -1350,6 +1709,34 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
+    const linkedQualityReview = job.details?.qualityReviewId
+      ? await this.db.getScriptQualityReview(job.details.qualityReviewId)
+      : await this.db.getScriptQualityReviewByJobId(job.id);
+    if (linkedQualityReview) {
+      const review = linkedQualityReview;
+      if (review && ['pending', 'revision_requested'].includes(review.status)) {
+        const error = new Error('This generation job is waiting for a human script-review decision. Resolve the saved draft in the Script review queue before retrying.');
+        error.status = 409;
+        error.code = 'SCRIPT_QUALITY_REVIEW_PENDING';
+        error.qualityReviewId = review.id;
+        throw error;
+      }
+      if (review && review.status === 'human_approved') {
+        const approvedCheckpoint = await this.db.getGenerationCheckpoint(job.id, 'script');
+        const accepted = job.details?.approvedDraftReviewId === review.id &&
+          approvedCheckpoint?.status === 'completed' &&
+          approvedCheckpoint.artifact?.metadata?.humanApproval?.reviewId === review.id;
+        if (!accepted) {
+          const error = new Error('The human-approved draft must be explicitly accepted as the script checkpoint before resuming.');
+          error.status = 409;
+          error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
+          error.qualityReviewId = review.id;
+          throw error;
+        }
+      }
+    }
+    const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
+    await requireApprovedVideoConcept(this.db, approvedConceptId);
     if (this.activeJobs.has(job.id)) {
       const error = new Error('This generation job is already running');
       error.status = 409;
@@ -1377,7 +1764,8 @@ class YouTubeAutomationAgent {
       topic: job.topic,
       style: job.style,
       length: job.length || 'medium',
-      strategyContext: job.details?.strategyContext || {}
+      strategyContext: job.details?.strategyContext || {},
+      forceHumanApproval: options.forceHumanApproval === true
     };
     const updated = await this.db.updateGenerationJob(job.id, {
       status: 'queued',
@@ -1417,6 +1805,8 @@ class YouTubeAutomationAgent {
       const remaining = Math.max(1, strategy.cadence_per_week - Number(weeklyOutput?.count || 0));
       return this.autonomous.start({
         ...strategy,
+        approvedVideoConcept: input.approvedVideoConcept || null,
+        approvedVideoConceptId: input.approvedVideoConceptId || null,
         videos_per_run: Math.min(strategy.videos_per_run, remaining)
       });
     }
@@ -1428,7 +1818,8 @@ class YouTubeAutomationAgent {
       await this.db.updateGenerationJob(jobId, { status: 'running', progress: 2, error: null, completedAt: null });
       const result = await this.generateContent(input.topic, input.style, input.length, {
         jobId,
-        strategyContext: input.strategyContext
+        strategyContext: input.strategyContext,
+        forceHumanApproval: input.forceHumanApproval === true
       });
       await this.db.updateGenerationJob(jobId, {
         status: 'completed',
@@ -1449,7 +1840,16 @@ class YouTubeAutomationAgent {
         status: cancelled ? 'cancelled' : 'failed',
         stage: failedStage,
         error: error.message,
-        details: { failedStage },
+        details: {
+          failedStage,
+          ...(error.code === 'QUALITY_REVIEW_REQUIRED' && error.qualityReviewId
+            ? {
+                qualityReviewId: error.qualityReviewId,
+                qualityReviewStatus: 'pending',
+                qualityReviewCode: error.code
+              }
+            : {})
+        },
         completedAt: new Date().toISOString()
       });
       await this.operator.notify({
@@ -1476,8 +1876,14 @@ class YouTubeAutomationAgent {
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
     this.logger.info('Starting content generation pipeline...');
-    const { jobId = null, strategyContext: rawStrategyContext = {} } = options;
+    const { jobId = null, strategyContext: rawStrategyContext = {}, forceHumanApproval = false } = options;
     const strategyContext = rawStrategyContext || {};
+    const approvedConcept = await requireApprovedVideoConcept(
+      this.db,
+      strategyContext.approvedVideoConceptId
+    );
+    strategyContext.approvedVideoConcept = approvedConcept.concept;
+    strategyContext.approvedVideoConceptId = approvedConcept.id;
     const profile = await this.db.getChannelProfile() || {};
     const lengthLabels = { short: '2-4 minutes', medium: '8-12 minutes', long: '15-20 minutes' };
 
@@ -1489,6 +1895,11 @@ class YouTubeAutomationAgent {
         ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
         : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
+      generated.jobId = jobId;
+      if (strategyContext.approvedVideoConcept) {
+        generated.approvedVideoConcept = strategyContext.approvedVideoConcept;
+        generated.approvedVideoConceptId = strategyContext.approvedVideoConceptId || null;
+      }
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
@@ -1561,7 +1972,7 @@ class YouTubeAutomationAgent {
 
     // Step 6: Quality and approval gate
     return this.runGenerationStage(jobId, 'quality_review', 90, async () => {
-      const approvalRequired = await this.db.getSetting('approval_required') !== 'false';
+      const approvalRequired = forceHumanApproval || await this.db.getSetting('approval_required') !== 'false';
       const packagingExperiment = approvalRequired
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
         : null;

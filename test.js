@@ -371,8 +371,26 @@ class SystemTest {
     const previousStrategy = await db.getChannelStrategy();
     let run;
     let recoverableJob;
+    let approvedConceptId = null;
 
     try {
+      const blockedConceptResearch = { called: false };
+      const blockedOperator = new AutonomousChannelOperator({
+        async listVideoConcepts() { return []; },
+        async getVideoConcept() { return null; }
+      }, {
+        researchAndPlan: async () => { blockedConceptResearch.called = true; }
+      });
+      let blockedCode = null;
+      try {
+        await blockedOperator.start({ status: 'active' });
+      } catch (error) {
+        blockedCode = error.code;
+      }
+      if (blockedCode !== 'APPROVED_CONCEPT_REQUIRED' || blockedConceptResearch.called) {
+        throw new Error('Autonomous operator must require approval before paid research begins');
+      }
+
       const strategy = await db.saveChannelStrategy({
         objective: 'Teach small teams to automate useful work',
         audience: 'Small business operators',
@@ -401,7 +419,16 @@ class SystemTest {
         }];
         this.competitorData = [];
       };
-      const planned = await strategyAgent.researchAndPlanChannel(strategy);
+      // Keep this deterministic planning assertion independent of user-created backlog ideas.
+      // Restore the real database method immediately after planning; no user data is changed.
+      const originalListContentIdeas = db.listContentIdeas;
+      let planned;
+      try {
+        db.listContentIdeas = async () => [];
+        planned = await strategyAgent.researchAndPlanChannel(strategy);
+      } finally {
+        db.listContentIdeas = originalListContentIdeas;
+      }
       if (
         planned.plan.length !== 2 || !planned.research.sources.includes('YouTube most-popular videos') ||
         planned.research.sourceCatalog.length !== 1 || planned.plan[0].sourceUrls.length !== 1
@@ -409,6 +436,19 @@ class SystemTest {
         throw new Error('Strategy did not produce an evidence-labeled autonomous plan');
       }
 
+      approvedConceptId = `concept_operator_${Date.now()}`;
+      const approvedConcept = {
+        name: 'Approved autonomous test concept',
+        scenePlan: [{ scene: 1, visual: 'Opening' }, { scene: 2, visual: 'Payoff' }]
+      };
+      await db.saveVideoConcept({
+        id: approvedConceptId,
+        topic: 'Autonomous operator gate test',
+        concept: approvedConcept,
+        status: 'approved'
+      });
+      strategy.approvedVideoConceptId = approvedConceptId;
+      strategy.approvedVideoConcept = approvedConcept;
       const receivedInputs = [];
       let resumedJobs = 0;
       const operator = new AutonomousChannelOperator(db, {
@@ -435,7 +475,12 @@ class SystemTest {
       if (
         completed.status !== 'waiting_review' ||
         completed.generatedJobs.length !== 2 ||
-        receivedInputs.some(input => input.source !== 'autonomous_operator' || !input.strategyContext?.angle) ||
+        receivedInputs.some(input =>
+          input.source !== 'autonomous_operator' ||
+          !input.strategyContext?.angle ||
+          input.strategyContext.approvedVideoConceptId !== strategy.approvedVideoConceptId ||
+          input.strategyContext.approvedVideoConcept?.name !== strategy.approvedVideoConcept.name
+        ) ||
         receivedInputs[0].strategyContext.researchSources.length !== 1
       ) {
         throw new Error('Autonomous operator did not execute the planned workflow');
@@ -486,6 +531,7 @@ class SystemTest {
         await db.executeQuery("DELETE FROM channel_strategies WHERE id = 'default'");
       }
       if (recoverableJob) await db.executeQuery('DELETE FROM generation_jobs WHERE id = ?', [recoverableJob.id]);
+      if (approvedConceptId) await db.executeQuery('DELETE FROM video_concepts WHERE id = ?', [approvedConceptId]);
       await db.close();
     }
 
@@ -975,8 +1021,8 @@ class SystemTest {
       }
     });
     const passed = await service.run({ includePaidMedia: true });
-    if (passed.status !== 'passed' || passed.checks.length !== 7 || !savedRun) {
-      throw new Error('A successful readiness run was not persisted correctly');
+    if (passed.status !== 'passed' || passed.checks.length !== 8 || !savedRun) {
+      throw new Error(`A successful readiness run was not persisted correctly: status=${passed.status}, checks=${passed.checks.length}, statuses=${JSON.stringify(passed.checks.map(check => ({ id: check.id, status: check.status, message: check.message })))}`);
     }
     await service.assertReady('Test automation');
 
@@ -1061,7 +1107,7 @@ class SystemTest {
       await persistenceDb.initialize();
       await persistenceDb.saveReadinessRun(passed);
       const persisted = await persistenceDb.getLatestReadinessRun();
-      if (persisted?.id !== passed.id || persisted.checks.length !== 7 || persisted.summary.passed !== 7) {
+      if (persisted?.id !== passed.id || persisted.checks.length !== 8 || persisted.summary.passed !== 8) {
         throw new Error('Readiness evidence did not round-trip through SQLite');
       }
     } finally {
@@ -2006,7 +2052,8 @@ class SystemTest {
 
     // Discussion #74: sharp 0.33's wasm32 build crashes with @emnapi/runtime >= 1.4
     // (Termux and other platforms without a native binary).
-    const [major, minor] = require('sharp/package.json').version.split('.').map(Number);
+    const sharpVersion = require('sharp').versions.sharp;
+    const [major, minor] = sharpVersion.split('.').map(Number);
     if (major === 0 && minor < 34) {
       throw new Error(`sharp ${major}.${minor} cannot load its wasm32 build with current @emnapi/runtime`);
     }
@@ -2327,8 +2374,20 @@ class SystemTest {
     }
 
     const pipeline = new YouTubeAutomationAgent();
+    const approvedConceptRecord = {
+      id: 'open-issue-approved-concept',
+      status: 'approved',
+      concept: {
+        name: 'Approved regression-test concept',
+        visualDirection: { style: 'animated', palette: 'warm' },
+        audioDirection: { narration: 'calm', pacing: 'measured' },
+        subtitleDirection: { typography: 'clean sans', placement: 'lower safe area' },
+        scenePlan: [{ scene: 1, purpose: 'Hook', visual: 'Opening' }, { scene: 2, purpose: 'Payoff', visual: 'Resolution' }]
+      }
+    };
     pipeline.db = {
       getChannelProfile: async () => ({}),
+      getVideoConcept: async id => id === approvedConceptRecord.id ? approvedConceptRecord : null,
       saveProductionData: async data => data.id,
       saveProductionSnapshot: async () => {},
       getSetting: async () => 'true',
@@ -2352,7 +2411,7 @@ class SystemTest {
       }) },
       publishing: { scheduleContent: async () => null }
     };
-    const generated = await pipeline.generateContent(null, null, 'short', { strategyContext: null });
+    const generated = await pipeline.generateContent(null, null, 'short', { strategyContext: { approvedVideoConceptId: approvedConceptRecord.id } });
     if (generated.contentId !== 'null-context-production') {
       throw new Error('A null manual strategy context still prevented generation');
     }
@@ -2378,8 +2437,23 @@ class SystemTest {
       topic: 'Checkpointed automation',
       contentType: 'Tutorial',
       requestedStyle: 'tutorial',
-      requestedLengthKey: 'short'
+      requestedLengthKey: 'short',
+      approvedVideoConceptId: 'recovery-approved-concept'
     };
+    await db.saveVideoConcept({
+      id: 'recovery-approved-concept',
+      topic: strategy.topic,
+      concept: {
+        name: 'Approved recovery concept',
+        visualDirection: { style: 'tutorial', palette: 'neutral' },
+        audioDirection: { narration: 'clear', pacing: 'measured' },
+        subtitleDirection: { typography: 'clean sans', placement: 'lower safe area' },
+        scenePlan: [{ scene: 1, purpose: 'Hook', visual: 'Opening' }, { scene: 2, purpose: 'Payoff', visual: 'Resolution' }]
+      },
+      status: 'approved',
+      revisionOf: null,
+      feedback: null
+    });
     const script = {
       title: 'Checkpointed automation',
       fullScript: 'A complete script that can be reused after an interrupted generation run.',
@@ -2433,7 +2507,7 @@ class SystemTest {
         style: 'tutorial',
         length: 'short',
         source: 'manual',
-        strategyContext: { objective: 'Test recovery' }
+        strategyContext: { objective: 'Test recovery', approvedVideoConceptId: strategy.approvedVideoConceptId }
       });
       await db.saveGenerationCheckpoint(job.id, 'strategy', {
         status: 'completed', artifact: strategy, completedAt: new Date().toISOString()

@@ -108,6 +108,12 @@ Each item links to its walkthrough in the [feature guide](docs/features.md).
 **Engage**
 - [Audience Engagement Studio](docs/features.md#audience-engagement-studio): comment sync, themes and questions, spam quarantine, reply drafts that post only after you approve them, and video ideas mined from repeated requests.
 
+## Local-first script quality gate
+
+Set `QUALITY_PIPELINE_ENABLED=true` to draft and review scripts with your local Ollama model (default `qwen3.5:4b`). The default path does not require Gemini or Groq reviewer keys and does not make paid reviewer calls. It can revise a draft up to `QUALITY_MAX_REVISIONS` times; drafts that do not meet the score or blocker requirements are saved in the SQLite `script_quality_reviews` queue, including the last draft, strategy context, reviewer score, blockers, and revision guidance. Operators can inspect and edit the saved draft in the dashboard's Content pipeline view, submit it for another local Ollama review, and record a human approval, rejection, or revision request. Even when automated re-review passes, a separate human decision is still required. The review record is linked to its originating generation job; a job with an unresolved script review cannot be blindly retried, and a human-approved draft is not silently replaced with a fresh model output. An operator can explicitly choose **Continue production with approved draft** after human approval. This validates the saved JSON draft, writes it as the job's completed script checkpoint, and resumes at the next unfinished stage without regenerating or replacing the script. This explicit continuation forces the resulting content into the separate human content-approval state, so it does not schedule or publish the video. Human approval alone still does not start production; continuation requires a separate operator action. The human decision is recorded as the quality-gate approval source rather than being misrepresented as an Ollama pass. Production retries also look up the persisted production record by generation job ID. If visuals, narration, or editing failed after the production record was created, the retry resumes that same workflow and skips stages already marked completed instead of creating a duplicate production or repeating finished media work. The saved script title and job identity must match before reuse. An Ollama self-review is an automated aid, not independent fact verification: the existing factual-source, media-rights, quality-check, and separate content approval steps remain required.
+
+Optional Gemini and Groq second opinions are disabled by default. They run only when `QUALITY_ALLOW_REMOTE_REVIEW=true` is explicitly set and the corresponding credentials are configured. Reviewers run local Ollama first, then the opted-in remote reviewers.
+
 ## AI providers
 
 One key gets you started. Pick a text provider in the walkthrough: Gemini, OpenAI, OpenRouter (400+ models, including Claude), Kimi, MiMo, GLM, DeepSeek, or MiniMax. Gemini has free tiers for text and narration.
@@ -184,3 +190,8 @@ More from darkzOGx:
 - [open-sales-researcher](https://github.com/darkzOGx/open-sales-researcher): autonomous B2B company research. Works with Claude Code, Cursor, Copilot.
 - [darkzseo](https://github.com/darkzOGx/darkzseo): SEO tooling
 - [ConstructionBids.ai](https://constructionbids.ai): AI scans every federal, state & local public works bid and matches you to contracts you'll win.
+
+
+### Resumable scene image generation
+
+Production visual assets are persisted after each completed scene. A retry reuses existing image files when their scene index and prompt/style hash still match, and regenerates only missing, invalid, or changed scenes. Placeholder `.info` files are never accepted as completed visual assets.

@@ -355,6 +355,9 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
 label > span { color: var(--text); font-weight: 650; font-size: 12.5px; }
 label small { color: var(--muted); font-weight: 400; }
 label:has(input:disabled) > span { color: var(--muted); }
+.checkbox-row { display: flex; align-items: flex-start; gap: 10px; }
+.checkbox-row input { width: auto; flex: 0 0 auto; margin: 2px 0 0; }
+.checkbox-row span { line-height: 1.45; }
 
 .section-intro select { width: auto; min-width: 170px; }
 
@@ -550,6 +553,9 @@ label:has(input:disabled) > span { color: var(--muted); }
 .readiness-check.warning .readiness-icon, .readiness-check.skipped .readiness-icon { color: var(--amber); background: var(--amber-soft); }
 .readiness-check p { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 14px 0 12px; }
 .readiness-check > small { display: block; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.readiness-detail { display: grid; grid-template-columns: minmax(88px, .42fr) minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 10px; }
+.readiness-detail span { color: var(--muted); }
+.readiness-detail code { color: var(--text-2); font-family: var(--font-mono); overflow-wrap: anywhere; white-space: normal; }
 .readiness-policy { margin-top: 18px; }
 
 /* ============ Timeline / activation ============ */
@@ -1007,3 +1013,41 @@ body.scrolled .topbar { border-color: rgba(151, 167, 195, .32); }
 .operator-guidance-item strong { font-size: 11px; }
 .operator-guidance-item p { margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.45; }
 .operator-guidance-empty { margin: 12px 0 0; padding: 10px 11px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+
+/* Video concept review workspace */
+.concept-grid { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr); gap: 1rem; align-items: start; }
+#concept-detail pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0.85rem; border: 1px solid var(--border, #29313d); border-radius: 10px; background: var(--surface-2, #0b1018); font-size: 0.78rem; }
+#concept-detail h3, #concept-detail h4 { margin: 1rem 0 0.45rem; }
+#concept-detail > p { line-height: 1.55; }
+@media (max-width: 900px) { .concept-grid { grid-template-columns: 1fr; } }
+
+
+/* Persisted local script-quality review queue */
+.quality-review-panel { margin-bottom: 1.25rem; }
+.quality-review-panel .panel-heading p:not(.eyebrow) { margin: .35rem 0 0; color: var(--muted); font-size: .82rem; }
+.script-quality-review-list { display: grid; gap: .85rem; }
+.script-quality-review-card { border: 1px solid var(--line, var(--border)); border-radius: 12px; padding: 1rem; background: var(--surface-2, transparent); }
+.script-quality-review-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.script-quality-review-heading > div { display: grid; gap: .25rem; }
+.script-quality-review-heading small { color: var(--muted); font-size: .75rem; }
+.script-quality-review-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: .85rem 0; }
+.script-quality-review-columns strong { font-size: .82rem; }
+.script-quality-review-columns ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--text-2, var(--muted)); font-size: .8rem; line-height: 1.5; }
+.script-quality-review-columns p { margin: .4rem 0 0; color: var(--muted); font-size: .8rem; }
+.script-quality-review-card details { margin-top: .7rem; }
+.script-quality-review-card summary { cursor: pointer; color: var(--text-2, var(--muted)); font-size: .8rem; }
+.script-quality-review-card pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .8rem; border-radius: 8px; background: var(--surface, #0b1018); font-size: .75rem; }
+.script-quality-review-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: .85rem; }
+@media (max-width: 700px) {
+  .script-quality-review-heading { flex-direction: column; }
+  .script-quality-review-columns { grid-template-columns: 1fr; }
+  .script-quality-review-actions { justify-content: flex-start; }
+}
+
+
+.quality-review-draft-editor { display: block; width: 100%; min-height: 240px; margin: .65rem 0; padding: .8rem; resize: vertical; border: 1px solid var(--line-strong, var(--border)); border-radius: 9px; color: var(--text, inherit); background: var(--surface, #0b1018); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+.quality-review-job-note { color: var(--warning, #d6a44b); font-size: .76rem; line-height: 1.4; margin: .4rem 0; }
+
+.quality-review-final-note { margin: .8rem 0 0; color: var(--muted); font-size: .78rem; }

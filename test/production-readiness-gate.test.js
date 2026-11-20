@@ -1,4 +1,8 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { checkFFmpeg } = require('../utils/ffmpeg');
 const { ProductionReadinessService } = require('../utils/production-readiness-service');
 
 const NOW = new Date('2026-11-19T12:00:00.000Z');
@@ -72,33 +76,39 @@ async function run() {
   const originalGroqKey = process.env.GROQ_API_KEY;
   const originalOllamaModel = process.env.OLLAMA_MODEL;
   const originalOllamaUrl = process.env.OLLAMA_BASE_URL;
+  const originalRemoteReview = process.env.QUALITY_ALLOW_REMOTE_REVIEW;
   try {
-    process.env.GEMINI_API_KEY = 'test-gemini-key';
-    process.env.GROQ_API_KEY = 'test-groq-key';
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.QUALITY_ALLOW_REMOTE_REVIEW;
     process.env.OLLAMA_MODEL = 'qwen3.5:4b';
     process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434/';
     global.fetch = async url => {
       assert.equal(url, 'http://127.0.0.1:11434/api/tags');
       return { ok: true, json: async () => ({ models: [{ name: 'qwen3.5:4b' }] }) };
     };
-    const quality = new ProductionReadinessService({}, { credentials: { gemini: { apiKey: 'saved-gemini-key' } } });
+    const quality = new ProductionReadinessService({}, { credentials: {} });
     const qualityResult = await quality.probeQualityPipeline();
     assert.equal(qualityResult.details.ollamaModel, 'qwen3.5:4b');
-    assert.equal(qualityResult.details.geminiConfigured, true);
-    assert.equal(qualityResult.details.groqConfigured, true);
+    assert.equal(qualityResult.details.localReviewEnabled, true);
+    assert.equal(qualityResult.details.remoteReviewEnabled, false);
+    assert.equal(qualityResult.details.geminiConfigured, false);
+    assert.equal(qualityResult.details.groqConfigured, false);
 
     global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3:latest' }] }) });
     await assert.rejects(quality.probeQualityPipeline(), /Ollama model qwen3.5:4b is not installed/);
 
-    delete process.env.GROQ_API_KEY;
-    await assert.rejects(quality.probeQualityPipeline(), /Groq reviewer is not configured/);
+    process.env.QUALITY_ALLOW_REMOTE_REVIEW = 'true';
+    global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'qwen3.5:4b' }] }) });
+    await assert.rejects(quality.probeQualityPipeline(), /Gemini reviewer is not configured/);
   } finally {
     global.fetch = originalFetch;
     for (const [key, value] of Object.entries({
       GEMINI_API_KEY: originalGeminiKey,
       GROQ_API_KEY: originalGroqKey,
       OLLAMA_MODEL: originalOllamaModel,
-      OLLAMA_BASE_URL: originalOllamaUrl
+      OLLAMA_BASE_URL: originalOllamaUrl,
+      QUALITY_ALLOW_REMOTE_REVIEW: originalRemoteReview
     })) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -167,6 +177,31 @@ async function run() {
   await verifyPublishGate({ status: 'running', completed_at: recent, checks: [] }, true, /status \(running\)/);
   await verifyPublishGate({ status: 'passed', completed_at: recent, checks: [] }, false);
   await verifyPublishGate({ status: 'warning', completed_at: recent, checks: [{ id: 'optional_image', blocking: false, status: 'skipped' }] }, false);
+
+  const localDiagnostics = new ProductionReadinessService({}, {}, { logger: { warn() {}, info() {} } });
+  const runtime = await localDiagnostics.probeLocalRuntime();
+  assert.equal(runtime.details.nodeVersion, process.versions.node);
+  assert.equal(runtime.details.dataDirectoryWritable, true);
+  assert.equal(runtime.details.temporaryDirectoryWritable, true);
+  assert.equal(runtime.details.temporaryDirectoryWriteVerified, true);
+
+  if (await checkFFmpeg()) {
+    const mediaDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-readiness-ffmpeg-'));
+    try {
+      const mediaCheck = await localDiagnostics.probeVideoAssembly(mediaDirectory);
+      assert.equal(mediaCheck.details.videoEncoder, 'libx264');
+      assert.equal(mediaCheck.details.audioEncoder, 'aac');
+      assert.deepEqual(mediaCheck.details.filters, ['zoompan', 'vignette']);
+      assert.equal(mediaCheck.details.outputWidth, 320);
+      assert.equal(mediaCheck.details.outputHeight, 180);
+      assert.ok(mediaCheck.details.outputBytes > 1000);
+      assert.ok(mediaCheck.details.ffmpegPath);
+    } finally {
+      await fs.rm(mediaDirectory, { recursive: true, force: true });
+    }
+  } else {
+    process.stdout.write('Local FFmpeg capability diagnostic skipped: FFmpeg is unavailable\\n');
+  }
 
   process.stdout.write('Production readiness gate tests passed\\n');
 }

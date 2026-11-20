@@ -2,11 +2,24 @@ const OpenAI = require('openai');
 const Replicate = require('replicate');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
+const createReadStream = require('fs').createReadStream;
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, getMediaDuration, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
+const { CineCodeRenderer } = require('./cinecode-renderer');
+
+async function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 const OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
@@ -67,6 +80,7 @@ class AIVideoGenerator {
     const resolvedCredentials = credentials?.credentials || credentials || {};
     this.db = options.db || null;
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
+    this.runFFmpeg = options.runFFmpeg || runFFmpeg;
     this.lastVideoResult = null;
     this.lastNarrationResult = null;
     
@@ -111,30 +125,54 @@ class AIVideoGenerator {
     this.mediaGeneration = options.mediaGeneration || (this.db
       ? new MediaGenerationService(this.db, resolvedCredentials, { logger: this.logger })
       : null);
+    this.cineCodeRenderer = options.cineCodeRenderer || new CineCodeRenderer({ logger: this.logger });
   }
 
-  async generateTTSAudio(text, outputPath) {
+  async generateTTSAudio(text, outputPath, options = {}) {
     this.logger.info('Generating TTS audio...');
     this.lastNarrationResult = null;
     let provider = 'simulation';
     let model = null;
+    const direction = options.direction && typeof options.direction === 'object' ? options.direction : {};
+    const hasVoiceDirection = Boolean(direction.narration || direction.pacing);
+    let directionApplication = {
+      appliedFields: [],
+      unsupportedFields: ['music'],
+      note: 'The selected TTS provider does not expose a supported voice-direction control.'
+    };
 
     try {
       let generatedPath;
       if (this.elevenLabsApiKey && this.elevenLabsVoiceId) {
         provider = 'elevenlabs';
         model = this.elevenLabsModel;
-        generatedPath = await this.generateElevenLabsTTS(text, outputPath);
+        generatedPath = await this.generateElevenLabsTTS(text, outputPath, direction);
+        directionApplication = hasVoiceDirection
+          ? { appliedFields: ['narration', 'pacing'], unsupportedFields: ['music'], method: 'ElevenLabs voice_settings mapped from approved direction' }
+          : { appliedFields: [], unsupportedFields: ['music'], note: 'No narration or pacing direction was supplied.' };
       } else if (this.openai) {
         provider = 'openai';
         model = 'gpt-4o-mini-tts';
-        generatedPath = await this.generateOpenAITTS(text, outputPath);
+        generatedPath = await this.generateOpenAITTS(text, outputPath, direction);
+        directionApplication = hasVoiceDirection
+          ? { appliedFields: ['narration', 'pacing'], unsupportedFields: ['music'], method: 'OpenAI TTS instructions' }
+          : { appliedFields: [], unsupportedFields: ['music'], note: 'No narration or pacing direction was supplied.' };
       } else if (this.gemini) {
         provider = 'gemini';
         model = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts';
         generatedPath = await this.generateGeminiTTS(text, outputPath);
+        directionApplication = {
+          appliedFields: [],
+          unsupportedFields: ['narration', 'pacing', 'music'],
+          note: 'Gemini TTS currently uses the configured voice only; approved delivery direction is retained but not applied.'
+        };
       } else {
         generatedPath = await this.simulateTTSGeneration(text, outputPath);
+        directionApplication = {
+          appliedFields: [],
+          unsupportedFields: ['narration', 'pacing', 'music'],
+          note: 'Simulation does not apply audio direction.'
+        };
       }
 
       const usable = await this.isUsableAudioFile(generatedPath);
@@ -146,6 +184,8 @@ class AIVideoGenerator {
         externalTaskId: null,
         generatedAt: new Date().toISOString(),
         simulated: !usable,
+        directionApplied: usable && directionApplication.appliedFields.length > 0,
+        directionApplication,
         cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
       };
       return generatedPath;
@@ -153,6 +193,7 @@ class AIVideoGenerator {
       this.lastNarrationResult = {
         status: 'failed', path: null, provider, model, externalTaskId: null,
         generatedAt: new Date().toISOString(), simulated: false, error: error.message,
+        directionApplied: false, directionApplication,
         cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
       };
       this.logger.error('TTS generation failed:', error);
@@ -160,16 +201,17 @@ class AIVideoGenerator {
     }
   }
 
-  async generateElevenLabsTTS(text, outputPath) {
+  async generateElevenLabsTTS(text, outputPath, direction = {}) {
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}`;
     
     const data = {
       text: text,
       model_id: this.elevenLabsModel,
       voice_settings: {
-        stability: 0.5,
+        stability: /calm|gentle|soothing|measured|documentary|serious|sakin|yumuşak|belgesel|ölçülü|ciddi/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.7
+          : /excited|energetic|dramatic|enthusiastic|playful|animated|heyecanlı|enerjik|dramatik|coşkulu|oyuncu|canlı/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.35 : 0.5,
         similarity_boost: 0.8,
-        style: 0.0,
+        style: /excited|energetic|dramatic|enthusiastic|playful|animated|heyecanlı|enerjik|dramatik|coşkulu|oyuncu|canlı/i.test(`${direction.narration || ''} ${direction.pacing || ''}`) ? 0.55 : 0.15,
         use_speaker_boost: true
       }
     };
@@ -198,12 +240,14 @@ class AIVideoGenerator {
     });
   }
 
-  async generateOpenAITTS(text, outputPath) {
+  async generateOpenAITTS(text, outputPath, direction = {}) {
+    const voiceDirection = [direction.narration, direction.pacing].filter(Boolean).join('. ');
     const response = await this.openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "coral",
       input: text,
-      speed: 1.0
+      speed: 1.0,
+      ...(voiceDirection ? { instructions: `Apply this delivery direction without speaking it aloud: ${voiceDirection}` } : {})
     });
 
     const buffer = Buffer.from(await response.arrayBuffer());
@@ -403,7 +447,51 @@ class AIVideoGenerator {
   async generateVideo(script, visualAssets, audioPath, outputPath, options = {}) {
     this.logger.info('Generating video from assets...');
     this.lastVideoResult = null;
+    let selectedProvider = null;
     try {
+      const configuredSettings = this.mediaGeneration && options.productionId
+        ? await this.mediaGeneration.settings()
+        : null;
+      selectedProvider = configuredSettings?.provider || null;
+
+      if (selectedProvider === 'cinecode') {
+        const realImages = await this.filterLocalImageAssets(visualAssets);
+        if (!realImages.length) throw new Error('CineCode requires real image-generation assets. Configure an image provider; placeholder assets are not accepted.');
+        const totalDuration = options.estimatedDuration || this.calculateScriptDuration(script);
+        const rendered = await this.cineCodeRenderer.renderScenes({
+          visualAssets: realImages,
+          concept: options.approvedVideoConcept || {},
+          totalDuration,
+          outputDir: path.dirname(outputPath),
+          outputPrefix: path.basename(outputPath, path.extname(outputPath)),
+          resolution: configuredSettings.resolution,
+          aspectRatio: configuredSettings.aspectRatio
+        });
+        const produced = await this.generateHybridVideo(
+          rendered.clips,
+          realImages,
+          audioPath,
+          outputPath,
+          rendered.totalDuration,
+          { width: rendered.width, height: rendered.height }
+        );
+        this.lastVideoResult = {
+          requestedProvider: 'cinecode',
+          actualProvider: 'cinecode',
+          model: rendered.model,
+          mode: 'local-cinematic',
+          generatedSeconds: rendered.totalDuration,
+          resolution: rendered.resolution,
+          colorGrade: rendered.colorGrade,
+          tasks: [],
+          scenes: rendered.clips.map(clip => ({
+            index: clip.index, label: clip.label, prompt: clip.prompt, duration: clip.duration,
+            path: clip.path, provider: clip.provider, model: clip.model
+          }))
+        };
+        return produced;
+      }
+
       if (this.mediaGeneration && options.productionId) {
         const generated = await this.mediaGeneration.generateClips({
           jobId: options.jobId || null,
@@ -437,18 +525,30 @@ class AIVideoGenerator {
       }
 
       const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
-      this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
+      this.lastVideoResult = { requestedProvider: selectedProvider || 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
-      // The Logger's console line only shows the message string, so put the real
-      // reason inline. Previously the stack alone went to the file transport and
-      // the console printed "Video generation failed:" with no detail.
       const reason = error && error.message ? error.message : String(error);
+      if (selectedProvider === 'cinecode') {
+        this.lastVideoResult = {
+          requestedProvider: 'cinecode',
+          actualProvider: 'failed',
+          model: 'local-ffmpeg-camera-motion',
+          mode: 'failed',
+          generatedSeconds: 0,
+          fallbackReason: reason,
+          tasks: [],
+          scenes: []
+        };
+        this.logger.error(`CineCode rendering failed without fallback: ${reason}`, error);
+        throw error;
+      }
+      // Other configured providers retain the existing explicit fallback behavior.
       this.logger.error(`Video provider generation failed; using the local slideshow: ${reason}`, error);
       try {
         const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
         this.lastVideoResult = {
-          requestedProvider: this.lastVideoResult?.requestedProvider || 'configured-provider',
+          requestedProvider: selectedProvider || 'configured-provider',
           actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'fallback', generatedSeconds: 0,
           fallbackReason: reason, tasks: [], scenes: []
         };
@@ -457,7 +557,7 @@ class AIVideoGenerator {
         this.logger.error(`Local slideshow fallback failed: ${fallbackError.message}`, fallbackError);
         const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath);
         this.lastVideoResult = {
-          requestedProvider: 'configured-provider', actualProvider: 'simulation', model: null,
+          requestedProvider: selectedProvider || 'configured-provider', actualProvider: 'simulation', model: null,
           mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
         };
         return produced;
@@ -465,7 +565,7 @@ class AIVideoGenerator {
     }
   }
 
-  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration) {
+  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration, renderOptions = {}) {
     if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
     const validImages = await this.filterLocalImageAssets(visualAssets);
     const segments = clips.map(clip => ({ type: 'video', path: clip.path, duration: clip.duration }));
@@ -478,13 +578,122 @@ class AIVideoGenerator {
     if (!segments.length) throw new Error('No usable provider clips or still images were generated');
 
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
-    await this.renderMediaTimeline(segments, visualPath);
-    await this.addAudioToVideo(visualPath, audioPath, outputPath, { loopVideo: true });
-    await fs.unlink(visualPath).catch(() => {});
-    return outputPath;
+    const visualTempPath = visualPath.replace(/\.mp4$/i, '_rendering.mp4');
+    const visualManifestPath = visualPath + '.render.json';
+    const finalTempPath = outputPath.replace(/\.mp4$/i, '_finalizing.mp4');
+    const sourceFingerprint = [];
+    for (const segment of segments) {
+      const stats = await fs.stat(segment.path);
+      if (!stats.isFile() || stats.size <= 0) throw new Error(`Hybrid video source is missing or empty: ${segment.path}`);
+      sourceFingerprint.push({
+        type: segment.type,
+        path: path.resolve(segment.path),
+        size: stats.size,
+        mtimeMs: stats.mtimeMs,
+        sha256: await hashFile(segment.path),
+        duration: Number(segment.duration)
+      });
+    }
+    const visualFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+      segments: sourceFingerprint,
+      renderOptions: { width: renderOptions.width || 1920, height: renderOptions.height || 1080, fps: 30, codec: 'libx264', pixelFormat: 'yuv420p' }
+    })).digest('hex');
+    const audioSha256 = await hashFile(audioPath);
+    const assemblyFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+      visualFingerprint,
+      audioSha256,
+      mux: { loopVideo: true, videoCodec: 'copy', audioCodec: 'aac', shortest: true }
+    })).digest('hex');
+    const assemblyManifestPath = outputPath + '.assembly.json';
+
+    try {
+      let visualCached = false;
+      try {
+        const [manifest, stats] = await Promise.all([
+          fs.readFile(visualManifestPath, 'utf8').then(JSON.parse),
+          fs.stat(visualPath)
+        ]);
+        if (manifest.fingerprint === visualFingerprint && stats.isFile() && stats.size > 0) {
+          await this.validateRenderedVideo(visualPath);
+          visualCached = true;
+          this.logger.info('Reusing completed hybrid visual timeline; audio mux will resume.');
+        }
+      } catch (_cacheError) {
+        visualCached = false;
+      }
+
+      if (!visualCached) {
+        await fs.rm(visualTempPath, { force: true });
+        await this.renderMediaTimeline(segments, visualTempPath, renderOptions);
+        await this.validateRenderedVideo(visualTempPath);
+        await fs.rm(visualPath, { force: true });
+        await fs.rename(visualTempPath, visualPath);
+        const manifestTempPath = visualManifestPath + '.tmp';
+        await fs.writeFile(manifestTempPath, JSON.stringify({
+          version: 1,
+          fingerprint: visualFingerprint,
+          sources: sourceFingerprint,
+          renderedAt: new Date().toISOString()
+        }, null, 2));
+        await fs.rm(visualManifestPath, { force: true });
+        await fs.rename(manifestTempPath, visualManifestPath);
+      }
+
+      let finalCached = false;
+      try {
+        const [manifest, stats] = await Promise.all([
+          fs.readFile(assemblyManifestPath, 'utf8').then(JSON.parse),
+          fs.stat(outputPath)
+        ]);
+        if (manifest.fingerprint === assemblyFingerprint && stats.isFile() && stats.size > 0) {
+          await this.validateRenderedVideo(outputPath);
+          finalCached = true;
+          this.logger.info('Reusing completed hybrid video and audio mux.');
+        }
+      } catch (_cacheError) {
+        finalCached = false;
+      }
+      if (finalCached) return outputPath;
+
+      await this.addAudioToVideo(visualPath, audioPath, finalTempPath, { loopVideo: true });
+      await this.validateRenderedVideo(finalTempPath);
+      await fs.rm(outputPath, { force: true });
+      await fs.rename(finalTempPath, outputPath);
+      const assemblyManifestTempPath = assemblyManifestPath + '.tmp';
+      await fs.writeFile(assemblyManifestTempPath, JSON.stringify({
+        version: 1,
+        fingerprint: assemblyFingerprint,
+        visualFingerprint,
+        audioSha256,
+        assembledAt: new Date().toISOString()
+      }, null, 2));
+      await fs.rm(assemblyManifestPath, { force: true });
+      await fs.rename(assemblyManifestTempPath, assemblyManifestPath);
+      return outputPath;
+    } finally {
+      // Keep the completed visual-only timeline and its manifest: a failed audio
+      // mux must not force the expensive image/clip concatenation to run again.
+      await fs.rm(visualTempPath, { force: true }).catch(() => {});
+      await fs.rm(finalTempPath, { force: true }).catch(() => {});
+    }
   }
 
-  async renderMediaTimeline(segments, outputPath) {
+  async validateRenderedVideo(filePath) {
+    const stats = await fs.stat(filePath).catch(() => null);
+    if (!stats?.isFile() || stats.size <= 0) {
+      throw new Error('FFmpeg did not produce a non-empty final video file');
+    }
+    const duration = await this.getMediaDuration(filePath);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error('FFmpeg final video has no valid media duration');
+    }
+    await this.runFFmpeg(['-v', 'error', '-i', filePath, '-f', 'null', '-']);
+    return { path: filePath, size: stats.size, duration };
+  }
+
+  async renderMediaTimeline(segments, outputPath, renderOptions = {}) {
+    const width = Number.isInteger(renderOptions.width) && renderOptions.width > 0 ? renderOptions.width : 1920;
+    const height = Number.isInteger(renderOptions.height) && renderOptions.height > 0 ? renderOptions.height : 1080;
     const args = ['-y'];
     for (const segment of segments) {
       const duration = Number(segment.duration).toFixed(2);
@@ -494,7 +703,7 @@ class AIVideoGenerator {
       else args.push('-stream_loop', '-1', '-t', duration, '-i', segment.path);
     }
     const filters = segments.map((segment, index) =>
-      `[${index}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${Number(segment.duration).toFixed(2)},setpts=PTS-STARTPTS[v${index}]`
+      `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${Number(segment.duration).toFixed(2)},setpts=PTS-STARTPTS[v${index}]`
     );
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);

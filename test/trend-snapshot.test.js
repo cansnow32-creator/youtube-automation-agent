@@ -1,10 +1,14 @@
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const path = require('node:path');
+const fs = require('node:fs/promises');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
 const { DailyAutomation } = require('../schedules/daily-automation');
 
 async function run() {
   const db = new Database();
+  db.dbPath = path.join(os.tmpdir(), `agenttube-trend-snapshot-${process.pid}-${Date.now()}.db`);
   await db.initialize();
   const createdIds = [];
 
@@ -49,6 +53,48 @@ async function run() {
       }]
     }];
 
+    // Isolate this assertion from snapshots left by earlier test runs.
+    await db.executeQuery('DELETE FROM trend_snapshots');
+
+    const staleSnapshot = await db.saveTrendSnapshot({
+      regionCode: 'US',
+      topics: [{ topic: 'Obsolete trend', score: 999, sources: ['trending'], evidence: [] }],
+      capturedAt: '2020-01-01T00:00:00.000Z'
+    });
+    createdIds.push(staleSnapshot.id);
+
+    const staleStrategy = new ContentStrategyAgent(db, {});
+    staleStrategy.fetchYouTubeTrends = async () => [];
+    staleStrategy.analyzeCompetitors = async () => [];
+    staleStrategy.trendingTopics = [{ topic: 'Previously cached topic', score: 100 }];
+    staleStrategy.competitorData = [{ channelId: 'previously-cached-channel' }];
+    await staleStrategy.analyzeTrends();
+    assert.equal(staleStrategy.trendingTopics.length, 0,
+      'stale snapshots and prior in-memory topics must not be presented as current live trends');
+    assert.equal(staleStrategy.competitorData.length, 0,
+      'competitor data from a previous analysis must not survive an empty refresh');
+    const staleIdeas = await staleStrategy.generateTrendIdeasFromSnapshot({ snapshot: staleSnapshot });
+    assert.equal(staleIdeas.status, 'skipped',
+      'idea generation must reject stale trend snapshots');
+    assert.match(staleIdeas.reason, /stale/);
+
+    const beforeUnavailableRefresh = await db.getLatestTrendSnapshot();
+    const unavailableStrategy = new ContentStrategyAgent(db, {});
+    unavailableStrategy.fetchYouTubeTrends = async () => [];
+    unavailableStrategy.analyzeCompetitors = async () => [{
+      channelId: 'competitor-only-channel',
+      frequency: 4,
+      topPerformingTopics: [{ topic: 'Competitor-only topic', avgViews: 90000, evidence: [] }]
+    }];
+    await assert.rejects(
+      () => unavailableStrategy.refreshTrendSnapshot(),
+      /YouTube trending feed is unavailable/,
+      'competitor-only data must not be saved as a general trend snapshot'
+    );
+    const afterUnavailableRefresh = await db.getLatestTrendSnapshot();
+    assert.equal(afterUnavailableRefresh.id, beforeUnavailableRefresh.id,
+      'a competitor-only refresh must preserve the previous saved snapshot');
+
     const refreshed = await strategy.refreshTrendSnapshot();
     createdIds.push(refreshed.id);
     assert.ok(refreshed.topicCount > 0, 'weekly trend refresh should produce topics');
@@ -78,6 +124,9 @@ async function run() {
       );
     }
     await db.close();
+    await Promise.all(['', '-wal', '-shm'].map(suffix =>
+      fs.rm(`${db.dbPath}${suffix}`, { force: true })
+    ));
   }
 
   process.stdout.write('Weekly trend snapshot tests passed\\n');

@@ -1,4 +1,5 @@
 const { Logger } = require('./logger');
+const { requireApprovedVideoConcept } = require('./approved-video-concept-gate');
 
 class AutonomousChannelOperator {
   constructor(db, options = {}) {
@@ -12,12 +13,26 @@ class AutonomousChannelOperator {
     this.activeRuns = new Map();
   }
 
+  async bindApprovedConcept(strategy) {
+    const concepts = await this.db.listVideoConcepts(100);
+    const selected = strategy?.approvedVideoConceptId
+      ? strategy.approvedVideoConceptId
+      : Array.isArray(concepts) ? concepts.find(item => item?.status === 'approved')?.id : null;
+    const approved = await requireApprovedVideoConcept(this.db, selected);
+    return {
+      ...strategy,
+      approvedVideoConcept: approved.concept,
+      approvedVideoConceptId: approved.id
+    };
+  }
+
   async start(strategy) {
     if (!strategy || strategy.status !== 'active') {
       const error = new Error('Save and activate a channel strategy before starting the autonomous operator');
       error.status = 409;
       throw error;
     }
+    strategy = await this.bindApprovedConcept(strategy);
     const active = await this.db.getActiveOperatorRun();
     if (active || this.activeRuns.size) {
       const error = new Error('An autonomous operator run is already active');
@@ -50,6 +65,7 @@ class AutonomousChannelOperator {
       error.status = 409;
       throw error;
     }
+    strategy = await this.bindApprovedConcept(strategy);
     const active = await this.db.getActiveOperatorRun();
     if (active || this.activeRuns.size) {
       const error = new Error('An autonomous operator run is already active');
@@ -147,6 +163,8 @@ class AutonomousChannelOperator {
                 objective: strategy.objective,
                 valueProposition: strategy.value_proposition,
                 constraints: strategy.constraints,
+                approvedVideoConcept: strategy.approvedVideoConcept || null,
+                approvedVideoConceptId: strategy.approvedVideoConceptId || null,
                 researchSources: (research.sourceCatalog || []).filter(source => selectedSourceUrls.has(source.url))
               }
             });
