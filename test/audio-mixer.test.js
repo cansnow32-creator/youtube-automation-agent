@@ -62,10 +62,13 @@ async function testValidationAndArguments(directory) {
 async function testProductionIntegration(directory) {
   const source = path.join(directory, 'agent-source.mp4');
   const music = path.join(directory, 'agent-music.wav');
-  const mixed = path.join(__dirname, '..', 'data', 'videos', 'audio-integration-test_music_mixed.mp4');
-  const captions = path.join(directory, 'agent-captions.srt');
   const videosDirectory = path.join(__dirname, '..', 'data', 'videos');
-  const finalPath = path.join(videosDirectory, 'audio-integration-test_captioned.mp4');
+  const artifactAttemptId = 'integration_attempt';
+  const outputStem = 'audio-integration-test_' + artifactAttemptId;
+  const requestedVideoPath = path.join(videosDirectory, outputStem + '_final.mp4');
+  const mixed = path.join(videosDirectory, outputStem + '_music_mixed.mp4');
+  const captions = path.join(directory, 'agent-captions.srt');
+  const finalPath = path.join(videosDirectory, outputStem + '_captioned.mp4');
   await fs.mkdir(videosDirectory, { recursive: true });
   await runFFmpeg([
     '-y', '-f', 'lavfi', '-i', 'color=c=#203a5f:s=640x360:r=24:d=3',
@@ -87,6 +90,7 @@ async function testProductionIntegration(directory) {
     id: 'audio-integration-test',
     script: { title: 'Test' },
     estimatedDuration: 5,
+    timeline: { artifactAttemptId },
     assets: {
       audio: { path: 'narration.mp3' },
       video: { visualAssets: [] },
@@ -159,7 +163,29 @@ async function testProductionIntegration(directory) {
     }
     assert.ok(visiblyChangedPixels > 100, 'captioned output must visibly differ from the clean source frame');
   } finally {
-    await Promise.all([source, music, mixed, captions, finalPath, `${finalPath}.render.json`].map(file => fs.rm(file, { force: true })));
+    await Promise.all([
+      source,
+      music,
+      mixed,
+      mixed + '.mixing.mp4',
+      mixed + '.mix.json',
+      mixed + '.mix.json.tmp',
+      captions,
+      finalPath,
+      finalPath + '.rendering.mp4',
+      finalPath + '.render.json',
+      finalPath + '.render.json.tmp',
+      requestedVideoPath,
+      requestedVideoPath + '.assembly.json',
+      requestedVideoPath + '.assembly.json.tmp',
+      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4'),
+      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual_rendering.mp4'),
+      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4.render.json'),
+      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4.render.json.tmp'),
+      requestedVideoPath.replace(/\\.mp4$/i, '_finalizing.mp4'),
+      requestedVideoPath.replace(/\\.mp4$/i, '_visual.mp4')
+    ].map(file => fs.rm(file, { force: true })));
+    await fs.rm(requestedVideoPath.replace(/\\.mp4$/i, '_slides'), { force: true, recursive: true });
   }
 }
 async function testMusicMixCache(directory) {
