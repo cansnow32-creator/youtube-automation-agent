@@ -1,3 +1,12 @@
+## 2026-11-20 — Guard narration cache publication after scene-repair lease loss
+
+- Static review found `rebuildNarration()` could finish a long FFmpeg render and publish the shared narration-cache file without rechecking whether the scene-repair lease was still held. The caller checked the lease after the helper returned, which was too late to prevent that cache write.
+- Passed the lease assertion into `rebuildNarration()` and check it immediately before replacing the shared cache output.
+- Added an injectable FFmpeg runner and a regression test that simulates lease loss after rendering, then asserts that no cache file is published.
+- Commits on `feat/video-concept-approval`: `a4cf5eeb76be2faaff5e236f72b853179c627df8`, `42b1538747a89ada2d4aaf12acecd29f301bfae1`, `2f6edb51130eaf1d2ecec399d6e1c209fae312c1`.
+- Validation: re-fetched the edited source and test through GitHub. No local execution or GitHub Actions run is available; PR #2 current head reports zero check-runs. No test pass is claimed.
+- Next: continue audit of production resume/job lock interactions and cache publication boundaries; obtain CI execution. Do not merge.
+
 ## 2026-11-20 — Configure bounded SQLite writer wait
 
 - PR #2 static review found the new two-connection integration test explicitly configured a 5-second SQLite busy timeout, but production Database.initialize() left the connection at the sqlite3 default. Under concurrent writers, production could therefore surface SQLITE_BUSY immediately even though the test setup behaved differently.
