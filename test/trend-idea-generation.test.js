@@ -229,6 +229,19 @@ async function run() {
     assert.equal(scoreProductionFit({ format: 'story' }, { default_format: 'tutorial' }), 65);
     assert.equal(scoreProductionFit({ format: 'tutorial' }, {}), 75,
       'missing production preferences should remain neutral rather than invent constraints');
+    const { scoreProductionEffort } = require('../utils/trend-idea-ranker');
+    assert.ok(scoreProductionEffort({ topic: 'A simple beginner checklist' }) >
+      scoreProductionEffort({ topic: 'A documentary investigation with interviews and original animation' }),
+      'ideas with heavier research, interview and animation requirements should carry a higher effort penalty');
+    assert.ok(scoreProductionEffort(
+      { topic: 'A documentary investigation with interviews' },
+      { productionCapabilities: ['research'] }
+    ) < scoreProductionEffort(
+      { topic: 'A documentary investigation with interviews' },
+      {}
+    ), 'explicitly missing production capabilities should reduce production fit');
+    assert.equal(scoreProductionEffort({ topic: 'A general topic' }, {}), 90,
+      'simple topics should not be penalized by missing capability metadata');
     assert.ok(scoreViewerValue({ angle: 'Compare three editing workflows step by step', rationale: 'A practical checklist for beginners' }) >
       scoreViewerValue({ angle: 'A general look at editing', rationale: 'An overview' }),
       'specific, actionable angles should rank above vague descriptions');
