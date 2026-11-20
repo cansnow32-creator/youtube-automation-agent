@@ -360,6 +360,7 @@ function renderUnresolvedPublishing(entries = [], error = null) {
         <strong>${escapeHTML(entry.title || entry.productionId || 'Untitled upload')}</strong>
         <div class="meta-line">${statusChip(entry.status)} · ${escapeHTML(entry.productionId || entry.id)} · ${escapeHTML(formatDate(entry.publishTime))}</div>
         <div class="meta-line">${escapeHTML(entry.error || 'YouTube upload outcome needs operator review.')}</div>
+        <div class="meta-line">Upload attempt started: ${escapeHTML(formatDate(entry.uploadStartedAt))} · absence confirmation requires a 10-minute grace period</div>
       </div>
       <label class="reconciliation-video-field">Existing YouTube video ID
         <input type="text" data-reconcile-video-id maxlength="11" minlength="11" placeholder="11-character video ID" autocomplete="off">
