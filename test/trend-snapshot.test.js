@@ -49,8 +49,8 @@ async function run() {
       }]
     }];
 
-    // Remove the fresh fixture so the stale record is the latest available snapshot.
-    await db.executeQuery('DELETE FROM trend_snapshots WHERE id = ?', [saved.id]);
+    // Isolate this assertion from snapshots left by earlier test runs.
+    await db.executeQuery('DELETE FROM trend_snapshots');
 
     const staleSnapshot = await db.saveTrendSnapshot({
       regionCode: 'US',
