@@ -93,6 +93,12 @@ async function run() {
       query: async () => ({ data: {} })
     }
   };
+  const emptyViews = await agent.getViewsAnalytics('empty-video', '2026-11-01', '2026-11-20');
+  assert.equal(emptyViews.totalViews, null);
+  assert.equal(emptyViews.totalImpressions, null);
+  assert.equal(emptyViews.averageCTR, null);
+  assert.equal(emptyViews.available, false);
+
   const emptyWatchTime = await agent.getWatchTimeAnalytics('empty-video', '2026-11-01', '2026-11-20');
   assert.equal(emptyWatchTime.totalWatchTime, null);
   assert.equal(emptyWatchTime.averageViewPercentage, null);
