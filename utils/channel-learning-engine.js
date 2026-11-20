@@ -240,11 +240,12 @@ class ChannelLearningEngine {
   }
 
   async refreshRecommendations() {
-    const [all, strategy] = await Promise.all([
-      this.db.listPerformanceSnapshots({ reliableOnly: true }),
+    // Recommendations compare one fixed cohort window; never mix shorter or rolling totals.
+    const [weekly, strategy] = await Promise.all([
+      this.db.listPerformanceSnapshots({ measurementWindow: '7d', reliableOnly: true }),
       this.db.getChannelStrategy ? this.db.getChannelStrategy() : Promise.resolve(null)
     ]);
-    const snapshots = this.preferredSnapshotPerVideo(all);
+    const snapshots = this.preferredSnapshotPerVideo(weekly, '7d');
     if (snapshots.length < 2) return [];
 
     const candidates = [
@@ -262,12 +263,13 @@ class ChannelLearningEngine {
     return saved;
   }
 
-  preferredSnapshotPerVideo(snapshots) {
-    const rank = { '7d': 3, '24h': 2, rolling: 1 };
+  preferredSnapshotPerVideo(snapshots, measurementWindow = '7d') {
+    // A missing 7d measurement is not replaced by a 24h or rolling snapshot.
     const selected = new Map();
     for (const snapshot of snapshots) {
+      if (snapshot.measurementWindow !== measurementWindow) continue;
       const current = selected.get(snapshot.videoId);
-      if (!current || (rank[snapshot.measurementWindow] || 0) > (rank[current.measurementWindow] || 0)) {
+      if (!current || new Date(snapshot.measuredAt || 0) > new Date(current.measuredAt || 0)) {
         selected.set(snapshot.videoId, snapshot);
       }
     }
@@ -412,7 +414,8 @@ class ChannelLearningEngine {
     return '15m_plus';
   }
 
-  buildPerformanceInsights(snapshots, minimumSamples = 3) {
+  buildPerformanceInsights(snapshots, minimumSamples = 3, measurementWindow = '7d') {
+    const comparableSnapshots = this.preferredSnapshotPerVideo(snapshots, measurementWindow);
     const dimensions = [
       { key: 'pillar', label: 'content pillar' },
       { key: 'format', label: 'format' },
@@ -423,7 +426,7 @@ class ChannelLearningEngine {
 
     for (const dimension of dimensions) {
       const groups = new Map();
-      for (const snapshot of snapshots) {
+      for (const snapshot of comparableSnapshots) {
         const name = snapshot.contentAttributes?.[dimension.key];
         if (!name || ['unknown', 'mixed_or_unknown'].includes(name)) continue;
         if (!groups.has(name)) groups.set(name, []);
@@ -469,11 +472,12 @@ class ChannelLearningEngine {
 
     return {
       generatedAt: new Date().toISOString(),
-      independentVideoCount: snapshots.length,
+      independentVideoCount: comparableSnapshots.length,
+      measurementWindow,
       minimumSamplesPerCohort: minimumSamples,
       dimensions: breakdowns,
       rankingPolicy: 'Cohorts are ordered by average performance score when available, otherwise by average views. Metrics with missing values are omitted from that metric average.',
-      evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using its preferred measurement window. Cohorts below the minimum sample size are exploratory and are not declared winners.'
+      evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using the exact requested measurement window; shorter or rolling windows are not substituted. Cohorts below the minimum sample size are exploratory and are not declared winners.'
     };
   }
 
@@ -685,16 +689,20 @@ class ChannelLearningEngine {
     const windows = new Set(existing.map(item => item.measurementWindow));
     return [
       ...(ageHours >= 24 && !windows.has('24h') ? ['24h'] : []),
-      ...(ageHours >= 168 && !windows.has('7d') ? ['7d'] : [])
+      ...(ageHours >= 168 && !windows.has('7d') ? ['7d'] : []),
+      ...(ageHours >= 672 && !windows.has('28d') ? ['28d'] : [])
     ];
   }
 
   measurementPeriod(publishedAt, measurementWindow) {
-    if (!['24h', '7d'].includes(measurementWindow) || !publishedAt) return null;
+    const daysByWindow = { '24h': 1, '7d': 7, '28d': 28 };
+    const days = daysByWindow[measurementWindow];
+    if (!days || !publishedAt) return null;
     const start = new Date(publishedAt);
     if (Number.isNaN(start.getTime())) return null;
-    const days = measurementWindow === '24h' ? 1 : 7;
-    const end = new Date(Math.min(Date.now(), start.getTime() + days * 86400000));
+    const end = new Date(start.getTime() + days * 86400000);
+    // Do not label an incomplete early-life period as a completed measurement window.
+    if (Date.now() < end.getTime()) return null;
     return { startDate: this.date(start), endDate: this.date(end) };
   }
 
