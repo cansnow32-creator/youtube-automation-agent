@@ -11,10 +11,10 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `2f6edb51130eaf1d2ecec399d6e1c209fae312c1`; 0 check-runs |
-| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `22b8ff6256a32115984ce217eaac5b2821a0c8ed` before this continuity update; 0 check-runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064`; 0 check-runs |
+| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `d0d3e72e41e274cfa3e86cf053154692f2775800`; 0 check-runs |
 
-PR #2 intentionally stacks on PR #1. Its live head is `2f6edb51130eaf1d2ecec399d6e1c209fae312c1`; compare against the live base branch before attempting synchronization. PR #2 remains open/draft/unmerged and GitHub reports zero check-runs on its current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1. Its live head is `8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064`; compare against the live base branch before attempting synchronization. PR #2 remains open/draft/unmerged and GitHub reports zero check-runs on its current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
