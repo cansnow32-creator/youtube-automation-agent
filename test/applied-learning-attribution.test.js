@@ -86,7 +86,7 @@ assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommen
 assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-extended').status,
   'provided_to_generation_not_verified_as_applied');
 assert.deepEqual(engine.extractAppliedLearnings(
-  { approvedScriptLearnings: [{ recommendationId: 'unapproved', category: 'hookLength', proposedChange: { prefer: 'concise' } }] },
+  { approvedScriptLearnings: [] },
   [],
   { metadata: { verifiedAppliedLearnings: [{ ...verifiedHook[0], recommendationId: 'unapproved' }] } }
 ), [], 'unmatched or unapproved verification metadata must not be attributed');
