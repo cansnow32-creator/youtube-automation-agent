@@ -774,6 +774,9 @@ class SceneRepairService {
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
+    // Rebuild uses a dedicated lease loop rather than the shared scene-edit
+    // wrapper, so attach the owner context explicitly for fenced DB writes.
+    assertLease.lease = Object.freeze({ productionId, owner: lockOwner });
     try {
       databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
       if (!databaseLockAcquired) {
