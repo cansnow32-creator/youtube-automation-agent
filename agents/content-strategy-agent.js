@@ -29,6 +29,15 @@ class ContentStrategyAgent {
     }
   }
 
+  isTrendSnapshotFresh(snapshot) {
+    const maxAgeHours = Math.max(1, Number(process.env.TREND_SNAPSHOT_MAX_AGE_HOURS) || 168);
+    const capturedAt = Date.parse(snapshot?.capturedAt);
+    const now = Date.now();
+    return Number.isFinite(capturedAt) &&
+      capturedAt >= now - maxAgeHours * 60 * 60 * 1000 &&
+      capturedAt <= now + 5 * 60 * 1000;
+  }
+
   async analyzeTrends() {
     try {
       // Analyze YouTube trends
@@ -43,9 +52,11 @@ class ContentStrategyAgent {
 
       if (this.trendingTopics.length === 0 && this.db.getLatestTrendSnapshot) {
         const previous = await this.db.getLatestTrendSnapshot();
-        if (previous?.topics?.length) {
+        if (previous?.topics?.length && this.isTrendSnapshotFresh(previous)) {
           this.trendingTopics = previous.topics;
-          this.logger.warn(`Live trend sources unavailable; using saved snapshot from ${previous.capturedAt}`);
+          this.logger.warn(`Live trend sources unavailable; using recent saved snapshot from ${previous.capturedAt}`);
+        } else if (previous?.topics?.length) {
+          this.logger.warn(`Ignoring stale trend snapshot from ${previous.capturedAt}`);
         }
       }
 
@@ -55,7 +66,11 @@ class ContentStrategyAgent {
       if (this.db.getLatestTrendSnapshot) {
         try {
           const previous = await this.db.getLatestTrendSnapshot();
-          if (previous?.topics?.length) this.trendingTopics = previous.topics;
+          if (previous?.topics?.length && this.isTrendSnapshotFresh(previous)) {
+            this.trendingTopics = previous.topics;
+          } else if (previous?.topics?.length) {
+            this.logger.warn(`Ignoring stale trend snapshot from ${previous.capturedAt}`);
+          }
         } catch (snapshotError) {
           this.logger.warn(`Could not load saved trend snapshot: ${snapshotError.message}`);
         }
@@ -74,9 +89,10 @@ class ContentStrategyAgent {
       throw new Error('Trend refresh returned no usable topics; previous snapshot was preserved');
     }
 
-    const previous = this.db.getLatestTrendSnapshot
+    const storedPrevious = this.db.getLatestTrendSnapshot
       ? await this.db.getLatestTrendSnapshot()
       : null;
+    const previous = this.isTrendSnapshotFresh(storedPrevious) ? storedPrevious : null;
     const previousScores = new Map((previous?.topics || []).map(item => [
       String(item.topic || '').toLowerCase(),
       Number(item.score) || 0
@@ -402,6 +418,9 @@ class ContentStrategyAgent {
       : null);
     if (!snapshot?.topics?.length) {
       return { status: 'skipped', reason: 'No saved trend topics are available', created: 0 };
+    }
+    if (!this.isTrendSnapshotFresh(snapshot)) {
+      return { status: 'skipped', reason: 'Saved trend snapshot is stale or has no valid capture timestamp; refresh trend research before generating ideas', created: 0 };
     }
 
     const channelStrategy = options.channelStrategy ||
