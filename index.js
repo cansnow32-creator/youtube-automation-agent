@@ -1607,8 +1607,11 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
-    if (job.details?.qualityReviewId) {
-      const review = await this.db.getScriptQualityReview(job.details.qualityReviewId);
+    const linkedQualityReview = job.details?.qualityReviewId
+      ? await this.db.getScriptQualityReview(job.details.qualityReviewId)
+      : await this.db.getScriptQualityReviewByJobId(job.id);
+    if (linkedQualityReview) {
+      const review = linkedQualityReview;
       if (review && ['pending', 'revision_requested'].includes(review.status)) {
         const error = new Error('This generation job is waiting for a human script-review decision. Resolve the saved draft in the Script review queue before retrying.');
         error.status = 409;
