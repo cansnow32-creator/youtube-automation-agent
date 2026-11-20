@@ -176,15 +176,19 @@ class ChannelLearningEngine {
   }
 
   extractLearningGuidance(approvedScriptLearnings = []) {
-    return (Array.isArray(approvedScriptLearnings) ? approvedScriptLearnings : [])
-      .filter(item => item?.recommendationId)
-      .map(item => ({
-        recommendationId: String(item.recommendationId).slice(0, 120),
+    const unique = new Map();
+    for (const item of Array.isArray(approvedScriptLearnings) ? approvedScriptLearnings : []) {
+      if (!item?.recommendationId) continue;
+      const recommendationId = String(item.recommendationId).slice(0, 120);
+      if (unique.has(recommendationId)) continue;
+      unique.set(recommendationId, {
+        recommendationId,
         category: String(item.category || 'unknown').slice(0, 40),
         target: String(item.proposedChange?.target || 'future_scripts').slice(0, 40),
         status: 'provided_to_generation_not_verified_as_applied'
-      }))
-      .slice(0, 12);
+      });
+    }
+    return [...unique.values()].slice(0, 12);
   }
 
   buildAppliedLearningFeedback(snapshots = [], options = {}) {
