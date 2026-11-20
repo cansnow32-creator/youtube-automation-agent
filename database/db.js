@@ -1659,6 +1659,21 @@ class Database {
     return this.getShortClip(id);
   }
 
+  async updateShortClipForSchedule(id, scheduleId, changes = {}) {
+    const result = await this.executeQuery(
+      `UPDATE shorts_clips SET
+        status = ?, schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?,
+        updated_at = datetime('now')
+       WHERE id = ? AND schedule_id = ?`,
+      [
+        changes.status, scheduleId, changes.youtubeId || null, changes.youtubeUrl || null,
+        changes.error || null, id, scheduleId
+      ]
+    );
+    if (result.changes !== 1) return null;
+    return this.getShortClip(id);
+  }
+
   async updateShortClipForRender(id, attemptId, changes = {}) {
     const current = await this.getShortClip(id);
     if (!current || current.status !== 'rendering' || current.renderAttemptId !== attemptId) return null;
