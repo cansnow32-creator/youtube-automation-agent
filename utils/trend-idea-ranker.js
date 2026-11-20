@@ -271,6 +271,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
         viewerValue,
         productionFit,
         productionEffort,
+        productionRequirements,
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
         historicalSampleSize: historical?.sampleSize || 0,
