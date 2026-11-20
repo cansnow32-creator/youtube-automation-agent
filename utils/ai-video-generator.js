@@ -24,6 +24,41 @@ async function hashFile(filePath) {
 
 const OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
+async function removeAttemptFiles(paths = []) {
+  await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
+    .map(filePath => fs.rm(filePath, { force: true, recursive: true }).catch(() => {})));
+}
+
+function getVideoAttemptSidecarPaths(outputPath) {
+  const resolved = path.resolve(outputPath);
+  const extension = path.extname(resolved);
+  const stem = extension ? resolved.slice(0, -extension.length) : resolved;
+  const hybridVisual = stem + '_hybrid_visual.mp4';
+  const paths = [
+    resolved,
+    resolved + '.info',
+    resolved + '.assembly.json',
+    resolved + '.assembly.json.tmp',
+    hybridVisual,
+    stem + '_hybrid_visual_rendering.mp4',
+    hybridVisual + '.render.json',
+    hybridVisual + '.render.json.tmp',
+    stem + '_finalizing.mp4',
+    stem + '_visual.mp4',
+    stem + '_slides'
+  ];
+  for (let index = 1; index <= 20; index++) {
+    const scenePath = `${stem}_cinecode_scene_${String(index).padStart(2, '0')}.mp4`;
+    paths.push(scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp');
+  }
+  return paths;
+}
+
 // Turns an image provider SDK error into one readable line that leads with the
 // fix when the cause is recognisable. @google/genai puts the raw JSON error
 // body in error.message, which is unreadable on a console.
@@ -472,17 +507,24 @@ class AIVideoGenerator {
   }
 
   async generateVideo(script, visualAssets, audioPath, outputPath, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
     this.logger.info('Generating video from assets...');
     this.lastVideoResult = null;
     let selectedProvider = null;
+    let providerOutputPaths = [];
+    const attemptId = String(options.attemptId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '');
+
     try {
+      await assertLease();
       const configuredSettings = this.mediaGeneration && options.productionId
         ? await this.mediaGeneration.settings()
         : null;
+      await assertLease();
       selectedProvider = configuredSettings?.provider || null;
 
       if (selectedProvider === 'cinecode') {
         const realImages = await this.filterLocalImageAssets(visualAssets);
+        await assertLease();
         if (!realImages.length) throw new Error('CineCode requires real image-generation assets. Configure an image provider; placeholder assets are not accepted.');
         const totalDuration = options.estimatedDuration || this.calculateScriptDuration(script);
         const rendered = await this.cineCodeRenderer.renderScenes({
@@ -492,16 +534,21 @@ class AIVideoGenerator {
           outputDir: path.dirname(outputPath),
           outputPrefix: path.basename(outputPath, path.extname(outputPath)),
           resolution: configuredSettings.resolution,
-          aspectRatio: configuredSettings.aspectRatio
+          aspectRatio: configuredSettings.aspectRatio,
+          assertLease
         });
+        providerOutputPaths = rendered.clips.map(clip => clip.path);
+        await assertLease();
         const produced = await this.generateHybridVideo(
           rendered.clips,
           realImages,
           audioPath,
           outputPath,
           rendered.totalDuration,
-          { width: rendered.width, height: rendered.height }
+          { width: rendered.width, height: rendered.height },
+          assertLease
         );
+        await assertLease();
         this.lastVideoResult = {
           requestedProvider: 'cinecode',
           actualProvider: 'cinecode',
@@ -525,16 +572,23 @@ class AIVideoGenerator {
           productionId: options.productionId,
           script,
           visualAssets,
-          outputDir: path.dirname(outputPath)
+          outputDir: path.dirname(outputPath),
+          attemptId,
+          assertLease
         });
+        providerOutputPaths = generated.clips.map(clip => clip.path);
+        await assertLease();
         if (generated.clips.length) {
           const produced = await this.generateHybridVideo(
             generated.clips,
             visualAssets,
             audioPath,
             outputPath,
-            options.estimatedDuration || this.calculateScriptDuration(script)
+            options.estimatedDuration || this.calculateScriptDuration(script),
+            {},
+            assertLease
           );
+          await assertLease();
           this.lastVideoResult = {
             requestedProvider: generated.requestedProvider,
             actualProvider: generated.actualProvider,
@@ -551,10 +605,32 @@ class AIVideoGenerator {
         }
       }
 
-      const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
+      await assertLease();
+      const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath, assertLease);
+      await assertLease();
       this.lastVideoResult = { requestedProvider: selectedProvider || 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
+      if (isLeaseFailure(error)) {
+        await removeAttemptFiles([
+          ...getVideoAttemptSidecarPaths(outputPath),
+          ...providerOutputPaths,
+          ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
+        ]);
+        throw error;
+      }
+
+      try {
+        await assertLease();
+      } catch (leaseError) {
+        await removeAttemptFiles([
+          ...getVideoAttemptSidecarPaths(outputPath),
+          ...providerOutputPaths,
+          ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
+        ]);
+        throw leaseError;
+      }
+
       const reason = error && error.message ? error.message : String(error);
       if (selectedProvider === 'cinecode') {
         this.lastVideoResult = {
@@ -570,10 +646,11 @@ class AIVideoGenerator {
         this.logger.error(`CineCode rendering failed without fallback: ${reason}`, error);
         throw error;
       }
-      // Other configured providers retain the existing explicit fallback behavior.
       this.logger.error(`Video provider generation failed; using the local slideshow: ${reason}`, error);
       try {
-        const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
+        await assertLease();
+        const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath, assertLease);
+        await assertLease();
         this.lastVideoResult = {
           requestedProvider: selectedProvider || 'configured-provider',
           actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'fallback', generatedSeconds: 0,
@@ -581,8 +658,18 @@ class AIVideoGenerator {
         };
         return produced;
       } catch (fallbackError) {
+        if (isLeaseFailure(fallbackError)) {
+          await removeAttemptFiles([
+            ...getVideoAttemptSidecarPaths(outputPath),
+            ...providerOutputPaths,
+            ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
+          ]);
+          throw fallbackError;
+        }
         this.logger.error(`Local slideshow fallback failed: ${fallbackError.message}`, fallbackError);
-        const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath);
+        await assertLease();
+        const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath, assertLease);
+        await assertLease();
         this.lastVideoResult = {
           requestedProvider: selectedProvider || 'configured-provider', actualProvider: 'simulation', model: null,
           mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
@@ -591,6 +678,7 @@ class AIVideoGenerator {
       }
     }
   }
+
 
   async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration, renderOptions = {}) {
     if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
