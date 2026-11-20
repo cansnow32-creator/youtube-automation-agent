@@ -635,7 +635,7 @@ class YouTubeAutomationAgent {
         const { contentId } = req.params;
         const bundle = await this.db.getProductionBundle(contentId);
         const short = bundle ? null : await this.db.getShortClip(contentId);
-        if ((!bundle || bundle.review_status !== 'approved') && (!short || !['scheduled', 'uploading', 'reconciliation_required'].includes(short.status))) {
+        if ((!bundle || bundle.review_status !== 'approved') && (!short || !['scheduled', 'failed', 'uploading', 'reconciliation_required'].includes(short.status))) {
           return res.status(409).json({ success: false, error: 'Content must pass review and be approved before publishing' });
         }
         const result = await this.agents.publishing.publishContent(contentId);
