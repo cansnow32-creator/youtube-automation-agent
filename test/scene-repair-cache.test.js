@@ -26,6 +26,21 @@ async function run() {
     assert.equal(failingService.activeRebuilds.has('retryable-production'), false,
       'rebuild lock must always be released after failure');
 
+    const cleanupRoot = path.join(directory, 'cleanup');
+    const cleanupService = new SceneRepairService({}, {}, { dataRoot: cleanupRoot });
+    await fs.mkdir(path.join(cleanupRoot, 'videos'), { recursive: true });
+    await fs.mkdir(path.join(cleanupRoot, 'captions'), { recursive: true });
+    await fs.mkdir(path.join(cleanupRoot, 'audio'), { recursive: true });
+    const staleTemp = path.join(cleanupRoot, 'videos', 'clean-me_repair_hash.12345678-1234-1234-1234-123456789abc.rendering.mp4');
+    const freshTemp = path.join(cleanupRoot, 'videos', 'clean-me_repair_hash.abcdefab-cdef-abcd-efab-cdefabcdefab.rendering.mp4');
+    const unrelatedTemp = path.join(cleanupRoot, 'videos', 'other_repair_hash.12345678-1234-1234-1234-123456789abc.rendering.mp4');
+    await Promise.all([fs.writeFile(staleTemp, 'stale'), fs.writeFile(freshTemp, 'fresh'), fs.writeFile(unrelatedTemp, 'other')]);
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await fs.utimes(staleTemp, old, old);
+    assert.equal(await cleanupService.cleanupStaleRepairTemps('clean-me'), 1, 'only old temp files belonging to this production are removed');
+    await assert.rejects(fs.stat(staleTemp), { code: 'ENOENT' });
+    await fs.stat(freshTemp);
+    await fs.stat(unrelatedTemp);
     const scenes = [{
       id: 'scene-1', revision: 2, assetType: 'image', assetPath: visualPath,
       duration: 12, narrationStatus: 'current', audioPath, scriptText: 'Narration text'
