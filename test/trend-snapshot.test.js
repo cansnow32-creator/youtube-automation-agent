@@ -66,9 +66,13 @@ async function run() {
     const staleStrategy = new ContentStrategyAgent(db, {});
     staleStrategy.fetchYouTubeTrends = async () => [];
     staleStrategy.analyzeCompetitors = async () => [];
+    staleStrategy.trendingTopics = [{ topic: 'Previously cached topic', score: 100 }];
+    staleStrategy.competitorData = [{ channelId: 'previously-cached-channel' }];
     await staleStrategy.analyzeTrends();
     assert.equal(staleStrategy.trendingTopics.length, 0,
-      'stale snapshots must not be presented as current live trend topics');
+      'stale snapshots and prior in-memory topics must not be presented as current live trends');
+    assert.equal(staleStrategy.competitorData.length, 0,
+      'competitor data from a previous analysis must not survive an empty refresh');
     const staleIdeas = await staleStrategy.generateTrendIdeasFromSnapshot({ snapshot: staleSnapshot });
     assert.equal(staleIdeas.status, 'skipped',
       'idea generation must reject stale trend snapshots');
