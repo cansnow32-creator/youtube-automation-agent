@@ -1,3 +1,11 @@
+## 2026-11-20 — Heartbeat-fence ordinary scene edits and timeline reorder
+
+- Audited `SceneRepairService` and found `updateScene()` and `reorder()` used a production lock without heartbeat or lease assertions, unlike narration/visual regeneration and silence override.
+- Routed both through `withProductionOperationLease()`. Threaded `assertLease` through editable-bundle loading, scene DB writes, provenance review, reorder persistence and revision history. Missing lock acquire/release support now fails closed.
+- Commits: `9111b79aa624592b48322fe3a0dbf19392bace27`, `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`.
+- Re-fetched scene service and relevant tests/package through GitHub; JavaScript syntax and package JSON parsing passed; scene repair tests are in npm test. Runtime tests/lint not executed. PR #2 head `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e` has no PR-triggered workflow run.
+- Next: obtain real CI and add/run targeted lease-loss tests; do not merge.
+
 ## 2026-11-20 — Prevent stale operator media-task reconciliation writes
 
 - Continued the PR #2 recovery audit and found a race: reconciliation read a task, queried the provider, then unconditionally updated the DB row. An operator/worker could change the row between the read and final update.
