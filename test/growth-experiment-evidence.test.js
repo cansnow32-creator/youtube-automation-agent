@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { GrowthExperimentService } = require('../utils/growth-experiment-service');
+const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
 
 function makeService(samples) {
   const updates = [];
@@ -119,6 +120,27 @@ async function run() {
     assert.equal(savedRecommendation.proposedChange.winningThumbnailPattern, 'Centered composition');
     assert.equal(savedRecommendation.proposedChange.winningArmLabel, 'Variant B');
     assert.equal(result.status, 'adopted');
+  }
+
+  {
+    const learning = new ChannelLearningEngine({});
+    const linked = learning.attachExperimentFeedback(
+      [{ id: 'recommendation-1', title: 'Packaging recommendation' }],
+      [{
+        id: 'experiment-observational',
+        recommendationId: 'recommendation-1',
+        status: 'inconclusive',
+        result: {
+          comparisonMethod: 'sequential_same_video_observational',
+          exposureAttribution: 'unavailable_from_youtube_analytics',
+          arms: [{ armId: 'control', observedCtr: 5.2 }]
+        },
+        arms: []
+      }]
+    )[0].experimentFeedback;
+    assert.equal(linked.causalInterpretation, 'observational_only_no_causal_winner');
+    assert.equal(linked.exposureAttribution, 'unavailable_from_youtube_analytics');
+    assert.equal(linked.armObservations[0].observedCtr, 5.2);
   }
 
   process.stdout.write('Growth experiment evidence tests passed\\n');
