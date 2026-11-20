@@ -546,11 +546,11 @@ class SceneRepairService {
           prompt: scene.prompt, duration: estimate.generatedSeconds, resolution: settings.resolution,
           aspectRatio: settings.aspectRatio, generateAudio: false, referenceImages: []
         });
-        const outputPath = path.join(this.dataRoot, 'videos', 'scenes', `${productionId}_${scene.id}_r${scene.revision + 1}.mp4`);
+        const outputPath = path.join(this.dataRoot, 'videos', 'scenes', `${productionId}_${scene.id}_r${scene.revision + 1}_${crypto.randomUUID()}.mp4`);
         await fs.mkdir(path.dirname(outputPath), { recursive: true });
         const result = await this.mediaGeneration.generateClip({
           jobId: `repair_${productionId}_${scene.id}_${scene.revision + 1}`,
-          productionId, scene: { index: scene.position, prompt: scene.prompt }, provider, outputPath, request
+          productionId, scene: { index: scene.position, prompt: scene.prompt }, provider, outputPath, request, assertLease
         });
         await assertLease();
         visual = {
