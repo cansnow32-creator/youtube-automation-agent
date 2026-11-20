@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { SceneRepairService } = require('../utils/scene-repair-service');
 
 function editableBundle() {
@@ -94,6 +97,31 @@ async function run() {
     }),
     error => error.code === 'SCENE_EDIT_LEASE_LOST'
   );
+
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-asset-lease-'));
+  try {
+    const uploadService = new SceneRepairService({}, {}, { dataRoot: uploadRoot });
+    uploadService.getEditableBundle = async () => editableBundle();
+    let uploadAssertions = 0;
+    await assert.rejects(
+      uploadService.replaceAssetUnlocked('production-1', 'scene-1', {
+        buffer: Buffer.from('replacement bytes'),
+        contentType: 'image/png',
+        filename: 'replacement.png',
+        rightsConfirmed: true
+      }, async () => {
+        uploadAssertions += 1;
+        if (uploadAssertions === 4) {
+          throw Object.assign(new Error('lease lost after upload write'), { code: 'SCENE_EDIT_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const uploadDirectory = path.join(uploadRoot, 'scene-assets', 'production-1');
+    await assert.rejects(fs.readdir(uploadDirectory), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
 
   console.log('Scene edit lease regression tests passed');
 }
