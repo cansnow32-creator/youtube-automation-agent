@@ -1,6 +1,17 @@
-## 2026-11-20 — Guard narration cache publication after scene-repair lease loss
+# AgentTube — Continuity Log
 
-- Static review found `rebuildNarration()` could finish a long FFmpeg render and publish the shared narration-cache file without rechecking whether the scene-repair lease was still held. The caller checked the lease after the helper returned, which was too late to prevent that cache write.
+Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
+
+## 2026-11-20 — Fence visual scene persistence against generation-job lease loss
+
+- Static review of generateVideoContent() found that provider errors and lease assertion failures shared one catch path. A lease loss could be temporarily classified as a scene-provider failure; more importantly, the per-scene persistence boundary needed its own immediate ownership assertion.
+- Kept the lease assertion threaded through both initial production and resume call paths. Added an immediate assertLease() before each per-scene updateProductionData() call and re-check ownership inside the catch path so lost/unverifiable leases propagate instead of being swallowed.
+- Added regression coverage that simulates lease loss after the image provider returns and asserts that stale visual metadata is not persisted.
+- Commits on feat/video-concept-approval: dc7f5792120bd1ffdc22f5b3dc75305eff4b215f and 48def2c871f779dc0722c995a9d41b7a450b2f69.
+- Re-fetched changed source and test through GitHub. GitHub reports zero PR-triggered workflow runs for current PR #2 head. No local/cloud test execution occurred; no test pass is claimed.
+- Current live PR heads checked: #1 dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81, #2 48def2c871f779dc0722c995a9d41b7a450b2f69, #3 ad6ad108c88b4716ef517f188ec0d1f78c5debda. All three remain open/draft/unmerged; each head reports zero workflow runs.
+- Next: continue reviewing narration, caption, final assembly and scene-repair initialization side effects; then establish a real CI run. Do not merge.
+tion-cache file without rechecking whether the scene-repair lease was still held. The caller checked the lease after the helper returned, which was too late to prevent that cache write.
 - Passed the lease assertion into `rebuildNarration()` and check it immediately before replacing the shared cache output.
 - Added an injectable FFmpeg runner and a regression test that simulates lease loss after rendering, then asserts that no cache file is published.
 - Commits on `feat/video-concept-approval`: `a4cf5eeb76be2faaff5e236f72b853179c627df8`, `42b1538747a89ada2d4aaf12acecd29f301bfae1`, `2f6edb51130eaf1d2ecec399d6e1c209fae312c1`.
