@@ -321,7 +321,43 @@ async function run() {
     fs.writeFile = originalWriteFile;
   }
 
-    process.stdout.write('Production operation lock tests passed\\n');
+    // A visual worker that loses its lease after the image provider returns
+  // must not persist scene metadata or swallow lease loss as a provider error.
+  const visualAgent = Object.create(ProductionManagementAgent.prototype);
+  visualAgent.logger = { info() {}, warn() {} };
+  visualAgent.db = {
+    getChannelProfile: async () => ({ visual_style: 'test' }),
+    updateProductionData: async () => { throw new Error('stale visual worker must not persist'); }
+  };
+  visualAgent.createVisualPromptsFromScript = () => ['scene prompt'];
+  let visualGenerations = 0;
+  visualAgent.aiVideoGenerator = {
+    generateVisualAssets: async () => {
+      visualGenerations += 1;
+      return [];
+    }
+  };
+  const visualProduction = {
+    script: {},
+    strategy: {},
+    assets: { video: {} },
+    timeline: {},
+    estimatedDuration: 10
+  };
+  let visualLeaseChecks = 0;
+  await assert.rejects(
+    visualAgent.generateVideoContent(visualProduction, async () => {
+      visualLeaseChecks += 1;
+      if (visualLeaseChecks >= 3) {
+        throw Object.assign(new Error('visual job lease lost'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
+      }
+    }),
+    error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
+  );
+  assert.equal(visualGenerations, 1, 'visual generation stops after lease loss is observed');
+  assert.equal(visualLeaseChecks >= 3, true, 'lease loss is rechecked in the provider-error catch path');
+
+  process.stdout.write('Production operation lock tests passed\\n');
 }
 
 run().catch(error => {
