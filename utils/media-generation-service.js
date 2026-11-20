@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const crypto = require('crypto');
 const path = require('path');
 const { VideoProviderRegistry, DEFAULT_PROVIDER_ORDER, safeModelError } = require('./video-providers');
 const { Logger } = require('./logger');
@@ -116,7 +117,8 @@ class MediaGenerationService {
     };
   }
 
-  async generateClip({ jobId, productionId, scene, provider, outputPath, request }) {
+  async generateClip({ jobId, productionId, scene, provider, outputPath, request, assertLease = async () => {} }) {
+    await assertLease();
     let task = this.db?.findMediaGenerationTask
       ? await this.db.findMediaGenerationTask(jobId, scene.index, provider.id)
       : null;
@@ -127,6 +129,7 @@ class MediaGenerationService {
     }
 
     if (!task) {
+      await assertLease();
       task = this.db?.createMediaGenerationTask
         ? await this.db.createMediaGenerationTask({
           jobId, productionId, sceneIndex: scene.index, provider: provider.id, model: provider.model,
@@ -136,13 +139,17 @@ class MediaGenerationService {
     }
 
     let remote;
+    const downloadPath = `${outputPath}.${crypto.randomUUID()}.part.mp4`;
+    let outputPublished = false;
     try {
+      await assertLease();
       if (task.external_task_id && ['queued', 'running', 'submitting'].includes(task.status)) {
         remote = await provider.getTask(task.external_task_id, task.providerData || {});
       } else {
         await this.assertNotCancelled(jobId, provider, task);
         remote = await provider.createTask(request);
       }
+      await assertLease();
       task = await this.updateTask(task, {
         status: remote.status,
         model: remote.model || task.model,
@@ -158,9 +165,12 @@ class MediaGenerationService {
           error.code = 'MEDIA_PROVIDER_TIMEOUT';
           throw error;
         }
+        await assertLease();
         await this.assertNotCancelled(jobId, provider, task);
         await this.sleep(this.pollIntervalMs);
+        await assertLease();
         remote = await provider.getTask(remote.externalTaskId, task.providerData || {});
+        await assertLease();
         task = await this.updateTask(task, {
           status: remote.status,
           providerData: this.providerData(remote),
@@ -174,14 +184,27 @@ class MediaGenerationService {
         throw error;
       }
 
-      await provider.downloadResult(remote, outputPath);
-      if (!await this.isValidVideo(outputPath)) throw new Error(`${provider.id} returned an invalid MP4 asset`);
+      await assertLease();
+      await provider.downloadResult(remote, downloadPath);
+      await assertLease();
+      if (!await this.isValidVideo(downloadPath)) throw new Error(`${provider.id} returned an invalid MP4 asset`);
+      await assertLease();
+      await fs.rename(downloadPath, outputPath);
+      outputPublished = true;
+      await assertLease();
       task = await this.updateTask(task, {
         status: 'succeeded', outputPath, completedAt: new Date().toISOString(),
         providerData: this.providerData(remote), error: null
       });
       return { task, outputPath, reused: false };
     } catch (error) {
+      await fs.unlink(downloadPath).catch(() => {});
+      try {
+        await assertLease();
+      } catch (leaseError) {
+        if (outputPublished) await fs.unlink(outputPath).catch(() => {});
+        throw leaseError;
+      }
       await this.updateTask(task, {
         status: error.code === 'JOB_CANCELLED' ? 'cancelled' : 'failed',
         error: safeModelError(error), completedAt: new Date().toISOString()
