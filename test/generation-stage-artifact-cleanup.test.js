@@ -33,6 +33,30 @@ async function testStrategyIsNotSavedAfterProviderLeaseLoss() {
   assert.equal(saves, 0, 'strategy is not persisted after provider work outlives the job lease');
 }
 
+async function testScriptArtifactIsNotSavedAfterProviderLeaseLoss() {
+  const agent = Object.create(ScriptWriterAgent.prototype);
+  agent.logger = { info() {}, warn() {}, error() {} };
+  agent.templates = { explainer: { tone: 'informative', pacing: 'steady' } };
+  let saves = 0;
+  let lost = false;
+  agent.db = { saveScript: async () => { saves += 1; } };
+  agent.generateScriptWithAI = async (_strategy, _template, assertLease) => {
+    await assertLease();
+    lost = true;
+    return { title: 'Generated script', fullScript: 'script body' };
+  };
+  agent.formatFullScript = script => script.fullScript;
+
+  await assert.rejects(
+    agent.generateScript(
+      { topic: 'lease test', contentType: 'Explainer', keywords: [] },
+      async () => { if (lost) throw leaseLostError(); }
+    ),
+    error => error.code === 'GENERATION_JOB_LEASE_LOST'
+  );
+  assert.equal(saves, 0, 'script row is not saved after the provider returns to a worker that lost its lease');
+}
+
 async function testScriptAndRejectedReviewAreNotSavedAfterLeaseLoss() {
   const agent = Object.create(ScriptWriterAgent.prototype);
   agent.logger = { info() {}, warn() {}, error() {} };
@@ -149,6 +173,7 @@ async function testAbVariantFilesAreRemovedWhenLeaseIsLost() {
 
 async function run() {
   await testStrategyIsNotSavedAfterProviderLeaseLoss();
+  await testScriptArtifactIsNotSavedAfterProviderLeaseLoss();
   await testScriptAndRejectedReviewAreNotSavedAfterLeaseLoss();
   await testThumbnailFilesAreRemovedWhenLeaseIsLost();
   await testAbVariantFilesAreRemovedWhenLeaseIsLost();
