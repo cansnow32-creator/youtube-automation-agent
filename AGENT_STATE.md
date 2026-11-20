@@ -108,3 +108,15 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 - Commits: `7bf63295ed60213272917bad5ade79566629cfdb` (implementation), `5e9cbdb92787b66979d6ce6dd421007a34bb4a15` (test), `f22e1e82f52a8c800aebddbd390bd429d05940be` (test script), `9615d030839f4ad5322e9ab1fb3a02eee28f9937` (test output cleanup).
 - GitHub Actions reports zero workflow runs on the current head. Tests and lint were not executed; this remains static review plus source/test re-fetch. A competing refresh gets HTTP 409 and must be retried by its caller after the active operation releases the lock.
 - Next: continue auditing media provider orphan-file cleanup and other non-scene operations that mutate the same production review state; then obtain real CI. Do not merge.
+
+
+## Latest PR #2 media provider lease fencing — 2026-11-20
+
+- Live PR #2 head: `9722a7b55560a4019c81c7ffcdde51af7bff696c`, open/draft/unmerged.
+- MediaGenerationService.generateClip() now accepts the active scene lease assertion and checks it before task mutations, provider polling, download, cache reuse, and final task persistence. Provider downloads use unique per-attempt temporary paths and are only renamed to the unique scene-revision output after validation and a fresh lease check. If lease loss is detected after publication, that attempt-specific output is removed.
+- Provider tasks reporting remote `succeeded` remain locally `running` until the MP4 has been downloaded, validated, and safely published; only then is the task marked succeeded.
+- Scene regeneration passes its active lease into generateClip() and gives each regeneration attempt a unique final output filename.
+- Added `test/media-generation-lease.test.js` for lease loss after provider download, output cleanup, and suppression of local success persistence; included it in `npm test`.
+- Commits: `e74ca1fe07c1b07d1e75dc11cb454b139b6dd381`, `17a7256203722d237bd34d1dcac4de8da2d23f8d`, `0c41484dd6f0e6f36f8e9c33f4f8e48cb6db43d4`, `cc9d60ec4baf35c6ebe8d89f6596bb2dd8fc9c50`, `b528f75dc2082af417e17c28d791a088df1e5fdf`, `9722a7b55560a4019c81c7ffcdde51af7bff696c`.
+- Static review only. Tests/lint not executed; GitHub Actions still needs an actual run. A remote provider task can still be created in the narrow interval between a successful lease check and the external API request; the post-response lease check prevents stale local persistence/publication but cannot atomically fence the external provider.
+- Next: review visual-image and TTS regeneration for attempt-scoped output cleanup and stale writes; then trigger CI through an authorized GitHub UI/workflow dispatch. Do not merge.
