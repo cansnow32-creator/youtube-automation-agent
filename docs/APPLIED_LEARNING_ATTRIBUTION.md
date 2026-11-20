@@ -4,9 +4,11 @@ Approved channel-learning recommendations are recorded on the production strateg
 
 ## Attribution rules
 
-- Packaging recommendations are attributed when the approved packaging learning is passed to thumbnail and SEO generation.
+- Packaging recommendations are attributed only when a non-control title and/or thumbnail variant from that recommendation is explicitly selected and approved. A manual title override is not attributed to the generated title variant.
+- Post-publish packaging changes are recorded separately in the schedule metadata with timestamp, previous title, and applied title. They are included in analytics snapshots as an audit trail, but are not misclassified as application of a pre-publish recommendation.
 - Script recommendations are attributed when approved script learnings are passed to script generation.
 - Recommendation IDs are de-duplicated per production.
+- Selecting only control variants does not count as applying a packaging recommendation.
 - Only non-simulated 7-day performance snapshots are eligible for application feedback.
 - A recommendation needs at least two distinct productions and at least 2,000 total impressions before it can receive a directional signal.
 - Packaging feedback uses CTR; hook/retention feedback uses average view percentage; format/length feedback uses watch hours per thousand views.
