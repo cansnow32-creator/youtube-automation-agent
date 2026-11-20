@@ -142,6 +142,38 @@ async function run() {
   }
 
   {
+    const { service } = makeService([]);
+    service.analytics = {
+      analyzeVideoPerformance: async () => ({
+        analytics: { simulated: false, views: { totalImpressions: null, averageCTR: null } }
+      })
+    };
+    await assert.rejects(
+      () => service.captureMetrics('video-1'),
+      error => error.code === 'EXPERIMENT_METRICS_INCOMPLETE'
+    );
+  }
+
+  {
+    const { service } = makeService([]);
+    service.analytics = {
+      analyzeVideoPerformance: async () => ({
+        analytics: {
+          simulated: false,
+          period: { startDate: '2026-11-01', endDate: '2026-11-20' },
+          views: { totalImpressions: 1000, averageCTR: 4.5, totalViews: 250 },
+          watchTime: { totalWatchTime: 80, averageViewPercentage: 32 }
+        }
+      })
+    };
+    const evidence = await service.captureMetrics('video-1');
+    assert.equal(evidence.metrics.impressions, 1000);
+    assert.equal(evidence.metrics.ctr, 4.5);
+    assert.equal(evidence.metrics.clicks, 45);
+    assert.equal(evidence.metrics.measurementPeriod.startDate, '2026-11-01');
+  }
+
+  {
     const learning = new ChannelLearningEngine({});
     const linked = learning.attachExperimentFeedback(
       [{ id: 'recommendation-1', title: 'Packaging recommendation' }],
