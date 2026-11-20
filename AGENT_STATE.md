@@ -323,3 +323,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added missing-lock regression coverage for rebuild, job production and resume; routed asset replacement through the shared lease; updated the cache test fixture to supply required lock methods.
 - Commits include `0d544b2`, `5a0bfce`, `879881d`, `e7969ed`, `9fcb8ca`, `424252c`, `094e7c8`, `7b1f5ae`.
 - Static JS syntax checks passed for changed implementation and tests; package JSON parses and test script includes affected test files. Runtime tests/lint not executed. PR #2 remains open/draft; do not merge or retarget.
+
+
+## Latest asset-upload lease fencing — 2026-11-20
+
+- Audited stale-worker side effects and found `replaceAssetUnlocked()` wrote uploaded media directly to a deterministic revision path before its lease assertion. If lease verification failed immediately after the write, the file was outside cleanup handling and remained orphaned.
+- Uploads now use a unique per-attempt temporary file with exclusive creation, validate that temporary file, assert lease before publication, and rename to a unique revision path. If an error occurs before the scene DB update persists, both temporary and published attempt paths are removed. Once DB update succeeds, the referenced file is retained even if later revision-history work fails.
+- Added a regression to `test/scene-edit-lease.test.js`: simulated lease loss after upload write leaves the scene-assets directory empty. Test is wired into `npm test`.
+- Commits: `9b445a7841e2df0015c9f5bab00d88f868ae0fa6`, `2f2e9b9df5fea658cdd443bb1ecfe104c8a9ebb2`, `d5e8dac847a45473210a45ade55b894184d3c45a`.
+- Static JS syntax checks passed; runtime tests/lint not executed. PR #2 remains open/draft; no merge or base changes.
