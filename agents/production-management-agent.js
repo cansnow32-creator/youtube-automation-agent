@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
@@ -479,40 +480,125 @@ class ProductionManagementAgent {
   }
 
   async generateVideoContent(productionData) {
-    this.logger.info('Generating AI video content...');
-    
-    try {
-      const { script } = productionData;
-      
-      // Generate visual assets using DALL-E
-      const approvedConcept = productionData.strategy?.approvedVideoConcept || null;
-      const visualPrompts = this.createVisualPromptsFromScript(script, approvedConcept);
-      const visualAssets = [];
-      const profile = await this.db.getChannelProfile?.() || {};
-      const visualStyle = profile.visual_style || 'ethereal';
-      
-      for (const prompt of visualPrompts) {
-        const assets = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
-        visualAssets.push(...assets);
+    this.logger.info('Generating AI video content with resumable scene assets...');
+
+    const { script } = productionData;
+    const approvedConcept = productionData.strategy?.approvedVideoConcept || null;
+    const visualPrompts = this.createVisualPromptsFromScript(script, approvedConcept);
+    const profile = await this.db.getChannelProfile?.() || {};
+    const visualStyle = profile.visual_style || 'ethereal';
+    const existingScenes = Array.isArray(productionData.assets.video?.visualSceneAssets)
+      ? productionData.assets.video.visualSceneAssets
+      : [];
+    const scenesByIndex = new Map(existingScenes.map(scene => [scene.sceneIndex, scene]));
+    const visualAssets = [];
+    const failures = [];
+
+    const isUsableImage = async filePath => {
+      if (typeof filePath !== 'string' || !filePath.trim()) return false;
+      if (!['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(filePath).toLowerCase())) return false;
+      try {
+        const stats = await fs.stat(filePath);
+        return stats.isFile() && stats.size > 0;
+      } catch (_error) {
+        return false;
       }
-      
-      productionData.assets.video = {
-        visualAssets: visualAssets,
-        duration: productionData.estimatedDuration,
-        format: 'mp4',
-        resolution: '1920x1080',
-        fps: 30,
-        generatedWith: 'AI'
-      };
-      
-      productionData.timeline.videoGenerated = new Date().toISOString();
-      
-      return visualAssets;
-    } catch (error) {
-      this.logger.error('AI video content generation failed:', error);
-      // Fallback to placeholder
-      return await this.createVideoElements(productionData);
+    };
+
+    for (let sceneIndex = 0; sceneIndex < visualPrompts.length; sceneIndex++) {
+      const prompt = visualPrompts[sceneIndex];
+      const promptHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ prompt, visualStyle }))
+        .digest('hex');
+      const previous = scenesByIndex.get(sceneIndex);
+
+      if (previous?.promptHash === promptHash && await isUsableImage(previous.path)) {
+        visualAssets.push(previous.path);
+        continue;
+      }
+
+      try {
+        const generated = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
+        const imagePath = Array.isArray(generated)
+          ? generated.find(candidate => typeof candidate === 'string' && path.extname(candidate).toLowerCase() !== '.info')
+          : null;
+        if (!await isUsableImage(imagePath)) {
+          throw new Error('Image provider returned no valid image file; placeholder assets are not accepted');
+        }
+
+        const sceneRecord = {
+          sceneIndex,
+          promptHash,
+          prompt,
+          path: imagePath,
+          status: 'ready',
+          generatedAt: new Date().toISOString()
+        };
+        scenesByIndex.set(sceneIndex, sceneRecord);
+        visualAssets.push(imagePath);
+        productionData.assets.video = {
+          ...(productionData.assets.video || {}),
+          visualAssets: [...visualAssets],
+          visualSceneAssets: [...scenesByIndex.values()].sort((a, b) => a.sceneIndex - b.sceneIndex),
+          duration: productionData.estimatedDuration,
+          format: 'mp4',
+          resolution: '1920x1080',
+          fps: 30,
+          generatedWith: 'AI'
+        };
+        productionData.timeline.visualGeneration = {
+          totalScenes: visualPrompts.length,
+          completedScenes: visualAssets.length,
+          failedScenes: failures.map(item => item.sceneIndex),
+          updatedAt: new Date().toISOString()
+        };
+        // Persist immediately: a later scene failure must not lose earlier images.
+        await this.db.updateProductionData(productionData);
+      } catch (error) {
+        failures.push({ sceneIndex, message: String(error?.message || error).slice(0, 300) });
+        this.logger.warn(`Visual scene ${sceneIndex + 1}/${visualPrompts.length} failed: ${error.message}`);
+      }
     }
+
+    const completedScenes = [...scenesByIndex.values()]
+      .filter(scene => scene.promptHash === crypto.createHash('sha256')
+        .update(JSON.stringify({ prompt: visualPrompts[scene.sceneIndex], visualStyle })).digest('hex')
+        && visualPrompts[scene.sceneIndex] !== undefined);
+    const validAssets = [];
+    for (let sceneIndex = 0; sceneIndex < visualPrompts.length; sceneIndex++) {
+      const scene = scenesByIndex.get(sceneIndex);
+      const expectedHash = crypto.createHash('sha256')
+        .update(JSON.stringify({ prompt: visualPrompts[sceneIndex], visualStyle })).digest('hex');
+      if (scene?.promptHash === expectedHash && await isUsableImage(scene.path)) validAssets.push(scene.path);
+    }
+
+    productionData.assets.video = {
+      ...(productionData.assets.video || {}),
+      visualAssets: validAssets,
+      visualSceneAssets: [...scenesByIndex.values()].sort((a, b) => a.sceneIndex - b.sceneIndex),
+      duration: productionData.estimatedDuration,
+      format: 'mp4',
+      resolution: '1920x1080',
+      fps: 30,
+      generatedWith: 'AI'
+    };
+    productionData.timeline.visualGeneration = {
+      totalScenes: visualPrompts.length,
+      completedScenes: validAssets.length,
+      failedScenes: visualPrompts.map((_, index) => index).filter(index => !validAssets.some(filePath => filePath === scenesByIndex.get(index)?.path)),
+      updatedAt: new Date().toISOString()
+    };
+    await this.db.updateProductionData(productionData);
+
+    if (validAssets.length !== visualPrompts.length) {
+      const failedCount = visualPrompts.length - validAssets.length;
+      const details = failures.map(item => `scene ${item.sceneIndex + 1}: ${item.message}`).join(' | ');
+      throw new Error(`Visual generation incomplete: ${validAssets.length}/${visualPrompts.length} scenes ready; ${failedCount} scene(s) will be retried. ${details}`);
+    }
+
+    productionData.timeline.videoGenerated = new Date().toISOString();
+    await this.db.updateProductionData(productionData);
+    return validAssets;
   }
 
   async createVideoElements(productionData) {
