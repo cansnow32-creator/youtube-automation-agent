@@ -125,3 +125,9 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - Existing SQLite atomic upload claim and unresolved-upload reconciliation continue to protect cross-process uploads and ambiguous outcomes.
 - PR #2 commits for this slice: `ff0baa09606c1d72bf18d6423805cd092cef0af2`, `ae1a2f712463065dd605e1f224c6635893d29636`, `5bacd5b9aa2f2d250ff9899ab02cf3b782027586`.
 - Static JavaScript syntax checks passed for the changed publishing service and new regression test; package JSON parsed. Runtime tests/lint have not been run in this environment.
+
+## 2026-11-20 — Atomic schedule creation
+
+- Replaced the check-then-insert schedule creation path with a single SQLite `INSERT ... SELECT ... WHERE NOT EXISTS` statement keyed by `production_id`. Concurrent callers now return the same existing durable schedule row instead of creating duplicate schedule entries.
+- Extended `test/publish-schedule-claim.test.js` to race two independent SQLite connections against the same production and assert one persisted row and one shared schedule ID. The test is already included in `npm test`.
+- Static syntax checks passed for DB and test files. Runtime tests/lint were not executed.
