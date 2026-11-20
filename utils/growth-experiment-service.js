@@ -56,18 +56,25 @@ class GrowthExperimentService {
     }
   }
 
-  async refreshUnlocked(id, options = {}) {
+  async refreshUnlocked(id, _options = {}) {
     const experiment = await this.requireExperiment(id);
-    if (experiment.status !== 'running') throw this.error('Only a running experiment can collect evidence', 409);
-    const arm = experiment.arms.find(candidate => candidate.id === experiment.currentArmId);
+    if (experiment.status !== 'running') {
+      throw this.error('Only a running experiment can be recovered', 409);
+    }
+    const current = experiment.arms.find(candidate => candidate.id === experiment.currentArmId);
     const control = experiment.arms.find(candidate => candidate.isControl);
     if (!control) {
-      throw this.error('The running legacy experiment has no control package; manual operator recovery is required.', 409, 'EXPERIMENT_CONTROL_MISSING');
+      throw this.error(
+        'The running legacy experiment has no control package; manual operator recovery is required.',
+        409,
+        'EXPERIMENT_CONTROL_MISSING'
+      );
     }
+
     // Stop legacy sequential rotations and restore the original package once.
     // Do not collect or compare video-level metrics as if they were arm-level.
     try {
-      await this.applyArm(experiment, control, arm || control);
+      await this.applyArm(experiment, control, current || control);
     } catch (error) {
       await this.failRestore(experiment, error, {
         comparisonMethod: 'sequential_same_video_observational',
@@ -77,6 +84,7 @@ class GrowthExperimentService {
       });
       throw error;
     }
+
     const result = {
       primaryMetric: 'ctr',
       comparisonMethod: 'sequential_same_video_observational',
@@ -93,63 +101,6 @@ class GrowthExperimentService {
       winningArmId: null,
       result,
       completedAt: this.isoNow()
-    });
-    if (!arm) throw this.error('The running experiment has no active arm', 409, 'EXPERIMENT_STATE_INVALID');
-    const capturedAt = this.isoNow();
-    const evidence = await this.captureMetrics(experiment.videoId);
-    await this.db.saveExperimentSample({
-      experimentId: experiment.id, armId: arm.id,
-      metrics: evidence.metrics, trafficSources: evidence.trafficSources, capturedAt
-    });
-
-    const elapsedHours = (this.now().getTime() - new Date(arm.startedAt).getTime()) / 3600000;
-    if (!options.forceAdvance && elapsedHours < experiment.armDurationHours) {
-      return this.db.getGrowthExperiment(id);
-    }
-
-    const armResult = {
-      observationOnly: true,
-      latestVideoMetrics: evidence.metrics,
-      measurementPeriod: evidence.measurementPeriod || null,
-      interpretation: 'Video-level snapshot during this sequential arm; not attributable to this arm.'
-    };
-    await this.db.updateExperimentArm(arm.id, {
-      status: 'completed', finalMetrics: evidence.metrics, result: armResult, endedAt: capturedAt
-    });
-    const next = experiment.arms.find(candidate => candidate.index === arm.index + 1);
-    if (next) {
-      await this.db.updateExperimentArm(next.id, {
-        status: 'running', baselineMetrics: evidence.metrics, startedAt: capturedAt
-      });
-      await this.db.saveExperimentSample({
-        experimentId: experiment.id, armId: next.id,
-        metrics: evidence.metrics, trafficSources: evidence.trafficSources, capturedAt
-      });
-      await this.db.updateGrowthExperiment(id, { currentArmId: next.id });
-      try {
-        await this.applyArm(experiment, next, arm);
-      } catch (error) {
-        await this.failRestore(experiment, error);
-        throw error;
-      }
-      return this.db.getGrowthExperiment(id);
-    }
-
-    const completed = await this.db.getGrowthExperiment(id);
-    const result = await this.evaluate(completed);
-    const control = completed.arms.find(candidate => candidate.isControl);
-    try {
-      await this.applyArm(completed, control, arm);
-    } catch (error) {
-      await this.failRestore(completed, error, result);
-      throw error;
-    }
-    return this.db.updateGrowthExperiment(id, {
-      status: result.winnerArmId ? 'awaiting_winner' : 'inconclusive',
-      currentArmId: null,
-      winningArmId: result.winnerArmId || null,
-      result,
-      completedAt: capturedAt
     });
   }
 
