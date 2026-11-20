@@ -94,6 +94,7 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     : `[1:a:0]${musicFilters},alimiter=limit=0.95[mixed]`;
   const temporaryPath = `${outputPath}.mixing.mp4`;
   const manifestPath = `${outputPath}.mix.json`;
+  const manifestTempPath = `${manifestPath}.tmp`;
   const [videoHash, musicHash] = await Promise.all([hashFile(videoPath), hashFile(musicPath)]);
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
     videoHash, musicHash, volume, fadeIn, fadeOut, loop: music.loop !== false,
@@ -187,7 +188,6 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       rightsConfirmed: true,
       mixedAt: new Date().toISOString()
     };
-    const manifestTempPath = `${manifestPath}.tmp`;
     await assertLease();
     await fileSystem.writeFile(manifestTempPath, JSON.stringify({ version: 1, fingerprint, result }, null, 2));
     await assertLease();
@@ -197,6 +197,13 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     return result;
   } catch (error) {
     await fileSystem.rm(temporaryPath, { force: true }).catch(() => {});
+    if (String(error?.code || '').toUpperCase().includes('LEASE') ||
+        String(error?.code || '').toUpperCase().includes('LOCK_LOST') ||
+        String(error?.code || '').toUpperCase().includes('LOCK_UNVERIFIED')) {
+      await Promise.all([outputPath, manifestPath, manifestTempPath].map(filePath =>
+        fileSystem.rm(filePath, { force: true }).catch(() => {})
+      ));
+    }
     throw error;
   }
 }
