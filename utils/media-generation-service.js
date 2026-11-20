@@ -7,6 +7,16 @@ const { runFFmpeg } = require('./ffmpeg');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
+async function removeAttemptOutputs(paths = []) {
+  await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
+    .map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
+}
+
 class MediaGenerationService {
   constructor(db, credentials = {}, options = {}) {
     this.db = db;
@@ -73,8 +83,18 @@ class MediaGenerationService {
     }));
   }
 
-  async generateClips({ jobId, productionId, script, visualAssets = [], outputDir }) {
+  async generateClips({
+    jobId,
+    productionId,
+    script,
+    visualAssets = [],
+    outputDir,
+    attemptId = null,
+    assertLease = async () => {}
+  }) {
+    await assertLease();
     const settings = await this.settings();
+    await assertLease();
     const routingRequest = {
       duration: settings.clipDuration,
       firstFrame: visualAssets[0] || null,
@@ -82,6 +102,7 @@ class MediaGenerationService {
     };
     const provider = this.registry.select(settings.provider, settings.order, routingRequest);
     const providerInfo = provider.describe();
+    await assertLease();
     if (provider.id === 'slideshow' || settings.mode === 'slideshow' || settings.maxGeneratedSeconds === 0) {
       return { clips: [], requestedProvider: settings.provider, actualProvider: 'slideshow', model: 'local-ffmpeg', settings };
     }
@@ -89,32 +110,48 @@ class MediaGenerationService {
     const normalized = provider.normalizeRequest(routingRequest);
     const effectiveSettings = { ...settings, clipDuration: normalized.duration };
     const scenes = this.buildScenePlan(script, visualAssets, effectiveSettings);
+    const safeAttemptId = String(attemptId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '');
     const clips = [];
-    for (const scene of scenes) {
-      const outputPath = path.join(outputDir, `${productionId}_${provider.id}_${String(scene.index).padStart(2, '0')}.mp4`);
-      const result = await this.generateClip({
-        jobId,
-        productionId,
-        scene,
-        provider,
-        outputPath,
-        request: {
-          prompt: scene.prompt,
-          duration: scene.duration,
-          firstFrame: scene.firstFrame,
-          referenceImages: scene.referenceImages,
-          resolution: settings.resolution,
-          aspectRatio: settings.aspectRatio,
-          generateAudio: settings.generateAudio
-        }
-      });
-      clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id });
+    const attemptOutputPaths = [];
+    try {
+      for (const scene of scenes) {
+        await assertLease();
+        const outputPath = path.join(
+          outputDir,
+          `${productionId}_${safeAttemptId}_${provider.id}_${String(scene.index).padStart(2, '0')}.mp4`
+        );
+        const result = await this.generateClip({
+          jobId,
+          productionId,
+          scene,
+          provider,
+          outputPath,
+          request: {
+            prompt: scene.prompt,
+            duration: scene.duration,
+            firstFrame: scene.firstFrame,
+            referenceImages: scene.referenceImages,
+            resolution: settings.resolution,
+            aspectRatio: settings.aspectRatio,
+            generateAudio: settings.generateAudio
+          },
+          assertLease
+        });
+        if (!result.reused) attemptOutputPaths.push(result.outputPath);
+        await assertLease();
+        clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id });
+      }
+      await assertLease();
+      const models = [...new Set(clips.map(clip => clip.model).filter(Boolean))];
+      return {
+        clips, requestedProvider: settings.provider, actualProvider: provider.id,
+        model: models.join(', ') || providerInfo.model, settings: effectiveSettings,
+        attemptId: safeAttemptId
+      };
+    } catch (error) {
+      if (isLeaseFailure(error)) await removeAttemptOutputs(attemptOutputPaths);
+      throw error;
     }
-    const models = [...new Set(clips.map(clip => clip.model).filter(Boolean))];
-    return {
-      clips, requestedProvider: settings.provider, actualProvider: provider.id,
-      model: models.join(', ') || providerInfo.model, settings: effectiveSettings
-    };
   }
 
   async generateClip({ jobId, productionId, scene, provider, outputPath, request, assertLease = async () => {} }) {
@@ -161,6 +198,7 @@ class MediaGenerationService {
         providerData: this.providerData(remote),
         error: remote.error || null
       });
+      await assertLease();
 
       const started = Date.now();
       while (!TERMINAL.has(remote.status)) {
@@ -180,6 +218,7 @@ class MediaGenerationService {
           providerData: this.providerData(remote),
           error: remote.error || null
         });
+        await assertLease();
       }
 
       if (remote.status !== 'succeeded') {
@@ -200,6 +239,7 @@ class MediaGenerationService {
         status: 'succeeded', outputPath, completedAt: new Date().toISOString(),
         providerData: this.providerData(remote), error: null
       });
+      await assertLease();
       return { task, outputPath, reused: false };
     } catch (error) {
       await fs.unlink(downloadPath).catch(() => {});
