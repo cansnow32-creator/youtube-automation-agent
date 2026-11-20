@@ -13,7 +13,8 @@ Status values: todo, in_progress, blocked, done, needs_user.
 
 ## P1 — Establish continuity and cloud execution
 
-- [ ] in_progress — Continuity handoff files on this branch.
+- [x] done — Continuity handoff files, Dot guide, and deterministic read-only validation workflow added on feat/agent-continuity; draft PR #3 opened.
+- [ ] todo — Run the continuity workflow from GitHub Actions UI or a user-authorized workflow dispatch; connector-authored commits did not trigger a run.
 - [ ] todo — Dot availability and GitHub connection: user must confirm chatgpt.com/dots availability and complete GitHub app authorization. Never request a PAT.
 - [ ] todo — Cloud execution path: evaluate Dot cloud computer or Codex cloud environment. GitHub Actions is deterministic CI, not an autonomous coding agent.
 - [ ] todo — New-chat resume smoke test: user says "Devam et"; assistant/dot reads these files and live GitHub state, then resumes the top task.
