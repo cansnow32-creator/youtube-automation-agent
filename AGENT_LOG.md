@@ -1,3 +1,16 @@
+## 2026-11-20 — Isolate production audio, caption and video outputs per attempt
+
+- Continued PR #2 production side-effect audit. Production-ID-stable paths could be overwritten by a retry while a prior TTS/FFmpeg call was still running. Added `timeline.artifactAttemptId` for new and resumed production attempts.
+- `generateAudioNarration()` and its simulation fallback now write attempt-scoped outputs. `generateCaptions()` uses an attempt-scoped SRT path. Source-hash-validated prior narration/captions remain reusable even when a new attempt ID is created.
+- `assembleVideo()` now uses attempt-scoped clean final, music-mix and captioned video paths, with unique render temp/manifest names. It tracks hybrid-render, slideshow and audio-mix sidecars and restores previous background-music metadata on failure. The slideshow renderer uses an output-specific slide directory instead of a shared global folder.
+- Added `cleanupNewProductionAssets()` and lease-failure handling around initial/resumed narration and editing stage persistence so attempt-local uncommitted outputs are removed if lease is lost or the DB stage transition fails, while previously persisted asset references are preserved.
+- `simulateAudioGeneration()` and `simulateVideoAssembly()` now use unique sidecars and clean them if the lease assertion fails after writing.
+- Added `test/production-attempt-artifact-cleanup.test.js`; expanded `test/production-media-reuse.test.js` to verify that unchanged audio/captions are reused across attempt IDs; updated `test/audio-mixer.test.js` to use attempt-specific integration paths and clean associated sidecars. New test added to `npm test`.
+- Commits on `feat/video-concept-approval`: `662301dd5ea4e0a24e94bf242cb6421df8df2492`, `b952cc821c5e38871ffcdd8ec3b7f7aa094b4aa9`, `76612966e8041994bf0925b658960c11250c2017`, `aec35f94fcd9d0822bba16b5964f878901feedbb`, `150944da374741d968b351fb1842c66ba01d456c`, `2bbe3bf3871a7035f94cdd73751378ac14a9ea9c`, `953df10591b9434b315eb0090c51bbaf45e5c983`, `35478fdc167525a4831b77896519a4b4068d0734`, `c1217b758d33e741d3518cd887501329b270153c`, `552975ba3387ab4fadc44bc62bed662849ab8ed7`, `cd108cc1e7935c57610c0c6d122c52ac20584833`.
+- Re-fetched six implementation/test/package files through GitHub and verified JavaScript syntax plus package JSON/test wiring. No runtime tests or lint were executed. Current PR #2 head `cd108cc1e7935c57610c0c6d122c52ac20584833` returns zero workflow runs.
+- Remaining limitation: lease checks are cooperative and do not make a filesystem/DB mutation atomic with lock ownership. A narrow check-to-write race remains; attempt-scoped paths and cleanup reduce the impact of late work.
+- Next: inspect media-provider clip/CineCode rendering outputs and then obtain a real CI run. Preserve PR #2's stacked relationship; do not merge.
+ 
 ## 2026-11-20 — Record remaining stable final-media output paths
 
 - During the follow-on production side-effect audit, confirmed that audio narration, caption SRT, final video, background-music mix, captioned MP4, caption render temp/manifest, and simulation metadata still use deterministic production-ID paths.
