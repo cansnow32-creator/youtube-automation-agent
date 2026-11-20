@@ -153,7 +153,7 @@ class ProductionManagementAgent {
         seo,
         status: 'processing',
         assets: {
-          script: await this.processScript(script),
+          script: await this.processScript(script, assertLease),
           thumbnail: await this.processThumbnail(thumbnail, script),
           audio: null, // Will be generated later
           video: null, // Will be generated later
@@ -422,18 +422,22 @@ class ProductionManagementAgent {
     return `prod_${timestamp}_${random}_${extra}`;
   }
 
-  async processScript(script) {
+  async processScript(script, assertLease = async () => {}) {
     const scriptPath = path.join(__dirname, '..', 'data', 'scripts', `${Date.now()}_script.json`);
     
     // Create formatted script for TTS
     const ttsScript = this.formatScriptForTTS(script);
     
-    // Save script files
+    // Check ownership immediately before each filesystem side effect. A
+    // generation worker that lost its job lease must not publish script files.
+    await assertLease();
     await fs.writeFile(scriptPath, JSON.stringify(script, null, 2));
+    await assertLease();
     await fs.writeFile(
       scriptPath.replace('.json', '_tts.txt'), 
       ttsScript
     );
+    await assertLease();
     
     return {
       originalPath: scriptPath,
