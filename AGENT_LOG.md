@@ -1,3 +1,11 @@
+## 2026-11-20 — Configure bounded SQLite writer wait
+
+- PR #2 static review found the new two-connection integration test explicitly configured a 5-second SQLite busy timeout, but production Database.initialize() left the connection at the sqlite3 default. Under concurrent writers, production could therefore surface SQLITE_BUSY immediately even though the test setup behaved differently.
+- Configured this.db.configure('busyTimeout', 5000) immediately after opening the production SQLite connection.
+- Commit: `b6e9c7f10bf6c8e42ebbe50f08683863f70d2965` on `feat/video-concept-approval`.
+- This is a static-review correction only. No test or Actions run has been observed; PR #2 current head still needs live check-run verification.
+- Next: continue audit for lock/lease edge cases and obtain a real Actions run. Do not merge.
+
 ## 2026-11-20 — Add real SQLite production-lock contention coverage
 
 - Added an integration section to `test/production-operation-lock.test.js` using two independent SQLite connections to one temporary database.
