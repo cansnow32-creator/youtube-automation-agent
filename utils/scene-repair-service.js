@@ -161,6 +161,22 @@ class SceneRepairService {
     this.activeRebuilds = new Set();
   }
 
+  async withProductionEditLock(productionId, operation) {
+    if (typeof this.db.acquireProductionOperationLock !== 'function') return operation();
+    const owner = crypto.randomUUID();
+    const acquired = await this.db.acquireProductionOperationLock(productionId, owner);
+    if (!acquired) {
+      throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
+    }
+    try {
+      return await operation();
+    } finally {
+      await this.db.releaseProductionOperationLock(productionId, owner).catch(error => {
+        this.logger.warn(`Could not release scene edit lock for ${productionId}: ${error.message}`);
+      });
+    }
+  }
+
   async ensureManifest(bundle, assertLease = async () => {}) {
     await assertLease();
     if (bundle.scenes?.length) return bundle.scenes;
@@ -234,6 +250,10 @@ class SceneRepairService {
   }
 
   async updateScene(productionId, sceneId, input = {}) {
+    return this.withProductionEditLock(productionId, () => this.updateSceneUnlocked(productionId, sceneId, input));
+  }
+
+  async updateSceneUnlocked(productionId, sceneId, input = {}) {
     const bundle = await this.getEditableBundle(productionId);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
@@ -288,6 +308,10 @@ class SceneRepairService {
   }
 
   async reorder(productionId, orderedIds) {
+    return this.withProductionEditLock(productionId, () => this.reorderUnlocked(productionId, orderedIds));
+  }
+
+  async reorderUnlocked(productionId, orderedIds) {
     const bundle = await this.getEditableBundle(productionId);
     if (bundle.scenes.some(scene => scene.locked)) throw this.error('Unlock every scene before changing timeline order', 409);
     const before = bundle.scenes;
@@ -516,6 +540,10 @@ class SceneRepairService {
   }
 
   async replaceAsset(productionId, sceneId, file = {}) {
+    return this.withProductionEditLock(productionId, () => this.replaceAssetUnlocked(productionId, sceneId, file));
+  }
+
+  async replaceAssetUnlocked(productionId, sceneId, file = {}) {
     const bundle = await this.getEditableBundle(productionId);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
