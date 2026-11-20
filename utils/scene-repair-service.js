@@ -423,9 +423,12 @@ class SceneRepairService {
       });
       return next;
     } catch (error) {
-      if (!scenePersisted && generatedPath) {
-        await fs.unlink(generatedPath).catch(() => {});
-        await fs.unlink(`${generatedPath}.pcm`).catch(() => {});
+      if (!scenePersisted) {
+        await fs.unlink(outputPath).catch(() => {});
+        if (generatedPath) {
+          await fs.unlink(generatedPath).catch(() => {});
+          await fs.unlink(`${generatedPath}.pcm`).catch(() => {});
+        }
       }
       await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
