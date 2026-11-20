@@ -14,6 +14,27 @@ async function run() {
     throw new Error('Missing platform metadata fields must be detected');
   }
 
+  if (platformMetadataIssues({
+    youtube: { title: 'Title', description: 'Description', hashtags: ['#valid', '  '], tags: ['tag'] },
+    instagram_reels: { caption: 'Caption', hashtags: '#not-an-array' },
+    tiktok: { caption: 'Caption', hashtags: ['#valid'] }
+  }).length !== 2) {
+    throw new Error('Blank metadata entries and non-array hashtag fields must be rejected');
+  }
+
+  for (const [label, malformed] of [
+    ['invalid score', { score: 101, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }],
+    ['missing explicit approval', { score: 90, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }],
+    ['missing blockers', { score: 90, approved: true, revision_instructions: [], platform_metadata: completeMetadata }],
+    ['incomplete platform metadata', { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: { youtube: {}, instagram_reels: {}, tiktok: {} } }]
+  ]) {
+    const strict = new LocalFirstQualityPipeline({}, { enabled: true });
+    strict.requestOllama = async () => JSON.stringify(malformed);
+    let rejectedResponse = false;
+    try { await strict.requestOllamaReview('Review this draft'); } catch (_) { rejectedResponse = true; }
+    if (!rejectedResponse) throw new Error(`Malformed Ollama review must fail closed: ${label}`);
+  }
+
   let savedSEO = null;
   const seoAgent = new SEOOptimizerAgent({
     getKeywordHistory: async () => [],
