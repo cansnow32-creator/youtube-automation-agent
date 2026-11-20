@@ -62,6 +62,12 @@ A scheduled row with an invalid `publish_time` is moved to `failed` with an expl
 
 Schedule creation is idempotent per production ID. SQLite performs the existence check and insert in one conditional write statement; concurrent callers reuse the winning schedule row. The regression test uses two independent SQLite connections and verifies that only one row is persisted for the production.
 
+## Persisting the accepted upload response
+
+As soon as `videos.insert` returns a video ID, the publisher stores that exact ID, URL, and metadata with the atomic `recordScheduleEntryUploadResult` database operation. The write only succeeds for the schedule currently claimed as `uploading` with no prior YouTube ID; repeating the same ID is idempotent, while a different ID cannot overwrite it. The schedule remains `uploaded` until the publishing flow completes its final status update.
+
+Thumbnail upload is a separate post-upload asset step. Its failure is recorded in `metadata.thumbnailUpload` and can be repaired through `POST /api/content/{productionId}/retry-thumbnail`; this endpoint uses the recorded video ID and never calls `videos.insert`. Caption upload failures are logged separately and do not trigger another video upload. If persistence or finalization becomes uncertain after YouTube accepted the video, the durable upload state and reconciliation flow take precedence over any retry.
+
 ## Recorded YouTube ID takes precedence
 
 If a schedule row contains a YouTube video ID, every publish attempt verifies that existing remote video before checking local narration/assets or considering a new upload. This allows recovery even if local assets later become unavailable. Schedules with a recorded YouTube ID cannot be rescheduled or deleted, and content approval cannot reset their state; reconcile the existing upload first. Regression coverage lives in `test/publishing-recorded-upload.test.js`.
