@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20 (PR metadata and PR #2 workflow runs refreshed during the latest session)
+Last reconciled: 2026-11-20 (live PR metadata and current PR #2 workflow query refreshed after provider cleanup changes)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
@@ -11,10 +11,10 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `5e07fa496bdba00dac7c54b77e1dedd81b13f790`; 0 workflow runs |
-| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head changes with continuity-document updates, so refresh live metadata each session |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `d606a1ab5742c8128c3b7653342a0431df27425d`; 0 workflow runs |
+| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; current head `d475efde95e1e02511773d90397442102f4470eb`; 0 check-runs |
 
-PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `5e07fa496bdba00dac7c54b77e1dedd81b13f790`; base remains `feat/local-first-quality-gate` at `9438d3d6e9015684cc074f832188e05ecbf3ab51`. PR #2 remains open/draft/unmerged, GitHub reports `mergeable: false`, and the PR-triggered workflow query returns zero runs for the current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `d606a1ab5742c8128c3b7653342a0431df27425d`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 (head `d475efde...`) remain open/draft/unmerged and each has zero check-runs on its current head. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
@@ -141,3 +141,13 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `5e
 - Commits: fb3cf772bfc2372cfdecc4df4669e1007d0a82ee (implementation), c3f81469c0b779eeefa0bf1ebdd8cd7c88e9575e (test), 660b967a0911be27e686bbfce6777ef74f663478 (test script).
 - Re-fetched source/test/package and confirmed expected cleanup and test inclusion. Static verification only; tests/lint not run. PR #2 current head has zero workflow runs.
 - Next: audit image provider internals for any secondary temp paths outside the requested imagePath, then continue the remaining production side-effect audit and obtain real CI. Do not merge.
+
+
+## Latest PR #2 provider artifact cleanup — 2026-11-20
+
+- Live GitHub state: PR #1 open/draft/unmerged, head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`, mergeable true, 0 check-runs. PR #2 open/draft/unmerged, head `d606a1ab5742c8128c3b7653342a0431df27425d`, base branch `feat/local-first-quality-gate`, mergeable false, 0 workflow runs. PR #3 open/draft/unmerged, head `d475efde95e1e02511773d90397442102f4470eb`, mergeable true, 0 check-runs.
+- Audited OpenAI/Gemini image-provider filesystem behavior. Provider responses are consumed in memory or streamed to a local output; no separate vendor-created local sidecar was found. However, direct writes could expose partial output across provider fallback. Each provider now writes to a UUID-scoped sibling attempt file; Sharp validates it, same-directory rename publishes only complete output, and failed attempts are removed. OpenAI image URL downloads now use stream `pipeline()` and remove partial output on stream failure.
+- Added `test/image-provider-atomic-output.test.js` and wired it into `npm test`. Commits: `4eb6577e7a33a996049be43bbf53852a6e1b6f43`, `f1ce5e961ebb86659d83bcfd09dab31d962f427c`, `9f932dd4cf950d9c62ae68c30f976346cd114e32`.
+- Found Gemini TTS could leave its `.pcm` sidecar when FFmpeg conversion failed. The sidecar is now removed in `finally`; conversion uses the constructor-injected FFmpeg runner for deterministic testing. Added success/failure tests in `test/gemini-tts-temp-cleanup.test.js`. Commits: `bb61213e5d2dd7427b5cf1f5c295fbfdf51e3863`, `d198c34ecf4be8805c7552f4dfa0e5ede4301484`, `d606a1ab5742c8128c3b7653342a0431df27425d`.
+- Re-fetched source, tests, and package script from GitHub and confirmed both tests are included in `npm test`. Static verification only: tests and lint have not been executed. GitHub reports zero workflow runs for current PR #2 head.
+- Next: continue production recovery/file-side-effect audit, then run CI via an authorized workflow dispatch/UI. No workflow-dispatch action is available in the connected GitHub tools. Preserve the stacked PR dependency; do not merge.
