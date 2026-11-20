@@ -64,9 +64,70 @@ async function testRecordedVideoCannotBeRescheduledOrDeleted() {
   );
 }
 
+async function testThumbnailFailureNeverRepeatsVideoUpload() {
+  const entry = {
+    id: 'schedule-thumbnail-retry',
+    productionId: 'production-thumbnail-retry',
+    title: 'Thumbnail recovery test',
+    publishTime: new Date(Date.now() - 60000).toISOString(),
+    status: 'uploading',
+    metadata: {
+      seo: { title: 'Thumbnail recovery test', description: 'A valid test description', tags: ['one', 'two', 'three'], categoryId: '22', defaultLanguage: 'en' },
+      video: { path: '/virtual/test.mp4' },
+      thumbnail: { path: '/virtual/test.jpg' }
+    }
+  };
+  let stored = { ...entry, metadata: { ...entry.metadata } };
+  let videoInsertCalls = 0;
+  let thumbnailCalls = 0;
+  const agent = Object.create(PublishingSchedulingAgent.prototype);
+  agent.publishQueue = [stored];
+  agent.activePublishes = new Map();
+  agent.logger = { info() {}, warn() {}, error() {}, success() {} };
+  agent.getVideoStream = async () => ({});
+  agent.uploadThumbnail = async videoId => {
+    thumbnailCalls += 1;
+    assert.equal(videoId, 'video-id-accepted');
+    if (thumbnailCalls === 1) throw new Error('thumbnail provider temporarily unavailable');
+    return { videoId, uploaded: true };
+  };
+  agent.youtube = {
+    videos: {
+      insert: async () => {
+        videoInsertCalls += 1;
+        return { data: { id: 'video-id-accepted' } };
+      }
+    }
+  };
+  agent.db = {
+    recordScheduleEntryUploadResult: async (id, videoId, metadata) => {
+      stored = {
+        ...stored, id, status: 'uploaded', youtubeId: videoId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`, metadata
+      };
+      return { ...stored };
+    },
+    updateScheduleEntry: async next => { stored = { ...next }; },
+    getLatestScheduleEntry: async () => ({ ...stored, metadata: { ...stored.metadata } })
+  };
+
+  const uploaded = await agent.uploadToYouTube(entry);
+  assert.equal(uploaded.id, 'video-id-accepted');
+  assert.equal(videoInsertCalls, 1);
+  assert.equal(stored.youtubeId, 'video-id-accepted');
+  assert.equal(stored.metadata.thumbnailUpload.status, 'failed');
+  assert.equal(stored.metadata.thumbnailUpload.retryRequired, true);
+
+  const repaired = await agent.retryThumbnailUpload(entry.productionId);
+  assert.equal(repaired.metadata.thumbnailUpload.status, 'uploaded');
+  assert.equal(videoInsertCalls, 1, 'thumbnail repair must never call videos.insert');
+  assert.equal(thumbnailCalls, 2);
+}
+
 async function main() {
   await testRecordedVideoIsReconciledBeforeLocalAssetChecks();
   await testRecordedVideoCannotBeRescheduledOrDeleted();
+  await testThumbnailFailureNeverRepeatsVideoUpload();
   process.stdout.write('Recorded YouTube upload protection tests passed\\n');
 }
 
