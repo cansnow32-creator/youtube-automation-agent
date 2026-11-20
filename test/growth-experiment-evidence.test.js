@@ -246,6 +246,32 @@ async function run() {
     assert.equal(result, saved);
   }
 
+  {
+    const { service } = makeService([]);
+    const experiment = {
+      id: 'legacy-restore-failure',
+      status: 'running',
+      currentArmId: 'variant',
+      arms: [
+        { id: 'control', isControl: true },
+        { id: 'variant', isControl: false }
+      ]
+    };
+    service.requireExperiment = async () => experiment;
+    service.applyArm = async () => { throw new Error('YouTube packaging update failed'); };
+    let saved = null;
+    service.db.updateGrowthExperiment = async (id, changes) => {
+      saved = { id, changes };
+      return saved;
+    };
+    await assert.rejects(
+      () => service.refreshUnlocked(experiment.id),
+      /YouTube packaging update failed/
+    );
+    assert.equal(saved.changes.status, 'action_required');
+    assert.match(saved.changes.result.restoreError, /YouTube packaging update failed/);
+  }
+
   process.stdout.write('Growth experiment evidence tests passed\\n');
 }
 
