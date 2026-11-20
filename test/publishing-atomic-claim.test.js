@@ -31,7 +31,7 @@ async function main() {
     getProductionBundle: async () => null,
     getShortClip: async () => ({
       id: 'short-1',
-      status: 'scheduled',
+      status: 'failed',
       approvedAt: new Date().toISOString(),
       inheritedEvidence: { ready: true }
     }),
