@@ -152,3 +152,10 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - Extended SQLite upload-claim regression and recorded-upload regression to cover durable ID persistence and thumbnail-only retry. Updated `docs/PUBLISHING_RECONCILIATION.md`.
 - PR #2 commits: `3d559b5b6ea378c9631deba21f2d09032a2642bb`, `494df89052ed02e102fa25251c0529ab7d053197`, `300af18343b7943af8a07e2aa1a7b34fdbd9623e`, `ff4575a3060b9179bb0610a7c8faec831a085549`, `4f7bfbbfbb454f22076ed8054e73b63cd32097ae`, `00d1d6a8f104b5b975f2e573a61cb162380f565e`, `4461e810eac8b628e9f92a0c59f03912be01dfba`, `dda9a4f15c71dd40ea268db4d1812ca0092a295f`, `a3ceb2bfc2116a6281c789f677b7ece364ab4ede`, `baed44026f5aa36664b970a9c71bd930545debdc`.
 - Static JavaScript syntax checks passed for all changed JS files and package JSON parsed. Runtime tests and lint have not been executed in this session; latest PR head workflow lookup returned no runs. PR #2 remains open/draft/unmerged. No merge, rebase, or base change performed.
+
+
+### Follow-up corrections — 2026-11-20
+- Demographic summaries no longer invent a default age/gender when one or both dimensions are unavailable; partial dimensions explicitly say which part is missing.
+- Organic traffic share now reports a percentage of total views (or null when no views exist), rather than returning an absolute view count. Device/traffic percentages are guarded against division by zero.
+- Follow-up PR #2 commits: `fa72d7fe9ac7dfae6b194bd9afbfeeef748e489e`, `12641146e1a93ff2b35c979f192e12882ba96095`.
+- Latest PR #2 head at this checkpoint: `12641146e1a93ff2b35c979f192e12882ba96095`; open/draft/unmerged, base unchanged, mergeable false, no workflow runs. Static JS syntax and package JSON checks passed; runtime tests/lint not run.
