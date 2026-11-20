@@ -243,6 +243,25 @@ async function run() {
       throw new Error('CI must provide FFmpeg for the real CineCode render smoke test');
     }
     if (ffmpegAvailable) {
+      let leaseChecks = 0;
+      const leaseLoss = Object.assign(new Error('generation lease lost during FFmpeg child process'), {
+        code: 'GENERATION_JOB_LEASE_LOST'
+      });
+      await assert.rejects(
+        runFFmpeg([
+          '-re', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=30',
+          '-t', '20', '-f', 'null', '-'
+        ], {
+          leaseCheckIntervalMs: 50,
+          assertLease: async () => {
+            leaseChecks += 1;
+            if (leaseChecks >= 2) throw leaseLoss;
+          }
+        }),
+        error => error.code === 'GENERATION_JOB_LEASE_LOST'
+      );
+      assert.ok(leaseChecks >= 2, 'FFmpeg lease monitor must check ownership while the child process is running');
+
       const realRenderer = new CineCodeRenderer({ logger: { info() {} } });
       const realRender = await realRenderer.renderScenes({
         visualAssets: [imageOne],
