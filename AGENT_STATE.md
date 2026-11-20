@@ -131,3 +131,13 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `5e
 - Static review and GitHub re-fetch only; test/lint have not run. Current head has zero PR-triggered workflow runs.
 - CI workflow supports workflow_dispatch, but connected GitHub actions exposed in this session provide read/rerun operations only; no workflow-dispatch action is available. Connector file commits have not triggered push workflows. Manual dispatch through the GitHub Actions UI remains required.
 - Remaining: add a corresponding lease-loss cleanup regression for visual image generation, inspect all partial provider-write paths, then obtain real CI execution. Do not merge.
+
+
+## PR #2 partial visual provider output cleanup — 2026-11-20
+
+- Static audit found generateVisualAssets() tracked image paths only after generateImage() returned. If a provider wrote partial bytes and then threw, the path was not tracked and the fallback simulation could leave an orphan image.
+- Changed the method to register each UUID-scoped attempt path before invoking the provider and remove all attempt paths on failure before running the existing simulation fallback.
+- Added test/visual-generation-artifact-cleanup.test.js, which simulates a provider writing partial bytes then throwing and verifies the partial output is removed; included in npm test.
+- Commits: fb3cf772bfc2372cfdecc4df4669e1007d0a82ee (implementation), c3f81469c0b779eeefa0bf1ebdd8cd7c88e9575e (test), 660b967a0911be27e686bbfce6777ef74f663478 (test script).
+- Re-fetched source/test/package and confirmed expected cleanup and test inclusion. Static verification only; tests/lint not run. PR #2 current head has zero workflow runs.
+- Next: audit image provider internals for any secondary temp paths outside the requested imagePath, then continue the remaining production side-effect audit and obtain real CI. Do not merge.
