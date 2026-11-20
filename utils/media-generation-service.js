@@ -177,6 +177,7 @@ class MediaGenerationService {
     }
 
     let remote;
+    let remoteTaskId = task?.external_task_id || null;
     const downloadPath = `${outputPath}.${crypto.randomUUID()}.part.mp4`;
     let outputPublished = false;
     try {
@@ -187,6 +188,7 @@ class MediaGenerationService {
         await this.assertNotCancelled(jobId, provider, task);
         remote = await provider.createTask(request);
       }
+      remoteTaskId = remote?.externalTaskId || remote?.id || remoteTaskId;
       await assertLease();
       task = await this.updateTask(task, {
         status: remote.status === 'succeeded' ? 'running' : remote.status,
@@ -209,6 +211,7 @@ class MediaGenerationService {
         await this.sleep(this.pollIntervalMs);
         await assertLease();
         remote = await provider.getTask(remote.externalTaskId, task.providerData || {});
+        remoteTaskId = remote?.externalTaskId || remote?.id || remoteTaskId;
         await assertLease();
         task = await this.updateTask(task, {
           status: remote.status === 'succeeded' ? 'running' : remote.status,
@@ -244,6 +247,9 @@ class MediaGenerationService {
         await assertLease();
       } catch (leaseError) {
         if (outputPublished) await fs.unlink(outputPath).catch(() => {});
+        if (remoteTaskId && !TERMINAL.has(remote?.status)) {
+          await this.cancelRemoteTaskOnLeaseLoss(provider, remoteTaskId);
+        }
         throw leaseError;
       }
       await this.updateTask(task, {
@@ -251,6 +257,20 @@ class MediaGenerationService {
         error: safeModelError(error), completedAt: new Date().toISOString()
       });
       throw error;
+    }
+  }
+
+  async cancelRemoteTaskOnLeaseLoss(provider, taskId) {
+    if (!taskId) return;
+    if (!provider?.capabilities?.cancellation || typeof provider.cancelTask !== 'function') {
+      this.logger.warn(`Lease lost while remote task ${taskId} was active; provider ${provider?.id || 'unknown'} does not support cancellation.`);
+      return;
+    }
+    try {
+      await provider.cancelTask(taskId);
+      this.logger.warn(`Cancelled remote task ${taskId} after generation lease loss.`);
+    } catch (error) {
+      this.logger.warn(`Could not cancel remote task ${taskId} after lease loss: ${safeModelError(error)}`);
     }
   }
 
