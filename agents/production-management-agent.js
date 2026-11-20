@@ -223,7 +223,7 @@ class ProductionManagementAgent {
           if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
             throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
           }
-          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
           return {
             captionsGenerated: Boolean(productionData.assets.captions?.path),
             finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
@@ -387,7 +387,7 @@ class ProductionManagementAgent {
           if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
             throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
           }
-          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {}, assertLease);
           return {
             captionsGenerated: Boolean(productionData.assets.captions?.path),
             finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
