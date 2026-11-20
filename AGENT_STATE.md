@@ -304,3 +304,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added a regression in `test/scene-edit-lease.test.js` proving missing renewal support returns `SCENE_EDIT_LOCK_UNAVAILABLE` / HTTP 503. Existing fixtures now provide a renewal method where required.
 - Commits: `6cfc05db9090e561e7c02ab8830ba928298c3733`, `25c0e2e47c86be8de5dc309ad2841a996a3394b5`.
 - Static JavaScript syntax and package JSON parsing passed. Runtime tests/lint not executed. Recheck PR #2 head and Actions; keep draft and do not merge.
+
+
+## Latest PR #2 generation lease heartbeat serialization — 2026-11-20
+
+- Audited generation-wide lease helper and found heartbeat renewals could overlap: `setInterval` assigned a fresh renewal promise without chaining the previous one. A slow renewal could remain in flight after `assertLease()` or `release()` awaited only the newest promise.
+- Updated `utils/generation-job-lease.js` to serialize heartbeat renewals through a promise chain. `assertLease()` and `release()` now wait for the complete queued chain, and queued callbacks stop after release or lease failure.
+- Added `testHeartbeatRenewalsAreSerialized()` to `test/generation-job-lease.test.js`; verifies a delayed renewal prevents overlap, queued renewal completes before lease assertion, and maximum concurrent renewals remains one. Existing npm test script already includes this test file.
+- Commits: `9e1fa4d2f0196fd79dd5afc783d0da7646d7f517`, `529baa9dd4740ddb73d1afdb0e727a226fd28821`.
+- Static JS syntax checks passed for generation lease and lease tests; `package.json` parses and includes generation lease test. Runtime tests/lint not executed. Keep PR #2 open/draft; do not merge or retarget.
