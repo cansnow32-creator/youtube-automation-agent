@@ -115,6 +115,7 @@ class CineCodeRenderer {
           ]);
           const outputStats = await fs.stat(temporaryPath);
           if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
+          await fs.rm(outputPath, { force: true });
           await fs.rename(temporaryPath, outputPath);
           const manifestTemp = `${manifestPath}.tmp`;
           await fs.writeFile(manifestTemp, JSON.stringify({
