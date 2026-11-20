@@ -7,6 +7,7 @@ const { ProductionManagementAgent } = require('../agents/production-management-a
 
 async function run() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-media-reuse-'));
+  const artifactPaths = new Set();
   try {
     const agent = Object.create(ProductionManagementAgent.prototype);
     let ttsCalls = 0;
@@ -32,6 +33,7 @@ async function run() {
       lastNarrationResult: { provider: 'test', status: 'ready' },
       async generateTTSAudio(_text, outputPath) {
         ttsCalls++;
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
         await fs.writeFile(outputPath, Buffer.from('valid-audio'));
         this.lastNarrationResult = { provider: 'test', status: 'ready', directionApplied: false };
         return outputPath;
@@ -41,45 +43,49 @@ async function run() {
       }
     };
 
-    const audio = await agent.generateAudioNarration(production);
+    const audioA = await agent.generateAudioNarration(production);
+    artifactPaths.add(audioA);
     assert.equal(ttsCalls, 1);
     assert.equal(production.assets.audio.sourceHash, crypto.createHash('sha256')
       .update(JSON.stringify({ ttsText: 'Narration text', audioDirection: {} })).digest('hex'));
     production.timeline.artifactAttemptId = 'attempt_b';
-    await agent.generateAudioNarration(production);
+    const reusedAudio = await agent.generateAudioNarration(production);
+    assert.equal(reusedAudio, audioA);
     assert.equal(ttsCalls, 1, 'valid narration should be reused across a new production attempt');
 
-    await fs.unlink(audio);
-    await agent.generateAudioNarration(production);
+    await fs.unlink(audioA);
+    const audioB = await agent.generateAudioNarration(production);
+    artifactPaths.add(audioB);
     assert.equal(ttsCalls, 2, 'missing narration must be regenerated');
+    assert.notEqual(audioB, audioA);
 
     agent.createSRTCaptions = async () => {
       captionCalls++;
       return '1\n00:00:00,000 --> 00:00:02,000\nCaption text\n';
     };
     production.timeline.artifactAttemptId = 'attempt_c';
-    const captions = await agent.generateCaptions(production);
+    const captionsA = await agent.generateCaptions(production);
+    artifactPaths.add(captionsA);
     assert.equal(captionCalls, 1);
     production.timeline.artifactAttemptId = 'attempt_d';
-    await agent.generateCaptions(production);
+    const reusedCaptions = await agent.generateCaptions(production);
+    assert.equal(reusedCaptions, captionsA);
     assert.equal(captionCalls, 1, 'valid captions should be reused across a new production attempt');
 
     production.script.hook.text = 'Changed hook';
-    await agent.generateCaptions(production);
+    const captionsB = await agent.generateCaptions(production);
+    artifactPaths.add(captionsB);
     assert.equal(captionCalls, 2, 'changed script must regenerate captions');
+    assert.notEqual(captionsB, captionsA);
 
-    await fs.writeFile(captions, 'not an SRT file');
+    await fs.writeFile(captionsB, 'not an SRT file');
     await agent.generateCaptions(production);
     assert.equal(captionCalls, 3, 'corrupted captions must be regenerated');
+    if (production.assets.audio?.path) artifactPaths.add(production.assets.audio.path);
+    if (production.assets.captions?.path) artifactPaths.add(production.assets.captions.path);
     console.log('Production media artifact reuse tests passed.');
   } finally {
-    const audioPath = path.join(__dirname, '..', 'data', 'audio');
-    const captionPath = path.join(__dirname, '..', 'data', 'captions');
-    const productionFiles = [
-      production.assets.audio?.path,
-      production.assets.captions?.path
-    ].filter(Boolean);
-    await Promise.all(productionFiles.flatMap(file => [
+    await Promise.all([...artifactPaths].flatMap(file => [
       fs.rm(file, { force: true }),
       fs.rm(file + '.pcm', { force: true }),
       fs.rm(file + '.info', { force: true })
