@@ -66,3 +66,10 @@ Performance insights expose separate `surfaceBreakdowns.long_form` and `surfaceB
 Recommendations generated from the fixed 7-day cohort retain the oldest and latest source measurement timestamps, the cohort sample count, and a 90-day maximum evidence age. The oldest contributing cohort timestamp is used conservatively: one old measurement can make the recommendation stale even if newer measurements are also present.
 
 Approved recommendations remain in the review history, but future script and packaging generation only consume recommendations with at least two timestamped samples whose oldest measurement is no more than 90 days old. Missing, invalid, future-dated, or legacy evidence without timestamps is treated as unknown and is not applied. This is a usage safeguard, not an automatic approval/rejection or deletion; operators can review refreshed evidence and approve a current recommendation separately. The 90-day threshold is a policy constant in the learning utility, not a statistical significance claim.
+
+
+## Applied-learning feedback quality
+
+Application feedback is grouped by recommendation and content surface. Shorts and long-form results are never combined into one recommendation signal. Only real, dated 7-day snapshots with at least 1,000 impressions and a stable production/video identity are eligible; repeated snapshots for one production count once, using the latest measurement.
+
+A positive or negative observational signal requires at least two distinct productions, at least 2,000 combined impressions, and two measured baseline deltas. The median delta must be at least +5% or at most -5%; otherwise the result remains inconclusive. Feedback whose latest linked measurement is older than 90 days is marked stale and cannot retain a positive/negative status. This feedback is descriptive only and never auto-approves, rejects, or causally validates a recommendation.
