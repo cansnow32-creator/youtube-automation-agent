@@ -44,6 +44,14 @@ Latest known PR #2 head at continuity setup: e47c569dc6e8bd4b4617d094a7b93dfcc25
 - Local Ollama, FFmpeg on the user's PC, YouTube OAuth and full end-to-end production have not been verified from cloud.
 - No secrets belong in Git-tracked files.
 
+## PR #3 — Continuity foundation
+
+- PR: https://github.com/cansnow32-creator/youtube-automation-agent/pull/3
+- Branch: feat/agent-continuity → master
+- Head at snapshot: 990e079a78ee3a9a044637b9771a8f5df3f3b73c
+- Open, draft, unmerged. No associated check runs observed.
+- GitHub Actions workflow file is committed, but no run was triggered by the connector-authored commits. Do not report it as passed.
+
 ## Current continuity branch
 
 - Branch: feat/agent-continuity
