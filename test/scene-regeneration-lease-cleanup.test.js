@@ -29,7 +29,7 @@ async function run() {
     await assert.rejects(
       service.regenerateNarrationUnlocked('production-1', 'scene-1', { confirmCost: true }, async () => {
         checks += 1;
-        if (checks >= 2) throw Object.assign(new Error('lease lost'), { code: 'SCENE_EDIT_LEASE_LOST' });
+        if (checks >= 3) throw Object.assign(new Error('lease lost'), { code: 'SCENE_EDIT_LEASE_LOST' });
       }),
       error => error.code === 'SCENE_EDIT_LEASE_LOST'
     );
