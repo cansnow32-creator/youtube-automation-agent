@@ -42,17 +42,18 @@ const generationOnlyAttributes = engine.extractAttributes(
 assert.deepEqual(generationOnlyAttributes.appliedLearnings, [], 'generation guidance alone must not count as applied packaging');
 assert.equal(generationOnlyAttributes.packagingChangeHistory[0].title, 'Updated title');
 
-const applied = engine.extractAppliedLearnings({
-  packagingLearning: { recommendationId: 'pack-1' },
-  approvedScriptLearnings: [
-    { recommendationId: 'hook-1', category: 'hookLength' },
-    { recommendationId: 'format-1', category: 'format' },
-    { recommendationId: 'hook-1', category: 'hookLength' }
-  ]
-}, [getAppliedPackagingLearning(experiment, 1, 0)]);
-assert.deepEqual(applied.map(item => item.recommendationId), ['pack-1', 'hook-1', 'format-1']);
+const scriptGuidance = [
+  { recommendationId: 'hook-1', category: 'hookLength', proposedChange: { target: 'future_scripts' } },
+  { recommendationId: 'format-1', category: 'format', proposedChange: { target: 'future_plans' } },
+  { recommendationId: 'hook-1', category: 'hookLength', proposedChange: { target: 'future_scripts' } }
+];
+const applied = engine.extractAppliedLearnings({}, [getAppliedPackagingLearning(experiment, 1, 0)]);
+assert.deepEqual(applied.map(item => item.recommendationId), ['pack-1']);
 assert.deepEqual(applied[0].appliedTo, ['title']);
-assert.deepEqual(applied[1].appliedTo, ['script']);
+const guidance = engine.extractLearningGuidance(scriptGuidance);
+assert.deepEqual(guidance.map(item => item.recommendationId), ['hook-1', 'format-1']);
+assert.ok(guidance.every(item => item.status === 'provided_to_generation_not_verified_as_applied'),
+  'script guidance must remain separately auditable and must not be reported as verified application');
 
 const snapshot = (id, recommendationId, category, delta, impressions = 1200, window = '7d') => ({
   id,
