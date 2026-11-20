@@ -911,37 +911,39 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async generateSlideshowVideo(script, visualAssets, audioPath, outputPath) {
+  async generateSlideshowVideo(script, visualAssets, audioPath, outputPath, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Creating slideshow video...');
 
-    if (!(await checkFFmpeg())) {
-      throw new Error(ffmpegInstallHint());
-    }
+    if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
+    await assertLease();
 
     const { chromium } = require('playwright');
     const browser = await chromium.launch();
     const outputStem = path.basename(outputPath, path.extname(outputPath));
     const slidesDir = path.join(path.dirname(outputPath), `${outputStem}_slides`);
+    const videoPath = outputPath.replace('.mp4', '_visual.mp4');
 
     try {
+      await assertLease();
       const page = await browser.newPage();
       await page.setViewportSize({ width: 1920, height: 1080 });
 
-      // Create HTML for slideshow (only real image files can be embedded)
       const imageAssets = await this.filterImageAssets(visualAssets);
+      await assertLease();
       await page.setContent(this.createSlideshowHTML(script, imageAssets));
+      await assertLease();
 
-      // Freeze CSS transitions/animations so each still is captured fully rendered
       await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
-      await page.waitForTimeout(1000); // Wait for assets to load
+      await page.waitForTimeout(1000);
+      await assertLease();
 
-      // Capture ONE still per slide instead of screenshotting at 30fps —
-      // FFmpeg turns the stills into a crossfaded video in seconds.
       const slideCount = await page.evaluate(() => document.querySelectorAll('.slide').length);
       await fs.mkdir(slidesDir, { recursive: true });
 
       const stills = [];
       for (let i = 0; i < slideCount; i++) {
+        await assertLease();
         await page.evaluate((index) => {
           document.querySelectorAll('.slide').forEach((slide, s) => {
             slide.classList.toggle('active', s === index);
@@ -951,21 +953,25 @@ class AIVideoGenerator {
         const stillPath = path.join(slidesDir, `slide_${String(i).padStart(3, '0')}.png`);
         await page.screenshot({ path: stillPath });
         stills.push(stillPath);
+        await assertLease();
       }
 
-      const videoPath = outputPath.replace('.mp4', '_visual.mp4');
       const duration = await this.resolveSlideshowDuration(script, audioPath);
-      await this.renderSlidesToVideo(stills, duration, videoPath);
-
-      // Add audio
-      await this.addAudioToVideo(videoPath, audioPath, outputPath);
-
+      await assertLease();
+      await this.renderSlidesToVideo(stills, duration, videoPath, assertLease);
+      await assertLease();
+      await this.addAudioToVideo(videoPath, audioPath, outputPath, { assertLease });
+      await assertLease();
       return outputPath;
+    } catch (error) {
+      await removeAttemptFiles([videoPath, outputPath + '.info']);
+      throw error;
     } finally {
       await browser.close().catch(() => {});
       await this.cleanupDirectory(slidesDir);
     }
   }
+
 
   async resolveSlideshowDuration(script, audioPath) {
     try {
@@ -976,10 +982,9 @@ class AIVideoGenerator {
     }
   }
 
-  async renderSlidesToVideo(stills, totalDuration, videoPath) {
-    if (stills.length === 0) {
-      throw new Error('No slides to render');
-    }
+  async renderSlidesToVideo(stills, totalDuration, videoPath, assertLease = async () => {}) {
+    await assertLease();
+    if (stills.length === 0) throw new Error('No slides to render');
 
     const fade = 0.5;
     const overlapDuration = fade * Math.max(0, stills.length - 1);
@@ -987,37 +992,37 @@ class AIVideoGenerator {
 
     const args = ['-y'];
     for (const still of stills) {
+      await assertLease();
       args.push('-loop', '1', '-t', perSlide.toFixed(2), '-framerate', '30', '-i', still);
     }
 
     if (stills.length === 1) {
       args.push('-vf', 'format=yuv420p', '-c:v', 'libx264', videoPath);
-      await runFFmpeg(args);
-      return videoPath;
+    } else {
+      const filters = [];
+      let prev = '[0:v]';
+      for (let i = 1; i < stills.length; i++) {
+        const out = `[v${i}]`;
+        const offset = (i * (perSlide - fade)).toFixed(2);
+        filters.push(`${prev}[${i}:v]xfade=transition=fade:duration=${fade}:offset=${offset}${out}`);
+        prev = out;
+      }
+      filters.push(`${prev}format=yuv420p[vfinal]`);
+      args.push(
+        '-filter_complex', filters.join(';'),
+        '-map', '[vfinal]',
+        '-c:v', 'libx264',
+        '-r', '30',
+        videoPath
+      );
     }
 
-    // Chain crossfades: transition k starts fade seconds before slide k ends
-    const filters = [];
-    let prev = '[0:v]';
-    for (let i = 1; i < stills.length; i++) {
-      const out = `[v${i}]`;
-      const offset = (i * (perSlide - fade)).toFixed(2);
-      filters.push(`${prev}[${i}:v]xfade=transition=fade:duration=${fade}:offset=${offset}${out}`);
-      prev = out;
-    }
-    filters.push(`${prev}format=yuv420p[vfinal]`);
-
-    args.push(
-      '-filter_complex', filters.join(';'),
-      '-map', '[vfinal]',
-      '-c:v', 'libx264',
-      '-r', '30',
-      videoPath
-    );
-
+    await assertLease();
     await runFFmpeg(args);
+    await assertLease();
     return videoPath;
   }
+
 
   async filterImageAssets(visualAssets = []) {
     const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -1289,12 +1294,19 @@ class AIVideoGenerator {
   }
 
   async addAudioToVideo(videoPath, audioPath, outputPath, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    await assertLease();
     const hasRealAudio = await this.isUsableAudioFile(audioPath);
+    await assertLease();
 
     if (!hasRealAudio) {
       if (options.allowSilent === true) {
         this.logger.warn('Creating an intentionally silent video from an operator-confirmed override.');
-        if (videoPath !== outputPath) await fs.copyFile(videoPath, outputPath);
+        if (videoPath !== outputPath) {
+          await assertLease();
+          await fs.copyFile(videoPath, outputPath);
+          await assertLease();
+        }
         return outputPath;
       }
       const error = new Error('Narration audio is required. Regenerate narration or explicitly confirm an intentional silent video.');
@@ -1302,21 +1314,26 @@ class AIVideoGenerator {
       throw error;
     }
 
-    // FFmpeg cannot write to its own input, so mux to a temp file when paths collide
     const muxPath = outputPath === videoPath
       ? outputPath.replace(/\.mp4$/i, '_muxed.mp4')
       : outputPath;
-
     const videoInput = options.loopVideo ? ['-stream_loop', '-1', '-i', videoPath] : ['-i', videoPath];
-    await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath]);
-
-    if (muxPath !== outputPath) {
-      await fs.rename(muxPath, outputPath);
+    try {
+      await assertLease();
+      await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath]);
+      await assertLease();
+      if (muxPath !== outputPath) {
+        await fs.rename(muxPath, outputPath);
+        await assertLease();
+      }
+      this.logger.info('Audio added to video successfully');
+      return outputPath;
+    } catch (error) {
+      await removeAttemptFiles([muxPath, outputPath === videoPath ? null : outputPath]);
+      throw error;
     }
-
-    this.logger.info('Audio added to video successfully');
-    return outputPath;
   }
+
 
   async isUsableAudioFile(audioPath) {
     if (typeof audioPath !== 'string' || audioPath.endsWith('.info')) {
@@ -1423,20 +1440,27 @@ class AIVideoGenerator {
     return paths;
   }
 
-  async simulateVideoGeneration(script, visualAssets, audioPath, outputPath) {
+  async simulateVideoGeneration(script, visualAssets, audioPath, outputPath, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Simulating video generation...');
-    
+
     const infoPath = outputPath + '.info';
-    await fs.writeFile(infoPath, JSON.stringify({
-      message: 'AI video would be generated here',
-      script: script.title,
-      visualAssets: visualAssets.length,
-      audioPath: audioPath,
-      timestamp: new Date().toISOString()
-    }, null, 2));
-    
-    return infoPath;
+    try {
+      await fs.writeFile(infoPath, JSON.stringify({
+        message: 'AI video would be generated here',
+        script: script.title,
+        visualAssets: visualAssets.length,
+        audioPath: audioPath,
+        timestamp: new Date().toISOString()
+      }, null, 2));
+      await assertLease();
+      return infoPath;
+    } catch (error) {
+      await removeAttemptFiles([infoPath]);
+      throw error;
+    }
   }
+
 
   async simulateThumbnailGeneration(script, style) {
     this.logger.info('Simulating thumbnail generation...');
