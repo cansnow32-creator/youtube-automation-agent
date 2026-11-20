@@ -139,3 +139,16 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - `approveContent()` refuses to reset approval/schedule state when the schedule already has a YouTube ID.
 - Added `test/publishing-recorded-upload.test.js` and wired it into `npm test`; covers existing-ID reconciliation before asset checks and reschedule/delete protection.
 - Static JavaScript syntax checks passed for publishing service, API and regression test; package JSON parsed. Runtime tests/lint were not executed.
+
+
+## 2026-11-20 — YouTube analytics reliability and accepted-upload persistence
+
+- Analytics collection now uses independent settled requests so an optional demographics, traffic, device, outcome, or engagement endpoint failure does not discard other successful YouTube API metrics. Missing metrics remain null/empty and are accompanied by per-section availability/error metadata; simulated demographics are no longer substituted as if they were real.
+- If no core views or watch-time result is available, the fallback remains explicitly marked `simulated_fallback` and remains excluded from channel learning. Performance scoring now excludes unavailable metrics from its denominator rather than producing `NaN`.
+- Daily CTR is now weighted by daily impressions rather than taking a simple average of daily percentages.
+- Added `test/analytics-partial-data.test.js` and wired it into `npm test`; covers partial API failures, demographic partial availability, impression-weighted CTR, and explicit simulated fallback.
+- Added atomic `Database.recordScheduleEntryUploadResult()`: the accepted YouTube video ID/URL is persisted only while the schedule is claimed as `uploading` with no existing ID. Same-ID retries are idempotent; a conflicting ID cannot overwrite the accepted upload.
+- `uploadToYouTube()` now requires that atomic persistence before proceeding to thumbnail/caption work. Thumbnail failures remain separate and repair through the existing retry-thumbnail endpoint without another `videos.insert` call.
+- Extended SQLite upload-claim regression and recorded-upload regression to cover durable ID persistence and thumbnail-only retry. Updated `docs/PUBLISHING_RECONCILIATION.md`.
+- PR #2 commits: `3d559b5b6ea378c9631deba21f2d09032a2642bb`, `494df89052ed02e102fa25251c0529ab7d053197`, `300af18343b7943af8a07e2aa1a7b34fdbd9623e`, `ff4575a3060b9179bb0610a7c8faec831a085549`, `4f7bfbbfbb454f22076ed8054e73b63cd32097ae`, `00d1d6a8f104b5b975f2e573a61cb162380f565e`, `4461e810eac8b628e9f92a0c59f03912be01dfba`, `dda9a4f15c71dd40ea268db4d1812ca0092a295f`, `a3ceb2bfc2116a6281c789f677b7ece364ab4ede`, `baed44026f5aa36664b970a9c71bd930545debdc`.
+- Static JavaScript syntax checks passed for all changed JS files and package JSON parsed. Runtime tests and lint have not been executed in this session; latest PR head workflow lookup returned no runs. PR #2 remains open/draft/unmerged. No merge, rebase, or base change performed.
