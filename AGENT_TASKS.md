@@ -174,3 +174,9 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - Added test/channel-learning-missing-metrics.test.js for partial analytics normalization, no false recommendations from missing CTR/retention, and exclusion of unmeasured cohorts. Wired it into npm test.
 - PR #2 commits: d32a6be3a82312277a4e3f413b4e199cba032937, b7c09132e271dbe49807cac67bccc29c422028e9, de0fcafa2c94782cf866b2c158dbc88ce58975b4.
 - Static JavaScript syntax checks passed for the learning engine and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint not run. PR #2 remains open/draft/unmerged; no merge, rebase, or base change.
+### Approved performance learnings now reach script writing — 2026-11-20
+- Added getApprovedScriptLearnings() in utils/packaging-learning.js. It selects only operator-approved format, length, hookLength, and retention recommendations with future_plans/future_scripts scope; pending/rejected, current-video-only, packaging-only, and unrelated audience-demand learnings are excluded.
+- The production generation strategy now attaches sanitized approvedScriptLearnings alongside packagingLearning. Script-writer AI prompt receives these as proportionate hook/pacing/length/format guidance while preserving topic, audience, factual accuracy, and channel constraints.
+- Added test/approved-script-learning.test.js and wired it into npm test.
+- PR #2 commits: 82e37d7945a214a7647187fb1f24f22a79718d62, a8834cdac75085f0b73043b6ee04f57226bce2f4, fa7078aba6741995f6dfd9d1d47efe8ae1e365e1, e2ffa66ec0034a6cf69f8088d6e5cacf7e8b4b03, a8421f88803d288ed48d961bace6b86c43cceb9c.
+- Static JS syntax checks passed for utility, script agent, index route/generation file, and regression test; package JSON parsed. Runtime tests/lint not run. No merge/rebase/base change.
