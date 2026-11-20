@@ -71,6 +71,45 @@ async function run() {
     }));
     assert.equal(seo.title, 'SEO title');
 
+
+    const validVideoPath = path.join(tempDir, 'valid-final.mp4');
+    const cleanVideoPath = path.join(tempDir, 'valid-clean.mp4');
+    const placeholderPath = path.join(tempDir, 'placeholder.mp4.assembly.json');
+    const invalidVideoPath = path.join(tempDir, 'invalid-final.mp4');
+    await Promise.all([
+      fs.writeFile(validVideoPath, 'encoded-video'),
+      fs.writeFile(cleanVideoPath, 'clean-encoded-video'),
+      fs.writeFile(placeholderPath, JSON.stringify({ message: 'simulation only' })),
+      fs.writeFile(invalidVideoPath, 'not an encoded video')
+    ]);
+    const mediaRecovery = new GenerationRecoveryService(db, {
+      maxAttempts: 1,
+      getMediaInfo: async filePath => {
+        if (filePath === invalidVideoPath) throw new Error('invalid media container');
+        return { duration: 12, width: 1920, height: 1080, hasAudio: true };
+      }
+    });
+    assert.equal(await mediaRecovery.validateArtifact('production', {
+      id: 'production-valid',
+      assets: { finalVideo: { path: validVideoPath, cleanPath: cleanVideoPath } }
+    }), true, 'a real encoded MP4 and its clean source can be reused');
+    assert.equal(await mediaRecovery.validateArtifact('production', {
+      id: 'production-placeholder',
+      assets: { finalVideo: { path: placeholderPath } }
+    }), false, 'a non-MP4 simulation sidecar must never satisfy a production checkpoint');
+    assert.equal(await mediaRecovery.validateArtifact('production', {
+      id: 'production-invalid',
+      assets: { finalVideo: { path: invalidVideoPath } }
+    }), false, 'a file with an MP4 extension but invalid media must not be reused');
+    assert.equal(await mediaRecovery.validateArtifact('production', {
+      id: 'production-simulated',
+      assets: { finalVideo: { path: validVideoPath, simulated: true } }
+    }), false, 'explicitly simulated video artifacts must not be reused');
+    assert.equal(await mediaRecovery.validateArtifact('production', {
+      id: 'production-missing-clean',
+      assets: { finalVideo: { path: validVideoPath, cleanPath: path.join(tempDir, 'missing-clean.mp4') } }
+    }), false, 'a declared clean source must also exist and be valid');
+
     await db.saveGenerationCheckpoint('job-2', 'strategy', {
       status: 'completed',
       artifact: { topic: '' }
