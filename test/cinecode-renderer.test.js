@@ -47,6 +47,37 @@ async function run() {
     assert.match(filter, /fade=t=in/);
     assert.match(filter, /fade=t=out/);
     assert.equal(rendered.clips[1].label, 'Payoff');
+    assert.equal(commands.length, 2, 'first pass should render both scenes');
+
+    // A retry with unchanged source images and render settings must reuse both clips.
+    await renderer.renderScenes({
+      visualAssets: [imageOne, imageTwo],
+      totalDuration: 18,
+      outputDir: directory,
+      outputPrefix: 'test-film',
+      resolution: '720p',
+      aspectRatio: '16:9',
+      concept: {
+        visualDirection: { palette: 'warm amber sunset' },
+        scenePlan: [
+          { purpose: 'Opening', visual: 'Wide establishing shot' },
+          { purpose: 'Payoff', visual: 'Close-up reveal' }
+        ]
+      }
+    });
+    assert.equal(commands.length, 2, 'completed scenes should not render again on retry');
+
+    // A changed render setting invalidates the cache for affected scenes.
+    await renderer.renderScenes({
+      visualAssets: [imageOne, imageTwo],
+      totalDuration: 18,
+      outputDir: directory,
+      outputPrefix: 'test-film',
+      resolution: '720p',
+      aspectRatio: '16:9',
+      concept: { visualDirection: { palette: 'cool blue' }, scenePlan: [] }
+    });
+    assert.equal(commands.length, 4, 'changed visual direction must invalidate cached renders');
 
     const placeholder = new CineCodeRenderer({ runFFmpeg: async () => {}, logger: { info() {} } });
     await assert.rejects(() => placeholder.renderScenes({
