@@ -705,7 +705,7 @@ class ProductionManagementAgent {
     // Fallback to original processing
     const productionThumbnailPath = path.join(
       __dirname, '..', 'data', 'assets',
-      `thumbnail_${Date.now()}.jpg`
+      `thumbnail_${Date.now()}_${crypto.randomUUID()}.jpg`
     );
 
     if (thumbnail.path && await fs.access(thumbnail.path).then(() => true).catch(() => false)) {
@@ -1297,6 +1297,7 @@ class ProductionManagementAgent {
         const captionTempPath = `${captionedPath}.rendering.mp4`;
         const captionManifestPath = `${captionedPath}.render.json`;
         const manifestTempPath = `${captionManifestPath}.tmp`;
+        await assertLease();
         const [sourceHash, captionsHash] = await Promise.all([
           new Promise((resolve, reject) => {
             const hash = crypto.createHash('sha256');
@@ -1313,6 +1314,7 @@ class ProductionManagementAgent {
             stream.on('end', () => resolve(hash.digest('hex')));
           })
         ]);
+        await assertLease();
         const captionFingerprint = crypto.createHash('sha256').update(JSON.stringify({
           sourceHash, captionsHash, subtitleDirection, rendererVersion: 1,
           codec: 'libx264', preset: 'veryfast', crf: 20
@@ -1326,12 +1328,15 @@ class ProductionManagementAgent {
           if (manifest.fingerprint === captionFingerprint && cachedStats.isFile() && cachedStats.size > 0) {
             const cachedInfo = await getMediaInfo(captionedPath);
             if (cachedInfo.width && cachedInfo.height && Number.isFinite(cachedInfo.duration) && cachedInfo.duration > 0) {
-              await runFFmpeg(['-v', 'error', '-i', captionedPath, '-f', 'null', '-']);
+              await assertLease();
+              await runFFmpeg(['-v', 'error', '-i', captionedPath, '-f', 'null', '-'], { assertLease });
+              await assertLease();
               captionCached = true;
               this.logger.info('Reusing validated caption-rendered video.');
             }
           }
-        } catch (_cacheError) {
+        } catch (cacheError) {
+          if (isLeaseFailure(cacheError)) throw cacheError;
           captionCached = false;
         }
         if (captionCached && captionedPath !== productionData.assets.finalVideo?.path) {
@@ -1352,7 +1357,7 @@ class ProductionManagementAgent {
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
             '-c:a', 'copy', '-movflags', '+faststart', captionTempPath
-          ]);
+          ], { assertLease });
           await assertLease();
           const captionedStats = await fs.stat(captionTempPath);
           if (!captionedStats.isFile() || captionedStats.size <= 0) {
@@ -1362,7 +1367,7 @@ class ProductionManagementAgent {
           if (!captionedInfo.width || !captionedInfo.height || !Number.isFinite(captionedInfo.duration) || captionedInfo.duration <= 0) {
             throw new Error('Subtitle renderer returned a video without valid media metadata');
           }
-          await runFFmpeg(['-v', 'error', '-i', captionTempPath, '-f', 'null', '-']);
+          await runFFmpeg(['-v', 'error', '-i', captionTempPath, '-f', 'null', '-'], { assertLease });
           await assertLease();
           await fs.rm(captionedPath, { force: true });
           await fs.rename(captionTempPath, captionedPath);
@@ -1381,11 +1386,13 @@ class ProductionManagementAgent {
       }
 
       // Validate the actual encoded output, not only the existence of a non-empty file.
+      await assertLease();
       const stats = await fs.stat(finalVideoPath);
       if (!stats.isFile() || stats.size <= 0) {
         throw new Error('Final video assembly returned an empty output file');
       }
       const finalMediaInfo = await getMediaInfo(finalVideoPath);
+      await assertLease();
       if (!finalMediaInfo.width || !finalMediaInfo.height || !Number.isFinite(finalMediaInfo.duration) || finalMediaInfo.duration <= 0) {
         throw new Error('Final video is missing a valid video stream or duration');
       }
@@ -1399,10 +1406,12 @@ class ProductionManagementAgent {
         throw new Error('Clean source video was not preserved separately from the final captioned video');
       }
       const cleanMediaInfo = await getMediaInfo(producedPath);
+      await assertLease();
       if (!cleanMediaInfo.width || !cleanMediaInfo.height || !Number.isFinite(cleanMediaInfo.duration) || cleanMediaInfo.duration <= 0) {
         throw new Error('Clean source video is missing a valid video stream or duration');
       }
 
+      await assertLease();
       productionData.assets.finalVideo = {
         path: finalVideoPath,
         cleanPath: producedPath,
