@@ -9,6 +9,33 @@ const { ProvenanceService } = require('./provenance-service');
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
+async function replaceFileWithRollback(tempPath, destinationPath, token = crypto.randomUUID()) {
+  const backupPath = `${destinationPath}.${token}.backup`;
+  let backedUp = false;
+  try {
+    await fs.rename(destinationPath, backupPath);
+    backedUp = true;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  try {
+    await fs.rename(tempPath, destinationPath);
+  } catch (error) {
+    if (backedUp) {
+      try {
+        await fs.rename(backupPath, destinationPath);
+      } catch (restoreError) {
+        error.restoreError = restoreError;
+        error.message += `; previous output restore also failed: ${restoreError.message}`;
+      }
+    }
+    throw error;
+  }
+
+  if (backedUp) await fs.unlink(backupPath).catch(() => {});
+}
+
 function textFromSection(section = {}) {
   if (typeof section.content === 'string') return /\[[^\]]*\]/.test(section.content) ? '' : section.content;
   if (Array.isArray(section.content)) return section.content.filter(item => typeof item === 'string' && !/\[[^\]]*\]/.test(item)).join(' ');
@@ -674,8 +701,7 @@ class SceneRepairService {
         })), visualTempPath);
         await validateVideo(visualTempPath);
         await assertLease();
-        await fs.unlink(visualPath).catch(() => {});
-        await fs.rename(visualTempPath, visualPath);
+        await replaceFileWithRollback(visualTempPath, visualPath, attemptId);
       } catch (error) {
         await fs.unlink(visualTempPath).catch(() => {});
         throw error;
@@ -699,8 +725,7 @@ class SceneRepairService {
         await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
         await validateVideo(finalTempPath);
         await assertLease();
-        await fs.unlink(finalPath).catch(() => {});
-        await fs.rename(finalTempPath, finalPath);
+        await replaceFileWithRollback(finalTempPath, finalPath, attemptId);
       } catch (error) {
         await fs.unlink(finalTempPath).catch(() => {});
         throw error;
@@ -712,8 +737,7 @@ class SceneRepairService {
       const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
       await fs.writeFile(captionsTempPath, captions);
       await assertLease();
-      await fs.unlink(captionsPath).catch(() => {});
-      await fs.rename(captionsTempPath, captionsPath);
+      await replaceFileWithRollback(captionsTempPath, captionsPath, attemptId);
     }
     const stats = await fs.stat(finalPath);
     const previousPath = bundle.assets?.finalVideo?.path || null;
@@ -830,8 +854,7 @@ class SceneRepairService {
       const duration = await this.getMediaDuration(tempPath);
       if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
       await runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
-      await fs.unlink(outputPath).catch(() => {});
-      await fs.rename(tempPath, outputPath);
+      await replaceFileWithRollback(tempPath, outputPath);
       return outputPath;
     } catch (error) {
       await fs.unlink(tempPath).catch(() => {});
