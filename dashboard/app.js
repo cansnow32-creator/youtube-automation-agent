@@ -290,7 +290,7 @@ function renderScriptQualityReviews(reviews) {
         <button class="button secondary small" data-quality-decision="revision_requested" data-quality-review-id="${escapeHTML(review.id)}">Request revision</button>
         <button class="button secondary small" data-quality-decision="rejected" data-quality-review-id="${escapeHTML(review.id)}">Reject</button>
         <button class="button primary small" data-quality-decision="human_approved" data-quality-review-id="${escapeHTML(review.id)}">Human approve</button>
-      </div>` : `<p class="quality-review-final-note">Final human decision: ${escapeHTML(label(review.status))}${review.decision_notes ? ' · ' + escapeHTML(review.decision_notes) : ''}</p>`}
+      </div>` : `<p class="quality-review-final-note">Final human decision: ${escapeHTML(label(review.status))}${review.decision_notes ? ' · ' + escapeHTML(review.decision_notes) : ''}</p>${review.status === 'human_approved' && review.job_id ? `<button class="button primary small" data-continue-approved-script="${escapeHTML(review.id)}">Continue production with approved draft</button>` : ''}`}
     </article>`;
   }).join('');
 }
@@ -1509,6 +1509,24 @@ document.addEventListener('click', async event => {
     } catch (error) {
       showToast(error.message, 'error');
       qualityResubmit.disabled = false;
+    }
+    return;
+  }
+
+  const continueApproved = event.target.closest('[data-continue-approved-script]');
+  if (continueApproved) {
+    if (!confirm('Continue production using this exact saved, human-approved script? Thumbnail, SEO and video production will run. This action will not schedule or publish the video.')) return;
+    continueApproved.disabled = true;
+    try {
+      await api('/api/script-quality-reviews/' + encodeURIComponent(continueApproved.dataset.continueApprovedScript) + '/continue', {
+        method: 'POST',
+        body: '{}'
+      });
+      showToast('Production resumed with the approved script. Publishing remains disabled.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      continueApproved.disabled = false;
     }
     return;
   }
