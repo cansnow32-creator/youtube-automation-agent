@@ -37,6 +37,18 @@ async function main() {
     await insertSchedule(db, 'schedule-absent');
     await insertSchedule(db, 'schedule-race');
     await insertSchedule(db, 'schedule-fresh-uploading', 'uploading', 'Expected title', new Date().toISOString());
+    for (const [id, videoId] of [
+      ['schedule-recorded-valid', 'knownGood01'],
+      ['schedule-recorded-channel', 'wrongCHAN01'],
+      ['schedule-recorded-title', 'wrongTITL01']
+    ]) {
+      await db.executeQuery(
+        `INSERT INTO publish_schedule
+          (id, production_id, title, publish_time, status, priority, metadata, youtube_id, upload_started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, id, 'Expected title', new Date().toISOString(), 'uploading', 50, JSON.stringify({ seo: { title: 'Expected title' } }), videoId, new Date(Date.now() - 11 * 60 * 1000).toISOString()]
+      );
+    }
 
     const agent = Object.create(PublishingSchedulingAgent.prototype);
     agent.db = db;
@@ -62,6 +74,20 @@ async function main() {
         list: async () => ({ data: { items: [{ id: 'owned-channel' }] } })
       }
     };
+
+    const knownUpload = await agent.reconcileUploadedVideo(await db.getScheduleEntry('schedule-recorded-valid'));
+    assert.equal(knownUpload.status, 'published');
+    assert.equal(knownUpload.youtubeId, 'knownGood01');
+    await assert.rejects(
+      agent.reconcileUploadedVideo(await db.getScheduleEntry('schedule-recorded-channel')),
+      error => error.code === 'YOUTUBE_CHANNEL_MISMATCH'
+    );
+    assert.equal((await db.getScheduleEntry('schedule-recorded-channel')).status, 'reconciliation_required');
+    await assert.rejects(
+      agent.reconcileUploadedVideo(await db.getScheduleEntry('schedule-recorded-title')),
+      error => error.code === 'YOUTUBE_TITLE_MISMATCH'
+    );
+    assert.equal((await db.getScheduleEntry('schedule-recorded-title')).status, 'reconciliation_required');
 
     const reconciled = await agent.reconcileUnresolvedUpload('schedule-good', 'goodVideo01');
     assert.equal(reconciled.status, 'published');
@@ -106,10 +132,21 @@ async function main() {
     if (finalRace.status === 'published') assert.equal(finalRace.youtubeId, 'raceVideo001');
     else assert.equal(finalRace.youtubeId, null);
 
+    await db.executeQuery(
+      `INSERT INTO publish_schedule
+        (id, production_id, title, publish_time, status, priority, metadata, youtube_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['schedule-verify-race', 'schedule-verify-race', 'Expected title', new Date().toISOString(), 'uploading', 50, '{}', 'knownGood01']
+    );
+    const verifyRace = await Promise.all([
+      db.updateScheduleEntryUploadVerification('schedule-verify-race', 'uploading', 'knownGood01', 'published', null),
+      db.updateScheduleEntryUploadVerification('schedule-verify-race', 'uploading', 'knownGood01', 'reconciliation_required', 'verification failed')
+    ]);
+    assert.equal(verifyRace.filter(Boolean).length, 1, 'only one verification outcome may update a recorded video');
     const unresolved = await db.listUnresolvedPublishScheduleEntries(20);
     assert.deepEqual(
       unresolved.map(entry => entry.id).sort(),
-      ['schedule-fresh-uploading', 'schedule-wrong-channel', 'schedule-wrong-title']
+      ['schedule-fresh-uploading', 'schedule-recorded-channel', 'schedule-recorded-title', 'schedule-wrong-channel', 'schedule-wrong-title']
     );
     process.stdout.write('Publishing reconciliation tests passed\\n');
   } finally {
