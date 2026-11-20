@@ -149,6 +149,10 @@
       </section>
 
       <section id="pipeline-view" class="view">
+        <article class="panel quality-review-panel">
+          <div class="panel-heading"><div><p class="eyebrow">LOCAL OLLAMA QUALITY GATE</p><h2>Script review queue</h2><p>Rejected drafts are saved here with their score and blockers. Human approval does not start production.</p></div><span id="quality-review-count" class="status">0 pending</span></div>
+          <div id="script-quality-review-list" class="script-quality-review-list"></div>
+        </article>
         <div class="section-intro"><div><h2>Content pipeline</h2><p>Every generated video, its real state, and the next available action.</p></div><select id="pipeline-filter"><option value="all">All content</option><option value="needs_review">Needs review</option><option value="needs_attention">Needs attention</option><option value="approved">Approved</option><option value="published">Published</option></select></div>
         <div id="pipeline-list" class="pipeline-list"></div>
       </section>
