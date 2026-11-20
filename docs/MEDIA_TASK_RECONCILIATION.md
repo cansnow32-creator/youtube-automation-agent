@@ -41,6 +41,8 @@ Allowed task types are `text2video` and `image2video`. The server queries the co
 
 Use this only after checking the provider dashboard and confirming that no remote task was created for the original submission. This action marks the local row as terminally failed so a future retry may submit a new provider request.
 
+A task that is still in `submitting` is treated as potentially in flight. Manual reconciliation or clearing is blocked for the first 10 minutes after its last update. Wait for that interval, inspect the provider dashboard, and then perform the appropriate action.
+
 ```http
 POST /api/media-generation/tasks/<taskId>/resolve-no-task
 Content-Type: application/json
