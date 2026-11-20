@@ -204,7 +204,10 @@ class ShortsRepurposingService {
       await assertLease();
       await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), { encoding: 'utf8', flag: 'wx' });
       await assertLease();
-      await this.db.updateShortClip(clip.id, { status: 'rendering', error: null, renderAttemptId: attemptId });
+      await this.db.updateShortClip(clip.id, {
+        status: 'rendering', error: null, renderAttemptId: attemptId,
+        outputPath: null, captionsPath: null, renderedAt: null, renderMetadata: null
+      });
       await assertLease();
       const filter = this.videoFilter(clip.layout, captionsPath);
       await this.runFFmpeg([
