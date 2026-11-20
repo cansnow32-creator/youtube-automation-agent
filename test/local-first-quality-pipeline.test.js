@@ -74,6 +74,20 @@ async function run() {
     throw new Error('A draft below 80 was not held for human review');
   }
 
+  const localOnly = new LocalFirstQualityPipeline({}, { enabled: true });
+  let remoteCalls = 0;
+  localOnly.requestOllama = async () => JSON.stringify({
+    score: 88, approved: true, blockers: [], findings: [],
+    revision_instructions: [], platform_metadata: completeMetadata
+  });
+  localOnly.requestGemini = async () => { remoteCalls++; throw new Error('Remote reviewer must remain disabled by default'); };
+  localOnly.requestGroq = async () => { remoteCalls++; throw new Error('Remote reviewer must remain disabled by default'); };
+  const localReview = await localOnly.reviewDraft('Local draft');
+  if (!localReview.ollama || localReview.gemini || localReview.groq || remoteCalls !== 0) {
+    throw new Error('Default quality review must use local Ollama only');
+  }
+  if (localOnly.allowRemoteReview !== false) throw new Error('Remote review must be opt-in');
+
   const order = [];
   const ordered = new LocalFirstQualityPipeline({}, { enabled: true });
   ordered.requestGemini = async () => { order.push('Gemini'); return { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }; };
