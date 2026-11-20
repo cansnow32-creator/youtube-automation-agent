@@ -21,6 +21,11 @@ class GrowthExperimentService {
   }
 
   async create(input = {}) {
+    throw this.error(
+      'Automated packaging experiments are paused. The current integration cannot randomize viewers or verify per-variant exposure; use YouTube Studio native Test & Compare manually until a supported results integration exists.',
+      409,
+      'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
+    );
     const productionId = String(input.productionId || '').trim();
     if (!productionId) throw this.error('Choose a published production to test');
     const armDurationHours = Number(input.armDurationHours || 48);
@@ -106,6 +111,11 @@ class GrowthExperimentService {
 
   async start(id, input = {}) {
     const experiment = await this.requireExperiment(id);
+    throw this.error(
+      'This legacy sequential experiment cannot be started because it changes live packaging without randomized viewer assignment.',
+      409,
+      'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
+    );
     if (experiment.status !== 'approved' || !experiment.approvedAt) {
       throw this.error('Approve the experiment plan before starting it', 409, 'EXPERIMENT_APPROVAL_REQUIRED');
     }
@@ -151,6 +161,40 @@ class GrowthExperimentService {
     const experiment = await this.requireExperiment(id);
     if (experiment.status !== 'running') throw this.error('Only a running experiment can collect evidence', 409);
     const arm = experiment.arms.find(candidate => candidate.id === experiment.currentArmId);
+    const control = experiment.arms.find(candidate => candidate.isControl);
+    if (!control) {
+      throw this.error('The running legacy experiment has no control package; manual operator recovery is required.', 409, 'EXPERIMENT_CONTROL_MISSING');
+    }
+    // Stop legacy sequential rotations and restore the original package once.
+    // Do not collect or compare video-level metrics as if they were arm-level.
+    try {
+      await this.applyArm(experiment, control, arm || control);
+    } catch (error) {
+      await this.failRestore(experiment, error, {
+        comparisonMethod: 'sequential_same_video_observational',
+        exposureAttribution: 'unavailable_from_youtube_analytics',
+        winnerArmId: null,
+        reason: 'Legacy experiment was stopped, but restoring the control package failed.'
+      });
+      throw error;
+    }
+    const result = {
+      primaryMetric: 'ctr',
+      comparisonMethod: 'sequential_same_video_observational',
+      exposureAttribution: 'unavailable_from_youtube_analytics',
+      winnerArmId: null,
+      confidence: 'unverified',
+      reason: 'Automatically stopped: sequential live package rotations cannot provide randomized arm-level exposure. The original control package was restored.',
+      guardrails: { passed: false, evaluated: false },
+      arms: []
+    };
+    return this.db.updateGrowthExperiment(id, {
+      status: 'inconclusive',
+      currentArmId: null,
+      winningArmId: null,
+      result,
+      completedAt: this.isoNow()
+    });
     if (!arm) throw this.error('The running experiment has no active arm', 409, 'EXPERIMENT_STATE_INVALID');
     const capturedAt = this.isoNow();
     const evidence = await this.captureMetrics(experiment.videoId);
