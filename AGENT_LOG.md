@@ -1,0 +1,562 @@
+## 2026-11-20 — Heartbeat-fence ordinary scene edits and timeline reorder
+
+- Audited `SceneRepairService` and found `updateScene()` and `reorder()` used a production lock without heartbeat or lease assertions, unlike narration/visual regeneration and silence override.
+- Routed both through `withProductionOperationLease()`. Threaded `assertLease` through editable-bundle loading, scene DB writes, provenance review, reorder persistence and revision history. Missing lock acquire/release support now fails closed.
+- Commits: `9111b79aa624592b48322fe3a0dbf19392bace27`, `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`.
+- Re-fetched scene service and relevant tests/package through GitHub; JavaScript syntax and package JSON parsing passed; scene repair tests are in npm test. Runtime tests/lint not executed. PR #2 head `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e` has no PR-triggered workflow run.
+- Next: obtain real CI and add/run targeted lease-loss tests; do not merge.
+
+## 2026-11-20 — Prevent stale operator media-task reconciliation writes
+
+- Continued the PR #2 recovery audit and found a race: reconciliation read a task, queried the provider, then unconditionally updated the DB row. An operator/worker could change the row between the read and final update.
+- Added `compareAndSetMediaGenerationTask()` with a single SQLite UPDATE guarded by the expected status and external task ID. Provider-verified reconciliation and explicit absent-task resolution now require the compare-and-set result; stale actions return 409 and cannot overwrite the current row.
+- Added SQLite regression coverage for a winning update and a stale competing update; documented the 409 conflict behavior in `docs/MEDIA_TASK_RECONCILIATION.md`.
+- Commits on feat/video-concept-approval: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`, `cc53b532c2afa95f627e57d7aea58eda608f1a7b`.
+- Re-fetched the changed files. JavaScript syntax parsing and package JSON parsing passed; the test file declares and invokes all 14 media regression functions. Runtime tests/lint were not executed. GitHub reports zero PR-triggered workflow runs on current PR #2 head `cc53b532c2afa95f627e57d7aea58eda608f1a7b`.
+- Live PR heads: #1 `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81` (open/draft/mergeable); #2 `cc53b532c2afa95f627e57d7aea58eda608f1a7b` (open/draft/not mergeable, still stacked on PR #1); #3 `aa30932a42d7887f7e2b8fccb458db3d6c125e58` (open/draft/mergeable). No PR was merged, retargeted or rebased.
+- Next: obtain a real CI run for PR #2, then fix any runtime failures and re-check the stacked PR relationship. Do not merge.
+
+## 2026-11-20 — Prevent stale operator media-task reconciliation writes
+
+- Continued the PR #2 recovery audit and found a race: reconciliation read a task, queried the provider, then unconditionally updated the DB row. An operator/worker could change the row between the read and final update.
+- Added `compareAndSetMediaGenerationTask()` with a single SQLite UPDATE guarded by the expected status and external task ID. Provider-verified reconciliation and explicit absent-task resolution now require the compare-and-set result; stale actions return 409 and cannot overwrite the current row.
+- Added SQLite regression coverage for a winning update and a stale competing update; documented the 409 conflict behavior in `docs/MEDIA_TASK_RECONCILIATION.md`.
+- Commits on feat/video-concept-approval: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`.
+- Re-fetched the changed files. JavaScript syntax parsing and package JSON parsing passed; the test file still declares and invokes all 14 media regression functions. Runtime tests/lint were not executed. GitHub reports zero PR-triggered workflow runs on the current PR #2 head.
+- Live PR #2 head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; PR #1 and #3 remain open/draft/unmerged. PR #3 currently reports mergeable false after the continuity updates. The fresh-submission test double was aligned with the required compare-and-set capability in `cc53b532c2afa95f627e57d7aea58eda608f1a7b`. No PR was merged, retargeted or rebased.
+- Next: obtain a real CI run for PR #2, then fix any runtime failures and re-check the stacked PR relationship. Do not merge.
+
+## 2026-11-20 — Reconcile legacy failed provider records before replacement
+
+- A backwards-compatibility audit found that earlier releases could persist a media task as `failed` after a provider status/network error even though the external task ID remained active. Treating every local failed row as terminal could create a second paid remote job.
+- `generateClip()` now queries the provider first when an existing failed/cancelled row still has an external task ID. If the provider reports queued/running/succeeded, the same remote task is resumed. If it reports terminal failed/cancelled, a conditional DB submission claim is required before a replacement is created. Polling errors remain `reconciliation_required` with the known remote ID retained.
+- Recovery writes now preserve a known remote task ID unless state is explicitly `submission_unknown`; a transient task-row update failure therefore does not discard an ID that can be polled on the next attempt.
+- Final ownership hardening: remote generation requires durable DB task lookup/create/update methods and an explicit `createdByThisInvocation === true` result before a new provider request. Missing/ambiguous ownership fails closed. Manual production task inserts use one conditional `INSERT ... SELECT ... WHERE NOT EXISTS`, and a concurrent SQLite regression test asserts exactly one claimant.
+- Added tests for legacy local-failed/remote-running task recovery, terminal legacy failure before replacement, and fail-closed missing DB ownership proof. The file declares 14 test functions and all 14 are called from its test runner.
+- Commits: `b5c2a83f0ba3c45d7b7a586a43a23aabf10054b0`, `ad309461248954801ab6bc330f6259b616fc5c31`, `aeeecb9ed83f12f56c765f0f3bf3b2e420bbfcd2`, `6e0d03b44e3bdadafa4ea8a178e586d6c116dac6`, `fc2b6ce7136a04e8157ebca788b24c4ae0fa37a0`, `4428a5c0749d314285d73004abed5e9ad8a69348`, `d68ebc2d7a7d404268cf020627c6200d68a8e001`, `ceb87bca9acc9222348d2a834ba046971aaccd53`, `15cdd161c6174622c2040f2dd24025fe4540b682`, `647e7aa26679fcad142baa8ebbdac6e6090ca35b`.
+- GitHub re-fetch + static parse passed for `index.js`, `database/db.js`, `utils/media-generation-service.js`, provider registry, regression test, `package.json` and reconciliation docs. All 14 media test functions are included in the `npm test` chain. No runtime test/lint has run. Current PR #2 head `6e0d03b44e3bdadafa4ea8a178e586d6c116dac6` has zero PR-triggered workflow runs.
+- No PR merged or retargeted; PR #2 still targets PR #1's branch.
+- Next: obtain a real CI run for the current PR #2 head and use its runtime/test results to decide any further fixes. Do not merge.
+ 
+## 2026-11-20 — Make remote provider retries idempotent and recoverable
+
+- Refreshed PR state and continued the provider retry audit. A timeout/network error could occur after a provider accepted a request but before the external task ID was persisted; the previous code could mark the row failed and create a second paid task on retry.
+- Added a write-ahead submission state: new task rows are already persisted as `submitting` with no remote ID before the provider call. If the provider call times out/throws without an ID, the row becomes `submission_unknown`; on lease loss, the row remains `submitting`. Retries with unresolved no-ID states are blocked with `MEDIA_TASK_SUBMISSION_UNKNOWN`.
+- Rows with known external IDs are resumed by provider polling, not resubmitted. Polling outages become `reconciliation_required`; provider-success/download failure becomes `download_pending`. Previous terminal remote IDs/status/output evidence is archived in `provider_data.previousTasks` before a replacement task can be started.
+- SQLite `updateMediaGenerationTask()` now honors explicit nulls for external task IDs/output paths. Manual jobs without a generation `jobId` are scoped by `productionId`. Their initial insert is a single conditional `INSERT ... SELECT ... WHERE NOT EXISTS`; job-scoped rows use unique-conflict no-op. Both return `createdByThisInvocation` so the service submits only when the DB explicitly confirms ownership. Missing ownership proof or DB task tracking fails closed.
+- Added an atomic terminal-task retry claim in SQLite (conditional UPDATE on task ID + expected terminal state + prior external ID). Only the winning worker may reset the row to `submitting` and call the provider; conflict/unavailable results do not write over the other worker's state.
+- Added operator recovery: protected unresolved task list, provider-verified external-ID attachment, and explicit `confirmedNoRemoteTask: true` resolution. Manual reconciliation/resolution of a fresh `submitting` row is refused for 10 minutes. Documentation is in `docs/MEDIA_TASK_RECONCILIATION.md`.
+- Expanded `test/media-generation-lease.test.js` to 14 test functions covering DB null-clearing, manual production task isolation and concurrent insert, atomic job task ownership, fail-closed missing ownership, ambiguous submission, lease loss after remote acceptance, atomic terminal retry ownership, task-history retention, polling of the same remote ID, operator reconciliation and explicit absent-task resolution. The file remains in the `npm test` chain.
+- Main commits in this final hardening pass: `9968aaba437c1bb0cd033e6b1e0fd4ce93355911`, `83cc80ba622e26de5ebb7485b1c4e8e9b505e7fd`, `7a97cfd9a2580025e078ca55e7becf0b4cb47519`, `a071c001eed4af59191d9ba8f0a6aaf543dd3842`, `fc2b6ce7136a04e8157ebca788b24c4ae0fa37a0`, `4428a5c0749d314285d73004abed5e9ad8a69348`, `d68ebc2d7a7d404268cf020627c6200d68a8e001`, `ceb87bca9acc9222348d2a834ba046971aaccd53`, `15cdd161c6174622c2040f2dd24025fe4540b682`, `647e7aa26679fcad142baa8ebbdac6e6090ca35b`.
+- Static verification: re-fetched core JS, test, package and docs files; JavaScript parsed, package JSON parsed, and 14 media tests are called from the npm script. Runtime tests/lint were not run. Current PR #2 head `647e7aa26679fcad142baa8ebbdac6e6090ca35b` has zero PR-triggered Actions runs.
+- No PR merged. PR #2 continues to target PR #1's branch.
+- Next: obtain real CI for the current PR #2 head and address any actual runtime failures. Do not merge.
+ 
+## 2026-11-20 — Cancel supported remote video tasks after generation lease loss
+
+- Reviewed `utils/video-providers.js`: base providers default to no cancellation; the Seedance/Replicate provider declares `capabilities.cancellation: true` and implements remote prediction cancellation. Other current provider implementations do not advertise cancellation support.
+- `MediaGenerationService.generateClip()` now captures the remote task ID immediately after `createTask()` / `getTask()` returns, before task-row persistence. If the following lease assertion fails, it attempts `provider.cancelTask(remoteTaskId)` only for an active/non-terminal task and only when the provider explicitly advertises cancellation.
+- Cancellation failures and unsupported providers are logged as warnings. No stale task-row failure/success update is attempted after lease loss. Local attempt downloads and published output cleanup remain in place.
+- Added a regression test to `test/media-generation-lease.test.js`: remote provider returns a queued task, the lease is lost before the ID can be persisted, and the service must cancel the remote ID, skip task-row writes and leave no local files. The test file is already part of `npm test`.
+- Commits on `feat/video-concept-approval`: `5aa8fe8ae38a6387246227618f51d155d7b97701` (implementation), `e7820bc6a94e08dd9bc479fb9cbf7f8c6137410e` (regression test).
+- Re-fetched media service, provider registry and test through GitHub; JavaScript syntax parsed. Static validation only; runtime tests/lint were not executed. PR #2 current head `e7820bc6a94e08dd9bc479fb9cbf7f8c6137410e` has 0 workflow runs.
+- Limitation: only providers with explicit cancellation support (currently Seedance) can be stopped remotely. For unsupported providers, remote work may continue after lease loss, but stale local file publication and task-state persistence are fenced.
+- Next: continue remote task retry/idempotency/reconciliation audit for non-cancellable providers and obtain a real CI run. Do not merge.
+ 
+## 2026-11-20 — Fence media clip providers and CineCode rendering with the generation lease
+
+- Extended the production lease through `ProductionManagementAgent.assembleVideo()` into `AIVideoGenerator.generateVideo()`. The attempt UUID and lease assertion now flow to media provider clips, CineCode scenes, hybrid FFmpeg rendering, slideshow rendering, audio mux and simulation.
+- `MediaGenerationService.generateClips()` creates output names scoped by production + attempt + provider + scene. It passes the assertion into each clip operation and removes only newly generated partial clip outputs if a set aborts. Previously successful DB-backed clips are marked `reused` and preserved.
+- Added post-provider/task DB checks around media task transitions and a final lease check after writing the success task. If lease loss occurs after download/rename, the just-published local clip is removed before the stale worker exits.
+- `CineCodeRenderer.renderScenes()` checks the lease before/after FFmpeg and before/after scene/manifest publication. Failed/lease-lost scene output and manifests are removed; generated scenes from the abandoned attempt are also cleaned. CineCode outputs are unique because the renderer prefix comes from the attempt-specific final-video path.
+- `AIVideoGenerator.generateVideo()` now passes the lease to both renderer paths, propagates it through hybrid and slideshow render/mux functions, and explicitly refuses to treat lease loss as an ordinary provider failure (no slideshow fallback on a stale worker). Newly generated provider clips are cleaned if a later hybrid render loses its lease; reused clip files are preserved.
+- Added/expanded tests in `test/media-generation-lease.test.js` for attempt naming, partial multi-clip cleanup, reused clip preservation and lease loss after provider download; expanded `test/cinecode-renderer.test.js` for lease loss after CineCode scene publication and no-fallback behavior. Both tests were already in the npm test script.
+- PR #2 commits: `f9b71338749bd99d69d68930b9c4cf6985b9c439`, `cbd3e2d120589ca4681961ae8b0f3eeae3f1cb35`, `499b5d7bd3f52597fdb958d98f36e5e24d4a57c9`, `121236f0379e88056e9e84ee4617863ff5eaedc5`, `4801c130927eeaea87f8b0d151924cfdf3e9d6d0`, `7e2e6422c06fb299fa985dcbf65ae044a5bb1483`, `5c7863363e21ee279aa8969f6ff9beb33109d7aa`, `08a8dbe753512777ef763113b44c368fbfd93c28`, `808cde86d5ce4e386deb71e61ba6cdef12e996e3`, `044cb5be3a2496078cacff1fd9d8677c6745c3b7`, `8aaa0aba9508b637bf27c73c3eeb4d9b3a58a6b8`, `ada931eb55abce02390ae3167de52e5e7da3eff2`, `d8f56cd68d7bc85d6327a112b226b6eb90075d49`, `1986fdc78a94f27672548c0afec600def59cbf88`, `2129ff8db0e24b73a5bc4b2a4b767210befee720`, `57b482d1c3449f4f7777e6bf18dd4d29c92f65a4`, `2b979f46769767d38527d88b4aec78a8200e1228`, `e44af41c479b61abc0397801dc5201af039edd5d`, `a02d0cf06bd44205a446d1f3734379ae8d1b7939`, `c7871a6c45df66280efb1b005c80e8f0a8b603ad`.
+- Static verification: re-fetched core implementation and test files, parsed all JavaScript sources and package JSON, and confirmed test inclusion. No runtime tests or lint were executed. Current PR #2 head `c7871a6c45df66280efb1b005c80e8f0a8b603ad` has zero GitHub Actions workflow runs.
+- Remaining external boundary: a remote provider request accepted just before lease loss may continue when the provider lacks cancellation. Once the response is observed, local file publication and successful DB task persistence are guarded by a fresh lease check.
+- Next: review remote-task cancellation/recovery edge cases and obtain a real CI run. Do not merge.
+ 
+## 2026-11-20 — Isolate production audio, caption and video outputs per attempt
+
+- Continued PR #2 production side-effect audit. Production-ID-stable paths could be overwritten by a retry while a prior TTS/FFmpeg call was still running. Added `timeline.artifactAttemptId` for new and resumed production attempts.
+- `generateAudioNarration()` and its simulation fallback now write attempt-scoped outputs. `generateCaptions()` uses an attempt-scoped SRT path. Source-hash-validated prior narration/captions remain reusable even when a new attempt ID is created.
+- `assembleVideo()` now uses attempt-scoped clean final, music-mix and captioned video paths, with unique render temp/manifest names. It tracks hybrid-render, slideshow and audio-mix sidecars and restores previous background-music metadata on failure. The slideshow renderer uses an output-specific slide directory instead of a shared global folder.
+- Added `cleanupNewProductionAssets()` and lease-failure handling around initial/resumed narration and editing stage persistence so attempt-local uncommitted outputs are removed if lease is lost or the DB stage transition fails, while previously persisted asset references are preserved.
+- `simulateAudioGeneration()` and `simulateVideoAssembly()` now use unique sidecars and clean them if the lease assertion fails after writing.
+- Added `test/production-attempt-artifact-cleanup.test.js`; expanded `test/production-media-reuse.test.js` to verify that unchanged audio/captions are reused across attempt IDs; updated `test/audio-mixer.test.js` to use attempt-specific integration paths and clean associated sidecars. New test added to `npm test`.
+- Commits on `feat/video-concept-approval`: `662301dd5ea4e0a24e94bf242cb6421df8df2492`, `b952cc821c5e38871ffcdd8ec3b7f7aa094b4aa9`, `76612966e8041994bf0925b658960c11250c2017`, `aec35f94fcd9d0822bba16b5964f878901feedbb`, `150944da374741d968b351fb1842c66ba01d456c`, `2bbe3bf3871a7035f94cdd73751378ac14a9ea9c`, `953df10591b9434b315eb0090c51bbaf45e5c983`, `35478fdc167525a4831b77896519a4b4068d0734`, `c1217b758d33e741d3518cd887501329b270153c`, `552975ba3387ab4fadc44bc62bed662849ab8ed7`, `cd108cc1e7935c57610c0c6d122c52ac20584833`.
+- Re-fetched six implementation/test/package files through GitHub and verified JavaScript syntax plus package JSON/test wiring. No runtime tests or lint were executed. Current PR #2 head `cd108cc1e7935c57610c0c6d122c52ac20584833` returns zero workflow runs.
+- Remaining limitation: lease checks are cooperative and do not make a filesystem/DB mutation atomic with lock ownership. A narrow check-to-write race remains; attempt-scoped paths and cleanup reduce the impact of late work.
+- Next: inspect media-provider clip/CineCode rendering outputs and then obtain a real CI run. Preserve PR #2's stacked relationship; do not merge.
+ 
+## 2026-11-20 — Record remaining stable final-media output paths
+
+- During the follow-on production side-effect audit, confirmed that audio narration, caption SRT, final video, background-music mix, captioned MP4, caption render temp/manifest, and simulation metadata still use deterministic production-ID paths.
+- Existing lease assertions guard many write boundaries, but long TTS/FFmpeg operations can leave files at those shared names if the generation lease is lost while work is running. No change to these paths was made in this session; next task is to scope each attempt's temp/output paths and clean uncommitted outputs without deleting already-persisted reusable assets.
+- Current production stage output code was inspected in `agents/production-management-agent.js`. This is a static finding; runtime reproduction and test coverage are pending.
+- PR #2 current head at the time of this log entry: `bce6c2c718f81754ac99013a997fc62c620d69d0`, 0 workflow runs. Do not merge.
+ 
+## 2026-11-20 — Guard early-stage DB writes and thumbnail artifacts against generation lease loss
+
+- Continued side-effect audit after adding the generation-wide lock. Found several early pipeline producers persisted internally before returning: content strategy, script, rejected script-review draft, thumbnail, and SEO. The stage wrapper's post-producer assertion alone could not prevent these writes after a long provider call.
+- Added `assertLease` to `ContentStrategyAgent.generateContentStrategy()`, `ScriptWriterAgent.generateScript()/generateScriptWithAI()`, `ThumbnailDesignerAgent.generateThumbnail()/generateABVariants()`, and `SEOOptimizerAgent.optimize()`. Checks now surround provider returns and internal DB saves; the rejected-draft persistence catch explicitly rethrows lease-loss errors rather than swallowing them.
+- Thumbnail writes use per-attempt UUID suffixes; base, overlay and optimized assets are tracked. Internal helpers delete partially written outputs on failure; the generation method deletes uncommitted paths on lease loss and keeps only the optimized image once its DB row has been saved. A/B variants use unique attempt names and clean all generated outputs on errors/lease loss.
+- `preparePackagingExperiment()` now passes the lease into A/B generation, propagates lease loss rather than treating it as an optional experiment failure, and cleans variant assets if lease loss is detected before continuing quality review.
+- Added `test/generation-stage-artifact-cleanup.test.js` covering strategy/script/SEO save suppression, rejected review save suppression, thumbnail file cleanup and A/B partial-output cleanup. Added it to `npm test`.
+- Commits on `feat/video-concept-approval`: `7ca655b812044e63d8de8635602f1647fa513d70`, `dee9e52cc748549c5db74be6ad099be741b92ffa`, `28e1e15ac2e23bb6a644393224675c51842e8cb0`, `57d1495f014f982f4bbf480ec954f8d13215cb8f`, `84da7b0df0a10ec5d689c27ec40507d6c1b38341`, `41f612d1caa7ccdb8bb22a30b6b8551240dae944`, `04292d442af9f06452686911184857464c00ab09`, `ed52b8bee7b2bfbabf0a04e85776b0288c1c3898`, `9322fc7ed228420ab6cb3c2633410a18f16a2663`, `c74e69c2c270548756003b4fcc780eedfdc8c806`, `bce6c2c718f81754ac99013a997fc62c620d69d0`.
+- Re-fetched source/test/package files and parsed JavaScript syntax / package JSON. Static validation only. `npm test` and lint were not run. Current PR #2 head `bce6c2c718f81754ac99013a997fc62c620d69d0` has zero GitHub Actions runs.
+- Lease assertions are cooperative and cannot make each DB/file write atomic with the lease check; the post-provider checks and cleanup close the long-running side-effect windows but a small check-to-write race remains.
+- Next: continue production recovery and final video/asset publication side-effect audit, then run CI through GitHub Actions UI/authorized dispatch. Do not merge.
+ 
+## 2026-11-20 — Add a distributed lease around the complete generation job
+
+- Static audit found generation checkpoints and early pipeline stages relied on in-memory `activeJobs` only; two app processes could resume the same job and race through strategy/script/thumbnail/SEO. Production had its own narrower lock, but the full generation job did not.
+- Added `utils/generation-job-lease.js` with owner-scoped `generation:<jobId>` lock, 2-hour lease, 30-second renewal heartbeat, fail-closed lost/unverified lease errors, and owner-only release.
+- Applied the lease for the full `runGenerationJob()` lifetime and passed its assertion into `generateContent()`, each recovery stage, checkpoint reads/writes, artifact validation, retry waits, manual stage resets, human-approved script continuation, ProductionManagementAgent and production-resume calls.
+- `GenerationRecoveryService` now avoids stale completed/failed checkpoint writes after the outer lease loss becomes observable. Generation job final/failed state writes are likewise guarded.
+- Added competing-runner/lease tests in `test/generation-job-lease.test.js`; expanded `test/generation-recovery-prerequisites.test.js` to assert no completed/failed checkpoint is saved after loss during the producer. Added lease test to `npm test`.
+- Commits on `feat/video-concept-approval`: `47f8a16e8bbcd40b975f98cc307bdd565082c7af`, `c00d8f8fecb074dc2d310fa7e9aa56eef978f5f2`, `d2c740c468b5efe30318edc13f7b649bb65022f6`, `63bd2fffd6ed3f426ef07d1280b2262f01490c71`, `5a2eee3e224365d9283529c4518bc8c5df8a0df5`, `7cf40742916eee804dc68cf11633d3342c76212f`, `09930cdd98ced25dcbd4db7f19df6fec5f2877ac`, `4b79565185934266dfed6109cd8a830a3fed8be2`.
+- Re-fetched source/test files through GitHub and verified package script wiring. JavaScript syntax parsing completed for `index.js`, `agents/production-management-agent.js`, `utils/generation-job-lease.js`, `utils/generation-recovery-service.js`, and both updated tests. This is static syntax validation only; no runtime tests or lint executed.
+- Desktop Commander device was online, but its monthly execution quota had been exhausted. GitHub Actions reports zero runs for the current PR #2 head `4b79565185934266dfed6109cd8a830a3fed8be2`.
+- Lease assertions are cooperative, not an atomic DB/filesystem transaction; a side-effect can still race in the small interval after a successful assert and before mutation. Long provider work is checked again on return, and stale checkpoint/job-status writes are suppressed once lease loss is observable.
+- Next: continue production recovery/final artifact audit and obtain CI through an authorized GitHub Actions UI/dispatch. Do not merge.
+ 
+## 2026-11-20 — Isolate image-provider output and clean Gemini TTS sidecars
+
+- Continued PR #2 provider-internal side-effect audit.
+- OpenAI and Gemini image outputs now write to unique same-directory attempt paths. Sharp validates the image before the completed file is atomically renamed to the requested output path; failed attempt files are removed. OpenAI URL downloads use stream `pipeline()` with cleanup on failure.
+- Added `test/image-provider-atomic-output.test.js` covering partial OpenAI output followed by successful Gemini fallback and cleanup when every provider fails. Included in `npm test`.
+- Gemini TTS now deletes its `.pcm` sidecar in a `finally` block on both FFmpeg success and failure; it uses the injected FFmpeg runner. Added `test/gemini-tts-temp-cleanup.test.js` and included in `npm test`.
+- Commits on `feat/video-concept-approval`: `4eb6577e7a33a996049be43bbf53852a6e1b6f43` (image provider implementation), `f1ce5e961ebb86659d83bcfd09dab31d962f427c` (image provider tests), `9f932dd4cf950d9c62ae68c30f976346cd114e32` (image test script), `bb61213e5d2dd7427b5cf1f5c295fbfdf51e3863` (Gemini TTS cleanup), `d198c34ecf4be8805c7552f4dfa0e5ede4301484` (TTS tests), `d606a1ab5742c8128c3b7653342a0431df27425d` (TTS test script).
+- Re-fetched all changed files from GitHub and verified implementation anchors and both tests in `npm test`. Tests and lint were not executed; no pass is claimed.
+- Live PR #2 remains open/draft/unmerged at `d606a1ab5742c8128c3b7653342a0431df27425d`, stacked on PR #1; mergeable false, zero workflow runs. PR #1 head is `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`. PR #3 remains open/draft/unmerged and its head advances with these continuity updates. No PR was merged.
+- Branch comparison: PR #2 is 454 commits ahead / 1 behind the PR #1 branch tip (merge base `9438d3d6...`). The one-behind change updates the CI workflow branch filter/permissions; PR #2's current workflow already includes equivalent lines plus its lockfile integrity changes. No rebase/merge was attempted. PR #3 compared with master as 85 ahead / 0 behind when checked.
+- Next: continue production recovery/file-side-effect audit, then obtain a real CI run through an authorized workflow dispatch or GitHub Actions UI. No dispatch action is exposed by the connected GitHub tools. Do not merge.
+ 
+## 2026-11-20 — Fence media clip generation against scene lease loss
+
+- Found that scene regeneration delegated to MediaGenerationService.generateClip(), which wrote directly to a shared output path and marked remote provider success before local download/validation completed. A stale worker could therefore publish an output or update media-task state after its scene lease had expired.
+- Added optional `assertLease` support throughout generateClip(): before task reads/writes, provider polling, downloads, cached-output reuse, and final persistence. Downloads now go to unique per-attempt temporary paths; after validation and a fresh lease assertion they are renamed to a unique scene-revision output. If lease loss is detected after publication, the attempt-specific output is removed.
+- Remote `succeeded` status is now persisted as local `running` until download, validation and safe publication finish; only then is the task marked succeeded.
+- Scene regeneration passes its lease assertion and uses a unique final output filename per attempt.
+- Added `test/media-generation-lease.test.js` for lease loss after download, stale-output cleanup, and no local success persistence; included it in the npm test chain.
+- Commits on `feat/video-concept-approval`: `e74ca1fe07c1b07d1e75dc11cb454b139b6dd381`, `17a7256203722d237bd34d1dcac4de8da2d23f8d`, `0c41484dd6f0e6f36f8e9c33f4f8e48cb6db43d4`, `cc9d60ec4baf35c6ebe8d89f6596bb2dd8fc9c50`, `b528f75dc2082af417e17c28d791a088df1e5fdf`, `9722a7b55560a4019c81c7ffcdde51af7bff696c`.
+- Re-fetched implementation, scene regeneration call site, test, and package test script. Tests/lint have not been executed; no pass is claimed. PR #2 still requires a GitHub Actions run.
+- Limitation: a remote provider task may still be created if the lease expires between the pre-request assertion and external API call. The response is checked before local DB persistence or output publication, but the remote provider API has no atomic lease-fencing integration.
+- Next: audit generated image/TTS file side effects, then establish real CI execution. Do not merge.
+
+## 2026-11-20 — Serialize review refresh with scene operations
+
+- Continued PR #2 audit and fixed the stale-review race: `refreshContentReview()` now acquires the same production-scoped operation lease as scene edits/rebuilds and holds it across bundle read, quality checks, and `saveContentReview()`. It asserts lease ownership immediately before persistence.
+- Added `test/content-review-lock.test.js` to prove a competing review refresh cannot save while the first quality check holds the shared lock. Added the test to the package `npm test` chain.
+- Commits on `feat/video-concept-approval`: `7bf63295ed60213272917bad5ade79566629cfdb`, `5e9cbdb92787b66979d6ce6dd421007a34bb4a15`, `f22e1e82f52a8c800aebddbd390bd429d05940be`, `9615d030839f4ad5322e9ab1fb3a02eee28f9937`.
+- Re-fetched implementation, test, package script, and PR metadata. PR #2 remains open/draft/unmerged at `9615d030839f4ad5322e9ab1fb3a02eee28f9937`; GitHub reports zero workflow runs. Tests/lint have not been executed; no pass is claimed.
+- Note: competing refresh attempts receive HTTP 409 while another operation owns the lock; callers may retry after the active operation finishes.
+- Next: inspect media provider orphan-file cleanup and remaining production side effects, then establish actual CI execution. Do not merge.
+
+## 2026-11-20 — Identify route-level stale review race
+
+- Inspected scene mutation routes after adding the long-running operation lease. Found handlers invoke `refreshContentReview()` after service methods return and release the shared lock. The quality-check read and subsequent `saveContentReview()` can race a second scene mutation and persist stale review state.
+- No code change made for this finding yet. Next: keep mutation plus review refresh inside one production-scoped lease, or add revision fencing to review persistence; add a focused regression test.
+- Current PR #2 head remains `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`. Tests/lint have not been executed; GitHub Actions has no run for this head. Do not merge.
+
+## 2026-11-20 — Add shared leases to scene regeneration and silence overrides
+
+- Continued PR #2 static audit. Found `regenerate()`, `regenerateNarration()`, and `setSilenceOverride()` did not acquire the production-scoped operation lock shared with rebuild and short scene edits.
+- Added `withProductionOperationLease()` with owner-scoped acquisition/release, heartbeat renewal, and fail-closed lease assertions. Wrapped all three mutation paths and checked ownership around provider returns, scene/audio metadata writes, and revision writes. Lease loss is re-thrown rather than converted into a stale-worker failure update.
+- Added tests for lock contention, heartbeat lease loss and owner release, and forwarding through all three public mutation entry points.
+- Commits on `feat/video-concept-approval`: `aada5058e501de82bcb3d71191d0591bc9e4e10d` and `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`.
+- Re-fetched the changed service and test from GitHub. PR #2 remains open/draft/unmerged; current head `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`. GitHub reports zero workflow runs; tests and lint were not executed. No pass is claimed.
+- Limitation: provider internals may create an output file before the post-provider lease assertion; this can leave an orphan artifact, although the stale worker is blocked from publishing scene metadata. These checks are cooperative, not atomic filesystem fencing.
+- Next: inspect provider output cleanup and route-level review refresh side effects; then establish actual CI execution. Do not merge.
+
+# AgentTube — Continuity Log
+
+## 2026-11-20 — Remove partial image outputs after provider failure
+
+- Branch: feat/video-concept-approval.
+- Audit found generateVisualAssets() added a generated image path to its cleanup list only after generateImage() completed. A provider that wrote partial bytes and then threw could leave an orphan file before the simulation fallback.
+- Register the UUID-scoped image output path before invoking generateImage(); on failure, remove every path from the current attempt before invoking the existing simulation fallback.
+- Added test/visual-generation-artifact-cleanup.test.js to simulate a provider partial write followed by failure and assert that the partial file is removed. Added test to npm test.
+- Commits: fb3cf772bfc2372cfdecc4df4669e1007d0a82ee, c3f81469c0b779eeefa0bf1ebdd8cd7c88e9575e, 660b967a0911be27e686bbfce6777ef74f663478.
+- Re-fetched implementation, test and package.json through GitHub. Static verification only; no tests/lint run. Current PR #2 head has zero workflow runs.
+- Next: inspect provider internals for secondary temp outputs, continue side-effect audit and obtain CI. Do not merge.
+
+
+## 2026-11-20 — Clean up stale visual and narration regeneration artifacts
+
+- Audited SceneRepairService.regenerateNarrationUnlocked() and regenerateUnlocked() for side effects after lease loss/provider failure.
+- Narration regeneration now uses UUID-scoped output names and removes partial audio plus Gemini PCM sidecars if the lease is lost or an error occurs before scene metadata is committed.
+- Visual regeneration tracks generated image/simulation outputs and removes them on pre-commit failure; visual generator filenames now include UUIDs.
+- Added test/scene-regeneration-lease-cleanup.test.js to simulate lease loss after a TTS file is produced; included it in npm test.
+- Commits on feat/video-concept-approval: bad06f3af3c0d21db406224b25fc1f865b9a6281, 77de4fad8751796d5c7efaa6a6eb34fc5b585c49, 86a2480fcad9a70eaba23aabc93f75b5375dd317, b938b5582ecfb72c1db30649d643c65918cde184, dcc5433c223a46df953196105a0fb408896d1fe1, 5e07fa496bdba00dac7c54b77e1dedd81b13f790.
+- Re-fetched changed source, test, and package script through GitHub. Static review only; tests/lint have not run.
+- GitHub reports zero PR-triggered runs for the current head. The workflow supports manual dispatch, but the connected GitHub toolset has no workflow-dispatch action; manual Actions UI run is still needed.
+- Next: add visual-generation lease-loss regression coverage and inspect provider partial-write paths. Do not merge.
+
+
+Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
+
+## 2026-11-20 — Serialize short scene edits and uploaded asset replacement
+
+- Branch: `feat/video-concept-approval`.
+- Static review found `updateScene()`, `reorder()`, and `replaceAsset()` bypassed the production-scoped operation lock used by rebuild/resume. Concurrent edits could race scene metadata, ordering, or asset publication.
+- Added `withProductionEditLock()` using the existing owner-scoped DB lock and guaranteed owner-only release in `finally`. Wrapped the three short operations; lock contention returns `SCENE_EDIT_IN_PROGRESS` (409).
+- Added regression coverage for a competing lock owner preventing an edit and successful owner release.
+- Commits: `37bdd45d359ca27a8d7f779c06f0e8c15962ce4e`, `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0`.
+- Re-fetched both changed files from GitHub and confirmed the wrappers/test are present. No test or lint execution occurred; GitHub reports zero workflow runs for PR #2 head. No pass is claimed.
+- Next: add lease heartbeat/assertions for long-running visual/narration regeneration and silence override; then obtain actual CI execution. Do not merge.
+
+
+
+Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
+
+## 2026-11-20 — Fence scene rebuild manifest and shared-output cleanup with lease checks
+
+- Static review found `rebuildUnlocked()` called `getEditableBundle()` which could create a missing scene manifest through `ensureManifest()` without receiving the active rebuild lease. It also validated and hashed scene files without periodic lease checks, and could delete a shared visual/final output after a validation failure before verifying ownership.
+- Threaded the rebuild lease into `getEditableBundle()` and `ensureManifest()`, added checks during scene validation and fingerprint hashing, and asserted ownership before deleting invalid shared outputs and before returning a cached narration mix.
+- Added a regression test proving lease loss during missing-manifest initialization prevents `replaceProductionScenes()` from running.
+- Commits on `feat/video-concept-approval`: `711bc570229cfbd170d04328001bfa9451000d7e`, `6222a5cf7deb033f02634afc8b64e3e83a0a4971`.
+- Re-fetched changed source and tests. PR #2 remains open/draft/unmerged, stacked on PR #1, and GitHub reports zero workflow runs for current head `6222a5cf7deb033f02634afc8b64e3e83a0a4971`. Tests/lint were not executed; no pass is claimed.
+- Next: audit scene-edit endpoints for cross-process serialization/lease coverage; establish CI execution. Do not merge.
+
+## 2026-11-20 — Harden scene-manifest lease regression test
+
+- Follow-up review found the scene-manifest test had been duplicated during concurrent edits, which would redeclare `const` variables in the same test scope. Removed the duplicate case and retained the stronger assertion that lease loss remains persistent through the FFmpeg catch path.
+- Verified `SceneRepairService.initializeAudioSegments()` uses the injected `this.runFFmpeg` runner, allowing the regression to simulate a completed segment render before lease loss is detected.
+- Commit on `feat/video-concept-approval`: `322cd1f0aff871dd09720c46dfdf20a3c71038ac`.
+- Re-fetched the test and current PR #2 metadata. PR #2 remains open/draft/unmerged and not mergeable because its stacked base is behind PR #1. Current head at this check: `322cd1f0aff871dd09720c46dfdf20a3c71038ac`; zero workflow runs. No tests/lint were executed.
+- Next: continue static audit of remaining side effects, then get a real CI run. Do not merge.
+
+## 2026-11-20 — Fence scene-manifest initialization after narration splitting
+
+- Continued PR #2 audit into `SceneRepairService.initializeProduction()`. It splits the narration into per-scene audio files and then replaces the production scene manifest; without a lease callback, a stale worker could finish FFmpeg splitting and still publish scene rows.
+- Threaded the production lease assertion through `initializeProduction()` and `initializeAudioSegments()`. Checks now run before directory/scene work, before each split, after each FFmpeg render, in the per-scene error path, and immediately before/after scene-manifest persistence. Lease loss is re-thrown rather than downgraded to an unavailable narration segment.
+- Switched the segment render to the constructor-injected `this.runFFmpeg` so the lease-loss path can be regression-tested without launching a real FFmpeg process. Added a test that simulates lease loss after a segment render and asserts `replaceProductionScenes()` is never called.
+- Commits on `feat/video-concept-approval`: `4f3f1d46431b5293ea6d7c642b722302991e25e5`, `0f9e51992ac30c0162438848886f0de2a71796e8`.
+- Live PR #2 is open/draft/unmerged at `0f9e51992ac30c0162438848886f0de2a71796e8`, still based on `feat/local-first-quality-gate`. GitHub reports zero workflow runs on this head. Tests/lint remain unexecuted; no pass is claimed.
+- Next: inspect scene-repair DB side effects beyond initial manifest creation and remaining media helpers; then obtain CI. Do not merge.
+
+## 2026-11-20 — Guard scene-manifest initialization against production lease loss
+
+- Static review found `sceneRepair.initializeProduction()` was called after final video assembly but did not receive the generation-job/resume lease assertion. It could split narration into per-scene files with FFmpeg and write scene rows after the parent worker lost ownership.
+- Added an optional lease assertion to `initializeProduction()` and `initializeAudioSegments()`. Ownership is checked before manifest persistence, before audio directory creation and each FFmpeg segment, after each FFmpeg operation, and in the FFmpeg error path so lease loss cannot be swallowed as a segment failure.
+- Passed the active production lease assertion from both initial production and resume editing paths.
+- Added regression coverage simulating lease loss after an FFmpeg scene-audio split and asserting that `replaceProductionScenes()` is not called.
+- Commits on `feat/video-concept-approval`: `50a9e2fcf1002dbf8dbfb4d03d451f3b7574dec1`, `547c91c4a04c979e84f1c28f7d45a67bccd5d9a1`, `17f6c5c179a2b83c46b660507a470cf357eac16a`.
+- GitHub re-fetch confirms PR #2 remains open/draft/unmerged at `17f6c5c179a2b83c46b660507a470cf357eac16a`, still stacked on PR #1. It remains marked not mergeable because its base is behind PR #1. GitHub reports zero workflow runs on this head. Tests and lint have not been executed; no pass is claimed.
+- Next: continue auditing remaining filesystem/database side effects and confirm all stage helpers consistently receive the lease; then obtain CI execution. Do not merge.
+
+## 2026-11-20 — Extend production lease guards across visual, narration and editing stages
+
+- Continued PR #2 audit after script/thumbnail protections. Found stage helpers could continue after a job/resume lease was lost: visual generation could persist scene metadata, failed TTS could fall back to a simulated audio file, and captions/video editing could write or publish outputs without checking ownership.
+- Passed the stage-scoped assertLease callback through both initial production and resume paths into generateVideoContent(), generateAudioNarration(), generateCaptions(), and assembleVideo(). Added checks around provider calls, database checkpoints, caption writes, FFmpeg caption rendering/replacement, audio mixing, and fallback artifact creation. Lease loss is rechecked in visual/audio/video catch paths so it is not swallowed into retry/simulation behavior.
+- Added regression coverage for lease loss after TTS provider failure (no simulated narration write) and after visual provider return (no stale scene persistence); existing script/thumbnail tests remain in the same production-operation-lock test.
+- Commits on feat/video-concept-approval: 2bf343dce295143df441fc3f61b9f50c976dfbc1, 8c82636fcf070631e16e427c56c82653735a25d2, 683c3c45298df8216851464a700269eb8543fe70, b9ef6fd2229d8f89cb1f032072cc3a9347c930eb.
+- Re-fetched current PR #2 metadata: open/draft/unmerged, still based on feat/local-first-quality-gate; current head b9ef6fd2229d8f89cb1f032072cc3a9347c930eb. GitHub reports zero workflow runs on this head. Tests and lint have not been executed; no pass is claimed.
+- These are cooperative lease checks at application boundaries, not atomic OS-level fencing. A worker could still race if the lease expires in the tiny interval after a check and before a side effect; provider internals may also create their own files before returning.
+- Next: continue reviewing all filesystem/database side effects and the `sceneRepair.initializeProduction()` boundary, then get CI execution. Preserve PR #2's stacked base. Do not merge.
+
+## 2026-11-20 — Fence visual scene persistence against generation-job lease loss
+
+- Static review of generateVideoContent() found that provider errors and lease assertion failures shared one catch path. A lease loss could be temporarily classified as a scene-provider failure; more importantly, the per-scene persistence boundary needed its own immediate ownership assertion.
+- Kept the lease assertion threaded through both initial production and resume call paths. Added an immediate assertLease() before each per-scene updateProductionData() call and re-check ownership inside the catch path so lost/unverifiable leases propagate instead of being swallowed.
+- Added regression coverage that simulates lease loss after the image provider returns and asserts that stale visual metadata is not persisted.
+- Commits on feat/video-concept-approval: dc7f5792120bd1ffdc22f5b3dc75305eff4b215f and 48def2c871f779dc0722c995a9d41b7a450b2f69.
+- Re-fetched changed source and test through GitHub. GitHub reports zero PR-triggered workflow runs for current PR #2 head. No local/cloud test execution occurred; no test pass is claimed.
+- Current live PR heads checked: #1 dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81, #2 48def2c871f779dc0722c995a9d41b7a450b2f69, #3 ad6ad108c88b4716ef517f188ec0d1f78c5debda. All three remain open/draft/unmerged; each head reports zero workflow runs.
+- Next: continue reviewing narration, caption, final assembly and scene-repair initialization side effects; then establish a real CI run. Do not merge.
+tion-cache file without rechecking whether the scene-repair lease was still held. The caller checked the lease after the helper returned, which was too late to prevent that cache write.
+- Passed the lease assertion into `rebuildNarration()` and check it immediately before replacing the shared cache output.
+- Added an injectable FFmpeg runner and a regression test that simulates lease loss after rendering, then asserts that no cache file is published.
+- Commits on `feat/video-concept-approval`: `a4cf5eeb76be2faaff5e236f72b853179c627df8`, `42b1538747a89ada2d4aaf12acecd29f301bfae1`, `2f6edb51130eaf1d2ecec399d6e1c209fae312c1`.
+- Validation: re-fetched the edited source and test through GitHub. No local execution or GitHub Actions run is available; PR #2 current head reports zero check-runs. No test pass is claimed.
+- Next: continue audit of production resume/job lock interactions and cache publication boundaries; obtain CI execution. Do not merge.
+
+## 2026-11-20 — Configure bounded SQLite writer wait
+
+- PR #2 static review found the new two-connection integration test explicitly configured a 5-second SQLite busy timeout, but production Database.initialize() left the connection at the sqlite3 default. Under concurrent writers, production could therefore surface SQLITE_BUSY immediately even though the test setup behaved differently.
+- Configured this.db.configure('busyTimeout', 5000) immediately after opening the production SQLite connection.
+- Commit: `b6e9c7f10bf6c8e42ebbe50f08683863f70d2965` on `feat/video-concept-approval`.
+- This is a static-review correction only. No test or Actions run has been observed; PR #2 current head still needs live check-run verification.
+- Next: continue audit for lock/lease edge cases and obtain a real Actions run. Do not merge.
+
+## 2026-11-20 — Add real SQLite production-lock contention coverage
+
+- Added an integration section to `test/production-operation-lock.test.js` using two independent SQLite connections to one temporary database.
+- The test races two owners for the same lock and asserts exactly one wins; it also checks that a non-owner cannot renew or release the lease, that the active owner can renew, and that an expired lease can be taken over while the former owner can no longer renew.
+- Commit: `7940c5410c7caa3c3c82de47bcf628abec5adc80` on `feat/video-concept-approval`.
+- GitHub re-fetch confirms PR #2 head matches the commit. GitHub reports zero workflow runs on that head; the test has not been executed, so no pass is claimed.
+- Live comparison shows PR #2 is 402 commits ahead and 1 behind its current PR #1 base branch (merge base remains `9438d3d6...`). The one behind commit is PR #1's CI branch-filter change; preserve the stacked PR relationship and review the overlapping CI workflow before attempting synchronization.
+- Next: obtain a real GitHub Actions run, verify the SQLite integration test and complete PR #2 suite, then continue the deeper recovery audit. Do not merge.
+
+# AgentTube — Continuity Log
+
+Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
+
+## 2026-11-20 — Guard thumbnail side effects against job lease loss
+
+- Continued PR #2 audit and found processThumbnail() could swallow an AI-thumbnail error and continue into original-image/placeholder filesystem writes without checking the generation-job lease.
+- Passed assertLease into processThumbnail(); check ownership before and after AI generation, re-check in the catch path so lease loss cannot become fallback work, and guard directory/file writes.
+- Added regression coverage simulating lease loss during thumbnail generation and asserting the fallback directory is not created.
+- Commits on feat/video-concept-approval: 3100c57e376c98ad3a31681389ff3063b324724a and be29f94137d95eac9f49a8005779272b623ea742.
+- Re-fetched the edited code and test from GitHub. No test execution or GitHub Actions run is available; no pass is claimed.
+- Next: audit remaining production media/file side effects and obtain CI execution. Do not merge.
+
+## 2026-11-20 — Guard initial script artifacts against generation-job lease loss
+
+- Continued PR #2 static audit. Found processScript() wrote the JSON script and TTS companion file without checking the generation-job lease.
+- Passed the job-scoped assertLease callback from processContentUnlocked() into processScript(). Added checks immediately before each file write and after the second write.
+- Added regression coverage for lease loss before the first write and between the JSON and TTS writes in test/production-operation-lock.test.js.
+- Commits on feat/video-concept-approval: 83f818e73f875b086af18920057059b7b7c97162, 60204e2013dbabc5cd966ebf2bfc39a53a2fb711, and 8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064 (test assertion correction).
+- Re-fetched the changed source and regression test from GitHub. PR #2 is open/draft/unmerged at 8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064. GitHub reports zero workflow runs for this head; no test pass is claimed.
+- The lease assertion is cooperative: it prevents later writes once lease loss is observable, but is not an OS-level atomic fencing mechanism if a lease expires between assertion and the filesystem call.
+- Next: continue auditing other filesystem and external side effects (starting with thumbnail/media writes), then obtain an actual CI run. Do not merge.
+
+## 2026-11-20 — Tighten production lease regression assertion
+
+- PR #2 static review found the lease-renewal SQL test regex was too permissive: it matched both the intended question-mark placeholder and a backslash variant.
+- Updated `test/production-operation-lock.test.js` to require the literal SQL placeholder with `/expires_at > \\?/`.
+- Commit: `5c346c23f75aa240c083371a8de42decdd80fed2` on `feat/video-concept-approval`.
+- Re-fetched the file and PR metadata; PR #2 head matches the commit. GitHub still reports zero check-runs. No test execution is claimed.
+- Remaining: run CI, add SQLite-backed concurrency coverage, continue PR #2 audit.
+
+## 2026-11-20 — Stacked PR CI trigger review
+
+- PR #1 base branch workflow originally listened only for `pull_request` events targeting `master`, while PR #2 targets `feat/local-first-quality-gate`. This meant the base-branch workflow filter did not cover the stacked PR target.
+- Updated PR #1 branch `.github/workflows/ci.yml` to accept pull requests targeting any branch and added least-privilege `contents: read`.
+- PR #1 workflow commit: `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`.
+- Refreshed live GitHub state after the commit: PR #1 is open/draft/unmerged at the new SHA; PR #2 remains open/draft/unmerged at `96ac8f7c27be5009c981576650dd93c365cd160e`, based on PR #1; PR #3 is open/draft/unmerged at `3f2e2d8753debd8c7e6d7a1a9e580fdedc2cb187`.
+- Current heads of PR #1, #2, and #3 all report zero check-runs. Connector-authored commits have not triggered GitHub Actions in this session. Earlier PR #1 head `9438d3d6e9015684cc074f832188e05ecbf3ab51` had two successful checks, but those do not validate the new head.
+- Next: trigger/observe Actions manually when available; add real SQLite concurrency coverage; continue static review without claiming tests passed.
+
+## 2026-11-20 — PR #2 audit and CI lockfile integrity fix
+
+- Live PR #1: open/draft/unmerged, head `9438d3d6e9015684cc074f832188e05ecbf3ab51`; two GitHub check runs completed successfully.
+- Live PR #2: open/draft/unmerged, base `feat/local-first-quality-gate`; updated head `96ac8f7c27be5009c981576650dd93c365cd160e`; zero check-runs.
+- Static review covered job-scoped production locks, production resume leases, scene-repair lease heartbeat/loss guards, and rollback-safe temporary output replacement. This is code inspection only; no runtime claim.
+- Found CI was modifying `package-lock.json` before `npm ci`, so lint/tests could run against a dependency tree different from the committed lockfile.
+- Updated `.github/workflows/ci.yml` on `feat/video-concept-approval`: install committed dependencies first, audit the committed lock, create a separate `npm-security-remediation-candidate.json` artifact, restore the committed lock, then lint/test.
+- CI workflow commit: `96ac8f7c27be5009c981576650dd93c365cd160e`.
+- Validation: re-fetched the PR and workflow through GitHub; PR #2 head matches the commit and workflow contents match the intended change. GitHub reports zero check-runs on PR #2 head. No local/cloud test execution occurred in this session.
+- Live PR #3 remains open/draft/unmerged at `8034dd2bfcb0559ac63a6e8657fab36791033249`, with zero check-runs.
+- Next: trigger/observe GitHub Actions for PR #2; continue deeper production recovery review and add database-backed lock/concurrency regression coverage if needed. Do not merge.
+
+## 2026-11-20 — GitHub continuity foundation committed
+
+- Branch: feat/agent-continuity, based on master.
+- Draft PR #3: https://github.com/cansnow32-creator/youtube-automation-agent/pull/3
+- Latest known branch head: 990e079a78ee3a9a044637b9771a8f5df3f3b73c.
+- Added AGENT_CONTINUITY.md, AGENT_STATE.md, AGENT_TASKS.md, AGENT_RULES.md, AGENT_LOG.md, DOT_SETUP.md, and .github/workflows/continuity-check.yml.
+- The workflow is deterministic/read-only; it checks continuity files and guardrails only. It is not an autonomous code-writing agent.
+- No application runtime code changed. No secrets, paid provider, auto-publishing or merge enabled.
+- Validation: GitHub API confirms PR #3 open/draft/unmerged and zero check-runs on the current head. Connector-authored commits did not trigger the workflow, so validation remains pending.
+- GitHub connector plugin is already installed and enabled in ChatGPT; Dot access itself still depends on plan/rollout and must be checked by the user.
+- Next: user checks chatgpt.com/dots; if available, create Dot, connect GitHub, and run the read-only smoke test in DOT_SETUP.md. Separately trigger the continuity workflow from GitHub Actions UI. Then continue P0 PR #2 audit.
+
+
+## 2026-11-20 — PR #2 scene edit lease cleanup and regression test
+
+- Removed unused `withProductionEditLock()` from `utils/scene-repair-service.js`; it silently ran without DB lock support and is superseded by the heartbeat-backed lease wrapper.
+- Added `test/scene-edit-lease.test.js` to cover lease assertion failure before update/reorder DB writes, fail-closed missing lock support, and lock contention. Added it to the `npm test` chain.
+- Commits: `79348283424180f5113b95e75860007983291307`, `ea647cb6f5165d6644ef1cd04e0adfe4f0a39d71`, `e1d02341c8830d2124647ab165314e65fea1fb43`.
+- Static JavaScript syntax checks passed for service and new test; `package.json` parses and includes the test. Runtime tests/lint not run. GitHub reports no workflow run for the previously checked head; recheck current head.
+
+
+## 2026-11-20 — Require heartbeat renewal for scene edit leases
+
+- Found a fail-open path: `withProductionOperationLease()` accepted acquire/release support without renew support, then skipped its heartbeat entirely. Long scene edits could therefore continue after lease expiry.
+- Updated the wrapper to require acquire + renew + release and start the heartbeat unconditionally. Added missing-renewal regression coverage and updated lease test fixtures.
+- Commits: `6cfc05db9090e561e7c02ab8830ba928298c3733`, `25c0e2e47c86be8de5dc309ad2841a996a3394b5`.
+- Static syntax checks passed for the changed service and tests; package JSON parses. Runtime test suite and lint remain unexecuted. Recheck PR #2 head and CI before proceeding.
+
+
+## 2026-11-20 — Serialize generation lease heartbeat renewals
+
+- Found a concurrency hole in `acquireGenerationJobLease`: timer ticks could launch overlapping DB renewal calls. `assertLease()` and `release()` could then observe only the latest promise while an earlier renewal remained in flight.
+- Chained renewals sequentially, ensuring the lease assertion and release wait for all queued renewal work; callbacks skip after release/failure.
+- Added regression test `testHeartbeatRenewalsAreSerialized()` to `test/generation-job-lease.test.js`, checking that slow renewals never overlap and queued work completes before assertion.
+- Commits: `9e1fa4d2f0196fd79dd5afc783d0da7646d7f517`, `529baa9dd4740ddb73d1afdb0e727a226fd28821`.
+- Static syntax checks passed; runtime tests/lint remain unexecuted. Recheck latest PR head and CI.
+
+
+## 2026-11-20 — Close remaining production lease fail-open paths
+
+- Fixed `replaceAsset()` calling a missing legacy lock helper; asset replacement now uses the common production operation lease and checks ownership before writes.
+- Made scene rebuild fail closed when acquire, renew, or release support is absent, while preserving the existing local contention response.
+- Hardened production job processing and resume: all lock methods are mandatory and heartbeat renewal work is serialized.
+- Added/updated regression tests for missing lock support and asset replacement lease routing; updated the scene-repair cache test fixture.
+- Commits: `0d544b2`, `5a0bfce`, `879881d`, `e7969ed`, `9fcb8ca`, `424252c`, `094e7c8`, `7b1f5ae`.
+- Static syntax checks passed; runtime tests/lint remain unexecuted.
+
+
+## 2026-11-20 — Fence uploaded scene asset publication
+
+- Replaced direct deterministic scene-asset writes with unique temporary uploads and unique revision output paths. The asset is validated before publication and lease-checked before rename.
+- On lease loss or other pre-persistence failure, temporary and attempt output files are removed. A persisted scene's referenced asset is retained.
+- Added a regression for lease loss immediately after writing the upload; it verifies the upload directory contains no leftover files. Static syntax checks passed; runtime tests/lint not run.
+- Commits: `9b445a7841e2df0015c9f5bab00d88f868ae0fa6`, `2f2e9b9df5fea658cdd443bb1ecfe104c8a9ebb2`, `d5e8dac847a45473210a45ade55b894184d3c45a`.
+
+
+## 2026-11-20 — Fence image provider output and thumbnail fallback
+
+- Threaded the production lease assertion into visual generation and thumbnail generation. Provider results are checked after completion and before publication; lease loss prevents fallback/provider retries and removes attempt artifacts.
+- Simulated visual/thumbnail artifact writes now check lease ownership before and after file creation and clean up on failure. Thumbnail output paths are UUID-scoped to avoid collisions.
+- Added regression coverage for late provider completion after lease loss and for suppressing simulated visual fallback after lease loss. Corrected the existing partial-output test to inspect the actual attempt path.
+- Static syntax checks passed; runtime tests/lint not executed.
+- Commits: `963df9d6886807a0544923212191aa5e109639c5`, `a09716ad5e089f1855d7ad5cc1c2bdb7c049e636`, `3afde4bf1c61fe1c12ddc4c6afafdce0df851680`, `e98e5e8039c8a409f9e64f73b1ac73140a2bb549`.
+
+
+## 2026-11-20 — Abort FFmpeg work on production lease loss
+
+- Added lease-aware FFmpeg execution: checks before spawn, periodic checks during the child process, AbortController cancellation, and propagation of the original lease-loss error.
+- Wired lease callbacks through CineCode, hybrid timeline and mux, slideshow, background music mixing, validation decode, and Gemini TTS encoding. Added cleanup of background-mix outputs/manifests on post-publish lease loss.
+- Added real FFmpeg cancellation and audio mixer lease-propagation/post-publish cleanup regressions. Static syntax checks passed; runtime tests/lint not executed.
+- Commits: `028cf9a9fa55646c43d6ef6833d43d8d05dc9a56`, `e97f317a784dbc62937a24b16d0edcdfd6162bda`, `0a00d5511bd969560766b9a28244f19e6a3d40dd`, `5c5d80e901dde39e14fc43f155c80cdb901279bf`, `c50bbb5bf42cbb216d5c62a1e905bb49852ba193`, `7bfd7738f447ef30a4cde6b7a404abb25476bfb3`, `2d8b979362851db3d46352772f83f660330e46f5`, `6e397e3b90b4924c9909574da746f9841b27acca`, `38a5fdd8cc08a1c377fcf6ecd44402bc92a63c9f`, `d451ad7fad6cfce18af34cb2df8f102c2c5b1b00`, `b11ec6b07315385aebaf34519808982cd2180c68`.
+
+
+## 2026-11-20 — Fence final subtitle render and thumbnail fallback
+
+- Threaded the production lease guard into subtitle FFmpeg render and decode validation. Lease failures in caption cache validation now propagate rather than being swallowed as cache misses. Added lease checks around final media metadata and finalVideo metadata assignment.
+- Thumbnail fallback paths now include UUIDs and clean up the just-written output if lease ownership is lost after the write.
+- Added a thumbnail fallback lease-loss cleanup regression. Static syntax/package/test wiring checks passed; runtime tests/lint not executed.
+- Commits: `535d37bd5c68368e925c5669e01516d75b85fac2`, `9c04a8cb43c59ac85ac032102f3f4e9bbe763750`, `e0370bf71252b9f938c2b426048a2595b2b6ac60`, `2eee7d4091d50cdc66125bbe439bd06de78f1b24`.
+
+
+## 2026-11-20 — Fix CineCode scene cleanup and final ready-state fence
+
+- Corrected `getVideoAttemptSidecarPaths()`: the CineCode scene cleanup loop was unreachable after an early return and attempted to push into an undeclared array. It now returns the main video sidecars plus each of 20 possible CineCode scene outputs, render intermediates, and manifests.
+- Added regression coverage in `test/production-attempt-artifact-cleanup.test.js`; confirmed the test is already wired into `npm test`.
+- Added a final lease assertion immediately before the production-ready DB write.
+- Commits: `46bd3d07d6e747b19b9c00951cf65dd4c7c02e8b`, `c9d67d71a689a7a844613c88194580e45ee903c8`, `9f94c71a733d9642af406db80c7a8f483d8faa86`, `7f30f11537b78ed1d9943e18bf46fde53c215fcb`.
+- Static syntax/package/test wiring checks passed; runtime tests/lint not run. PR #2 remains open/draft/unmerged; latest head `7f30f11537b78ed1d9943e18bf46fde53c215fcb`; no workflow run found.
+
+## 2026-11-20 — Fence Shorts rendering against stale workers
+
+- Added optional lease assertions to Shorts rendering and passed them to FFmpeg render and decode validation.
+- Made MP4, temporary MP4, and captions paths UUID-attempt-specific. Added lease checks before/after rendering, validation, metadata inspection, rename, and DB result persistence.
+- Lease-loss cleanup removes only the current attempt's files and does not let the stale worker write a failed status. Added regression coverage in the existing Shorts test suite.
+- Commits: `81290bfc53539307587e013af41e31b78ba50783`, `1061a6a9357b11f8de602e774f705b0e59627006`.
+- Static syntax/package/test wiring checks passed; runtime tests/lint not run.
+## 2026-11-20 — Wire Shorts render API into production operation lease
+
+- Audited the full render call chain and found the API route invoked `this.shorts.render()` without the optional `assertLease` callback. The service-level lease checks therefore did not protect the real dashboard/API path.
+- Added `renderShortClip()` on the application agent. It requires `SceneRepairService.withProductionOperationLease()`, passes `assertLease` into the Shorts service, and uses the existing heartbeat/owner-scoped release path. The route now delegates through this method; absent lock support fails closed.
+- Added a regression test for callback propagation, lock contention, guaranteed release, and 503 when DB lock support is unavailable. Wired it into `npm test`.
+- Commits: `9431be18515ac2828d9ebd1d5e3312b511639614`, `db70d2646df8263f35e81778d5914cd3ba9fbdb9`, `d86946d64fe9ad3518b4ff39faf8435ee2034664`.
+- Static syntax and package wiring checks passed. Runtime tests/lint not executed; latest PR #2 head has no workflow runs. PR remains open/draft/unmerged and was not retargeted or rebased.
+
+## 2026-11-20 — Persist Shorts render attempts and fence stale DB writes
+
+- Audited the Shorts table after API lease integration and found the service's `renderAttemptId` was not persisted. Added `render_attempt_id` and `render_metadata` columns using the existing idempotent migration mechanism, and included both fields in normal reads/writes.
+- Added `updateShortClipForRender()` with an atomic conditional UPDATE guarded by `status='rendering'` and the attempt ID. Render success/failure now commits through this method; a superseded attempt cannot overwrite a newer render. Rendering-time edits now return 409.
+- Added SQLite CAS coverage and service tests for stale-attempt cleanup and edit rejection during rendering. All regression tests are wired into `npm test`.
+- Commits: `de935a6b4af92e2cbe76a115904bf47f7ebcd416`, `6a4cfd33d4fe2f5d6746aa716138f6a5f9a5d3ba`, `8297cd16669ba6e8b2190653f7f7f9410e5452bb`, `356a2975035a0773d787cc7df409d2442b5da836`, `a1581a8eb4235ef6573d042c10f9e12b9ee0602d`, `8ea31af5d1a29e920fb877ba0e327c63aaea24fd`, `73bcc460430ab8f3d2fbc6358bf905d368bc8ba6`, `487c4d26ac25982b7a15fe28a8991c3fcd326d90`.
+- Static syntax/package checks passed. Runtime tests/lint were not executed; GitHub reports no workflow runs for the current PR #2 head. No PR was merged, retargeted or rebased.
+
+- Follow-up hardening: a new render attempt now clears any prior output/captions/metadata references before rendering, so a superseded attempt cannot leave the DB pointing at a file that its cleanup removes. Commit: `f52151fb2b9abeaf6e6a3edcd3d2d9e26a77632b`. Latest PR #2 head is `f52151fb2b9abeaf6e6a3edcd3d2d9e26a77632b`; still open/draft/unmerged, base unchanged, mergeable false, zero workflow runs. Static syntax/package checks passed; runtime tests/lint remain unexecuted.
+
+## 2026-11-20 — Secure Shorts approval and cross-worker YouTube upload claims
+
+- Approval endpoint now uses the production operation lease; `assertLease` is passed into Shorts service and asserted around schedule persistence and Short status commit. Added API contention and service lease-loss tests.
+- YouTube upload now requires an atomic SQLite schedule claim before the external API call. A second process cannot claim an `uploading` row; `reconciliation_required` remains non-retryable until operator reconciliation. Definite failures may be retried with the original explicit approval/evidence. Added cross-connection SQLite CAS test and two independent publisher-instance regression.
+- Shorts status sync now uses the schedule ID as a compare condition to prevent an old schedule from changing a newer Short record.
+- Commits: `6e7a805709d6e6fad2d985e382813e1395fcb1d8`, `2543c39461b5f730fb3ab2d66598fbc03a114e1d`, `2064b7b078d351873ea5987abb4201d5b962ebaa`, `9f7095f5e4c9410f4686d4901ae795108a73b982`, `8100c12e70232c9b6f23ffd558897844cee275c8`, `e18a27ff1a2176292d682653df34b9659c928e75`, `5aaea2a4e49accd5e2e6764c5e44bf6734b02f43`, `abdc38c1a447a6ed60aae3a62db076824c726020`, `87d7976b3752fa53473451da62e74e8318e254c1`, `f759140d8aab6dd4461eb4d81f54d128179b29ee`, `fa5d643def67d89f138e429f4c1728a29b39ef3f`, `e3d482d562c885873756e22065ea3391dcb01d44`, `836003841e039da4514ea9425385e1b9fdbfec97`, `7fc454b415ccf40807382c5e234582285ee4d466`, `6f031c3179fa5e07da23d23e1565bbbe44ec0cb1`, `62096453e7d397ba9fe526c7a450d3a50a575e57`, `1ec8b6ffe9b83300f44d58d80499ef5391b8c6c8`, `6e87729f2cb85b13d7776b4b495a9f0e791a553b`.
+- Static syntax and package wiring checks passed; runtime tests/lint not executed. GitHub Actions state to be checked against the final PR head.
+
+- Follow-up: aligned the manual `/publish/:contentId` API guard with the publishing service so a Short in `failed` state can be retried after a definite failure, provided its prior approval/evidence remain valid. Uncertain `uploading`/`reconciliation_required` states remain blocked. Commit on PR #2: `d8fdd192f54a6b53f6f8b98c37f601bcfa7cdc99`.
+
+
+## 2026-11-20 — Add operator reconciliation for uncertain YouTube uploads
+
+- Audited publishing flow: the existing `reconcileUploadedVideo()` only verified a video ID already stored in SQLite; no operator path existed for a successful YouTube upload whose response/ID was lost.
+- Added protected unresolved-list, reconcile-by-video-ID, and explicit resolve-as-absent endpoints. Reconcile verifies the candidate video exists, belongs to the authenticated channel, and has the scheduled title before persisting it.
+- Added atomic SQLite CAS methods so attach-vs-absence decisions cannot race. Confirmed-absent decisions are recorded in metadata and move the row to known `failed`; ambiguous states remain blocked from automatic retry.
+- Added a SQLite/service regression suite and npm test wiring, plus `docs/PUBLISHING_RECONCILIATION.md`.
+- Commits on PR #2: `d15acbc6b57baedf7adddd73c3f8d3498b0cfe8c`, `9a013c22fc39bae4e724b6c28765cdcdb8166260`, `63ec8e24e7fde6afbb1485c42bc41c97f7f64e79`, `418414f727266220241b145cb225d66837d30c25`, `fa614bdc38aa38a49c2bb0f093fa6a68c57fc8d1`, `7a2483b5a198d7c249fb41b81a5d9ebc51983201`, `a1b367f96c61d060196f0c7812932febbda8a8da`.
+- Static syntax/package wiring checks passed. Runtime tests and lint were not run. PR #2 remains draft/open/unmerged, and no GitHub Actions workflow run was returned for the latest head.
+
+
+## 2026-11-20 — Add dashboard controls and an upload-in-flight grace period
+
+- Added an overview dashboard panel for unresolved YouTube uploads, including refresh, video ID entry, verified attach, and explicit absence confirmation. The UI uses the existing API helper, so API-key handling remains consistent.
+- Identified a safety race: an `uploading` row could still represent a live request, so an operator must not immediately mark it absent just because the video is not yet visible. Added `upload_started_at`, set at the atomic upload claim, and enforce a ten-minute minimum grace period in the SQLite CAS for absence decisions. Existing unresolved rows start their grace period at migration time.
+- Added tests for fresh upload rejection and updated the upload claim/reconciliation SQLite schemas. Dashboard displays the attempt start time and the 10-minute rule; API reports `UPLOAD_GRACE_PERIOD_ACTIVE` when appropriate.
+- Commits on PR #2: `75a55e9c91ff5bf243809ab758cd59a36ceafa9a`, `a47cc78dc16a59dac5a13701d31bf9bfd0e90659`, `34717cbcac4035d85ec00cee0fc59f1d98f264b6`, `62eee1750d5086d09825ea05039318f015ad25f6`, `726d4bae72ff2832d2363796dd4e4cfd912f1e10`, `a5b93e5ed253741a46e403765e85dd26e203fda2`, `aa35097b6c3415e9a0d4c28c1d532ef86519e6a5`, `14b1f6b1047e42173ad5c0723878d415f1a059d3`, `114425e57c02b2e11e61e2c2d1437512925cbc93`, `27e292d77db23ea1bef1b057147bbbebff038511`, `4407b33b1148d2289d9723188a3a52e6941b24bf`.
+- Static syntax checks passed; runtime tests/lint were not executed.
+
+- Final guard: missing `videos.insert` response ID is now treated as ambiguous (502) and remains blocked for operator reconciliation; added an assertion that upload claims persist their start time. Final PR #2 head: `25e6e6489e495b0658cf0e4a18a29d9df20179a7`. Static syntax/package checks passed; runtime tests/lint were not run; no workflow run was returned.
+
+
+## 2026-11-20 — Harden existing-video recovery verification
+
+- Audited restart/recovery path and found the persisted-ID path weaker than manual operator reconciliation: it checked only that a YouTube ID existed. Updated it to verify authenticated channel ownership and normalized scheduled title before publishing state.
+- Added exact-status/video-ID SQLite CAS for verified recovery. Wrong channel/title and missing video remain unresolved; API transport failures leave the prior state untouched.
+- Added real-SQLite regression coverage for valid recovery, invalid ownership/title, and competing verification results. Updated reconciliation documentation.
+- Commits: `efce2165618ff2ed8034a13f4faf1625f9bcc399`, `821ba70667b7a2f28968894685170e2b841e1f69`, `2e710188755e384adc4bdd52a0434544e4f729c8`, `13e2cfbef02784d226e99596de60272892faff49`.
+- Static syntax/package checks passed. Runtime tests/lint not run; no workflow run returned for latest PR head.
+
+## 2026-11-20 — Durable scheduled queue refresh and catch-up
+
+- `processPublishQueue()` now reloads the durable SQLite queue on every scheduler tick rather than trusting the startup in-memory snapshot. Overdue scheduled rows are therefore picked up after restart; paused rows remain excluded from automatic publishing.
+- A database read failure clears the in-memory queue and safely skips that tick, preventing stale memory from initiating uploads.
+- Invalid scheduled timestamps are marked `failed` with a clear error and are never treated as immediately due.
+- Added `test/publishing-queue-recovery.test.js` for restart catch-up, invalid timestamps, DB-read failure/stale-memory suppression, and overlapping queue ticks sharing one in-process publish operation. Wired into `npm test`.
+- Existing SQLite atomic upload claim and unresolved-upload reconciliation continue to protect cross-process uploads and ambiguous outcomes.
+- PR #2 commits for this slice: `ff0baa09606c1d72bf18d6423805cd092cef0af2`, `ae1a2f712463065dd605e1f224c6635893d29636`, `5bacd5b9aa2f2d250ff9899ab02cf3b782027586`.
+- Static JavaScript syntax checks passed for the changed publishing service and new regression test; package JSON parsed. Runtime tests/lint have not been run in this environment.
+
+## 2026-11-20 — Atomic schedule creation
+
+- Replaced the check-then-insert schedule creation path with a single SQLite `INSERT ... SELECT ... WHERE NOT EXISTS` statement keyed by `production_id`. Concurrent callers now return the same existing durable schedule row instead of creating duplicate schedule entries.
+- Extended `test/publish-schedule-claim.test.js` to race two independent SQLite connections against the same production and assert one persisted row and one shared schedule ID. The test is already included in `npm test`.
+- Static syntax checks passed for DB and test files. Runtime tests/lint were not executed.
+
+## 2026-11-20 — Recorded upload protection across manual and scheduled paths
+
+- `publishContentOnce()` now verifies a durable YouTube video ID before local narration readiness checks, preventing missing local assets from blocking reconciliation and ensuring the existing video is never treated as a new upload candidate.
+- `rescheduleContent()` and `deleteScheduledContent()` reject any row with a recorded YouTube ID even if an earlier failure left its status as `failed`.
+- `approveContent()` refuses to reset approval/schedule state when the schedule already has a YouTube ID.
+- Added `test/publishing-recorded-upload.test.js` and wired it into `npm test`; covers existing-ID reconciliation before asset checks and reschedule/delete protection.
+- Static JavaScript syntax checks passed for publishing service, API and regression test; package JSON parsed. Runtime tests/lint were not executed.
+
+
+## 2026-11-20 — YouTube analytics reliability and accepted-upload persistence
+
+- Analytics collection now uses independent settled requests so an optional demographics, traffic, device, outcome, or engagement endpoint failure does not discard other successful YouTube API metrics. Missing metrics remain null/empty and are accompanied by per-section availability/error metadata; simulated demographics are no longer substituted as if they were real.
+- If no core views or watch-time result is available, the fallback remains explicitly marked `simulated_fallback` and remains excluded from channel learning. Performance scoring now excludes unavailable metrics from its denominator rather than producing `NaN`.
+- Daily CTR is now weighted by daily impressions rather than taking a simple average of daily percentages.
+- Added `test/analytics-partial-data.test.js` and wired it into `npm test`; covers partial API failures, demographic partial availability, impression-weighted CTR, and explicit simulated fallback.
+- Added atomic `Database.recordScheduleEntryUploadResult()`: the accepted YouTube video ID/URL is persisted only while the schedule is claimed as `uploading` with no existing ID. Same-ID retries are idempotent; a conflicting ID cannot overwrite the accepted upload.
+- `uploadToYouTube()` now requires that atomic persistence before proceeding to thumbnail/caption work. Thumbnail failures remain separate and repair through the existing retry-thumbnail endpoint without another `videos.insert` call.
+- Extended SQLite upload-claim regression and recorded-upload regression to cover durable ID persistence and thumbnail-only retry. Updated `docs/PUBLISHING_RECONCILIATION.md`.
+- PR #2 commits: `3d559b5b6ea378c9631deba21f2d09032a2642bb`, `494df89052ed02e102fa25251c0529ab7d053197`, `300af18343b7943af8a07e2aa1a7b34fdbd9623e`, `ff4575a3060b9179bb0610a7c8faec831a085549`, `4f7bfbbfbb454f22076ed8054e73b63cd32097ae`, `00d1d6a8f104b5b975f2e573a61cb162380f565e`, `4461e810eac8b628e9f92a0c59f03912be01dfba`, `dda9a4f15c71dd40ea268db4d1812ca0092a295f`, `a3ceb2bfc2116a6281c789f677b7ece364ab4ede`, `baed44026f5aa36664b970a9c71bd930545debdc`.
+- Static JavaScript syntax checks passed for all changed JS files and package JSON parsed. Runtime tests and lint have not been executed in this session; latest PR head workflow lookup returned no runs. PR #2 remains open/draft/unmerged. No merge, rebase, or base change performed.
+
+
+### Follow-up corrections — 2026-11-20
+- Demographic summaries no longer invent a default age/gender when one or both dimensions are unavailable; partial dimensions explicitly say which part is missing.
+- Organic traffic share now reports a percentage of total views (or null when no views exist), rather than returning an absolute view count. Device/traffic percentages are guarded against division by zero.
+- Follow-up PR #2 commits: `fa72d7fe9ac7dfae6b194bd9afbfeeef748e489e`, `12641146e1a93ff2b35c979f192e12882ba96095`.
+- Latest PR #2 head at this checkpoint: `12641146e1a93ff2b35c979f192e12882ba96095`; open/draft/unmerged, base unchanged, mergeable false, no workflow runs. Static JS syntax and package JSON checks passed; runtime tests/lint not run.
+
+### Post-upload caption recovery — 2026-11-20
+- YouTube captions are now treated as an independent post-upload asset, matching thumbnail behavior. Caption API/file errors are no longer silently swallowed: metadata.captionUpload records uploaded/failed state, timestamp, bounded error details, and retryRequired.
+- Added PublishingSchedulingAgent.retryCaptionUpload(contentId) and protected POST /api/content/:productionId/retry-captions. It requires an already-recorded YouTube ID and a recorded failed caption state, reuses that ID, and never calls videos.insert.
+- Added test/post-upload-assets.test.js: simulates successful video insertion followed by thumbnail and caption failures, then repairs both assets and asserts exactly one videos.insert call.
+- Added the regression test to the npm test script and documented both retry endpoints in docs/PUBLISHING_RECONCILIATION.md.
+- PR #2 commits: 7c3043a754201fffbb6f354bb0b8c9c86750b5aa, f794729381d97432db4eec45c76afae6309cf0a5, 6c3034243042a395e3f5eb23e1e64f243571160e, 17702f00f6445c919dcbaaa31c90408f3e9e90cc, 78ad061bb95f18448e82c68943c562eb4cefcbd6.
+- Static JavaScript syntax checks passed for the publishing agent, route file, and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint were not run in this session. PR #2 head: 78ad061bb95f18448e82c68943c562eb4cefcbd6, open/draft/unmerged, base unchanged, no workflow runs. No merge, rebase, or base change performed.
+
+### Missing-metric protection in channel learning — 2026-11-20
+- Fixed ChannelLearningEngine.normalizeMetrics(): unavailable views, impressions, CTR, retention, watch time, engagement, and derived ratios remain null instead of being converted to zero.
+- Dimension recommendations now exclude unmeasured metric values. Channel packaging and retention recommendations each require at least two genuinely measured values, and their evidence sample size reflects only those measured videos.
+- Added test/channel-learning-missing-metrics.test.js for partial analytics normalization, no false recommendations from missing CTR/retention, and exclusion of unmeasured cohorts. Wired it into npm test.
+- PR #2 commits: d32a6be3a82312277a4e3f413b4e199cba032937, b7c09132e271dbe49807cac67bccc29c422028e9, de0fcafa2c94782cf866b2c158dbc88ce58975b4.
+- Static JavaScript syntax checks passed for the learning engine and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint not run. PR #2 remains open/draft/unmerged; no merge, rebase, or base change.
+### Approved performance learnings now reach script writing — 2026-11-20
+- Added getApprovedScriptLearnings() in utils/packaging-learning.js. It selects only operator-approved format, length, hookLength, and retention recommendations with future_plans/future_scripts scope; pending/rejected, current-video-only, packaging-only, and unrelated audience-demand learnings are excluded.
+- The production generation strategy now attaches sanitized approvedScriptLearnings alongside packagingLearning. Script-writer AI prompt receives these as proportionate hook/pacing/length/format guidance while preserving topic, audience, factual accuracy, and channel constraints.
+- Added test/approved-script-learning.test.js and wired it into npm test.
+- PR #2 commits: 82e37d7945a214a7647187fb1f24f22a79718d62, a8834cdac75085f0b73043b6ee04f57226bce2f4, fa7078aba6741995f6dfd9d1d47efe8ae1e365e1, e2ffa66ec0034a6cf69f8088d6e5cacf7e8b4b03, a8421f88803d288ed48d961bace6b86c43cceb9c.
+- Static JS syntax checks passed for utility, script agent, index route/generation file, and regression test; package JSON parsed. Runtime tests/lint not run. No merge/rebase/base change.
