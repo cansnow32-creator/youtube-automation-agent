@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { acquireGenerationJobLease } = require('../utils/generation-job-lease');
+const { YouTubeAutomationAgent } = require('../index');
 
 function createLockDatabase(options = {}) {
   const locks = new Map();
@@ -76,10 +77,82 @@ async function testMissingLockSupportFailsClosed() {
   );
 }
 
+async function testGenerationRunnerHoldsLeaseUntilAllStagesFinish() {
+  const locks = new Map();
+  const updates = [];
+  let resolveAcquired;
+  const acquiredSignal = new Promise(resolve => { resolveAcquired = resolve; });
+  const db = {
+    async acquireProductionOperationLock(lockId, owner) {
+      if (locks.has(lockId)) return false;
+      locks.set(lockId, owner);
+      resolveAcquired();
+      return true;
+    },
+    async renewProductionOperationLock(lockId, owner) {
+      return locks.get(lockId) === owner;
+    },
+    async releaseProductionOperationLock(lockId, owner) {
+      if (locks.get(lockId) === owner) locks.delete(lockId);
+    },
+    async updateGenerationJob(jobId, changes) {
+      updates.push({ jobId, changes });
+    },
+    async setSetting() {}
+  };
+  const agent = Object.create(YouTubeAutomationAgent.prototype);
+  agent.db = db;
+  agent.logger = { error() {}, info() {}, warn() {} };
+  agent.operator = { notify: async () => {} };
+
+  let releaseProducer;
+  let producerStarted;
+  const startedSignal = new Promise(resolve => { producerStarted = resolve; });
+  const producerGate = new Promise(resolve => { releaseProducer = resolve; });
+  let producerCalls = 0;
+  agent.generateContent = async () => {
+    producerCalls += 1;
+    producerStarted();
+    await producerGate;
+    return {
+      contentId: 'production-1',
+      title: 'Lease test',
+      reviewStatus: 'needs_review',
+      qualityScore: 95
+    };
+  };
+
+  const firstRun = agent.runGenerationJob('job-shared', {
+    topic: 'Lease test',
+    style: 'explainer',
+    length: 'short',
+    strategyContext: {}
+  });
+  await acquiredSignal;
+  await startedSignal;
+  await assert.rejects(
+    agent.runGenerationJob('job-shared', {
+      topic: 'Lease test',
+      style: 'explainer',
+      length: 'short',
+      strategyContext: {}
+    }),
+    error => error.code === 'GENERATION_JOB_LOCKED' && error.status === 409
+  );
+  assert.equal(producerCalls, 1, 'a competing worker cannot enter the same generation job');
+  assert.equal(locks.has('generation:job-shared'), true, 'the lease remains held while the producer is running');
+
+  releaseProducer();
+  await firstRun;
+  assert.equal(locks.has('generation:job-shared'), false, 'the job lease is released after all stages finish');
+  assert.equal(updates.some(item => item.changes.status === 'completed'), true);
+}
+
 async function run() {
   await testCompetingWorkersCannotAcquireSameJob();
   await testLeaseLossFailsClosedAndReleasesOnlyOwnedLock();
   await testMissingLockSupportFailsClosed();
+  await testGenerationRunnerHoldsLeaseUntilAllStagesFinish();
   console.log('Generation job lease tests passed');
 }
 
