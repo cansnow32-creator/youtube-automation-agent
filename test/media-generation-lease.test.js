@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
 const { MediaGenerationService } = require('../utils/media-generation-service');
+const { Database } = require('../database/db');
 
 async function testAttemptScopedClipOutputsAndLeaseLossCleanup() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-attempt-'));
@@ -270,6 +271,43 @@ function makeStatefulMediaTaskDb(initialTask = null) {
   };
 }
 
+async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-db-clear-'));
+  const db = new Database();
+  db.dbPath = path.join(directory, 'media-tasks.sqlite');
+
+  try {
+    await db.initialize();
+    const created = await db.createMediaGenerationTask({
+      jobId: null,
+      productionId: 'production-db-clear',
+      sceneIndex: 0,
+      provider: 'test-provider',
+      model: 'test-model',
+      status: 'failed'
+    });
+    await db.updateMediaGenerationTask(created.id, {
+      externalTaskId: 'old-remote-task',
+      outputPath: path.join(directory, 'old-output.mp4'),
+      status: 'failed'
+    });
+    const reset = await db.updateMediaGenerationTask(created.id, {
+      externalTaskId: null,
+      outputPath: null,
+      status: 'submitting',
+      completedAt: null,
+      error: null
+    });
+    assert.equal(reset.external_task_id, null, 'SQLite update must clear the previous external task ID');
+    assert.equal(reset.output_path, null, 'SQLite update must clear the previous output path');
+    assert.equal(reset.status, 'submitting');
+    assert.equal(reset.completed_at, null);
+  } finally {
+    await db.close();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function testAmbiguousProviderSubmissionIsNotAutomaticallyRetried() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-unknown-'));
   const db = makeStatefulMediaTaskDb();
@@ -513,6 +551,7 @@ async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting
 }
 
 async function main() {
+  await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
