@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20 (live PR metadata refreshed after generation-wide lease changes)
+Last reconciled: 2026-11-20 (live PR metadata refreshed after producer-side-effect lease fencing)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
@@ -11,10 +11,10 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `4b79565185934266dfed6109cd8a830a3fed8be2`; 0 workflow runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `bce6c2c718f81754ac99013a997fc62c620d69d0`; 0 workflow runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head advances with continuity-document commits, so refresh live metadata each session |
 
-PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `4b79565185934266dfed6109cd8a830a3fed8be2`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3's head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `bce6c2c718f81754ac99013a997fc62c620d69d0`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3's head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
@@ -166,3 +166,16 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Re-fetched six changed source/test files from GitHub and parsed them for JavaScript syntax; all parsed. This is not runtime test execution. `npm test`, lint, database integration and real generation/resume have not run; Desktop Commander monthly execution quota is exhausted and GitHub shows zero workflow runs for this head.
 - Limitation: the lease assertions are cooperative and cannot atomically fence a database/file mutation in the tiny interval between a successful assertion and the actual side effect. Lease loss during a long producer is checked immediately after return and stale checkpoint/job failure writes are suppressed.
 - Next: continue production recovery and final artifact side-effect audit, then get a real CI run via the GitHub Actions UI or authorized workflow dispatch. Connected GitHub tools do not expose a workflow-dispatch action. Preserve the PR #1/#2 stack; do not merge.
+
+
+## Latest PR #2 early-stage provider side-effect fencing — 2026-11-20
+
+- Live GitHub state: PR #1 is open/draft/unmerged at `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`, mergeable true. PR #2 is open/draft/unmerged at `bce6c2c718f81754ac99013a997fc62c620d69d0`, base `feat/local-first-quality-gate`, mergeable false, 0 workflow runs. PR #3 remains open/draft/unmerged and its branch head advances with continuity updates. No PR merged or rebased.
+- The generation-job lease assertion is now passed into the strategy, script, thumbnail and SEO agents. They check the lease at producer boundaries and immediately before/after their internal DB persistence (`saveContentStrategy`, `saveScript`, rejected `saveScriptQualityReview`, `saveThumbnail`, `saveSEOData`). The rejected-script-review catch path rethrows lease errors instead of swallowing them as persistence warnings.
+- Thumbnail assets use unique per-attempt names. Base, overlay and optimized outputs are tracked; partial output is removed inside the individual image helpers if a write fails; uncommitted outputs are deleted on lease loss. On success only the optimized thumbnail is retained after its DB row is saved.
+- Packaging A/B thumbnail generation accepts the lease assertion and cleans all generated variants on failure. `preparePackagingExperiment()` passes the lease and removes generated variant files if lease loss occurs before the quality-review stage continues.
+- Added `test/generation-stage-artifact-cleanup.test.js` for strategy/script/SEO persistence suppression, rejected review persistence suppression, thumbnail cleanup and A/B variant cleanup; included in `npm test`.
+- Commits on PR #2: `7ca655b812044e63d8de8635602f1647fa513d70`, `dee9e52cc748549c5db74be6ad099be741b92ffa`, `28e1e15ac2e23bb6a644393224675c51842e8cb0`, `57d1495f014f982f4bbf480ec954f8d13215cb8f`, `84da7b0df0a10ec5d689c27ec40507d6c1b38341`, `41f612d1caa7ccdb8bb22a30b6b8551240dae944`, `04292d442af9f06452686911184857464c00ab09`, `ed52b8bee7b2bfbabf0a04e85776b0288c1c3898`, `9322fc7ed228420ab6cb3c2633410a18f16a2663`, `c74e69c2c270548756003b4fcc780eedfdc8c806`, `bce6c2c718f81754ac99013a997fc62c620d69d0`.
+- Re-fetched six implementation/test files from GitHub and parsed JavaScript sources; JSON package manifest parsed and the new test is in `npm test`. No tests or lint were executed. Desktop Commander execution quota is exhausted; GitHub Actions reports 0 runs for the current PR #2 head.
+- Cooperative assertions still do not create an atomic transaction spanning the lease row and each subsequent DB/file mutation. Existing lease-loss guards reduce stale writes, but the gap between assertion and mutation remains a known limitation.
+- Next: continue auditing production recovery and final video/asset publication for stale-worker side effects; then obtain CI via GitHub Actions UI or authorized workflow dispatch. No dispatch action is available through the current connector. Preserve stacked PRs; do not merge.
