@@ -148,8 +148,9 @@ class ProductionManagementAgent {
         async () => {
           await this.generateCaptions(productionData);
           await this.assembleVideo(productionData);
-          if (productionData.assets.finalVideo?.simulated) {
-            throw new Error(productionData.assets.finalVideo.blockedReason || 'Editing stage produced a placeholder video only');
+          const finalVideo = productionData.assets.finalVideo;
+          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
           }
           await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
           return {
@@ -162,14 +163,12 @@ class ProductionManagementAgent {
       );
 
       // Mark as ready — or simulated, when no real video could be produced
-      const simulated = Boolean(productionData.assets.finalVideo?.simulated);
-      if (simulated) {
-        productionData.status = 'simulated';
-        this.logger.warn(`Content ${productionId} produced PLACEHOLDER assets only — it will NOT be uploaded. Check your AI provider keys and FFmpeg installation.`);
-      } else {
-        productionData.status = 'ready';
-        productionData.timeline.readyForUpload = new Date().toISOString();
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        throw new Error('Production cannot be marked ready without a real MP4 final video');
       }
+      productionData.status = 'ready';
+      productionData.timeline.readyForUpload = new Date().toISOString();
 
       await this.db.updateProductionData(productionData);
 
@@ -216,7 +215,14 @@ class ProductionManagementAgent {
     const workflow = productionData.timeline.productionWorkflow;
     const nextStage = prepareProductionWorkflowForResume(workflow);
     if (!nextStage) {
-      productionData.status = productionData.assets.finalVideo?.simulated ? 'simulated' : 'ready';
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        productionData.status = 'failed';
+        productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
+        await this.db.updateProductionData(productionData);
+        throw new Error(productionData.timeline.lastProductionError);
+      }
+      productionData.status = 'ready';
       await this.db.updateProductionData(productionData);
       return productionData;
     }
@@ -245,8 +251,9 @@ class ProductionManagementAgent {
         await runProductionStage(workflow, 'editing', async () => {
           await this.generateCaptions(productionData);
           await this.assembleVideo(productionData);
-          if (productionData.assets.finalVideo?.simulated) {
-            throw new Error(productionData.assets.finalVideo.blockedReason || 'Editing stage produced a placeholder video only');
+          const finalVideo = productionData.assets.finalVideo;
+          if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+            throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
           }
           await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
           return {
@@ -256,9 +263,12 @@ class ProductionManagementAgent {
           };
         }, persistWorkflow);
       }
-      const simulated = Boolean(productionData.assets.finalVideo?.simulated);
-      productionData.status = simulated ? 'simulated' : 'ready';
-      if (!simulated) productionData.timeline.readyForUpload = new Date().toISOString();
+      const finalVideo = productionData.assets.finalVideo;
+      if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
+        throw new Error('Production cannot be marked ready without a real MP4 final video');
+      }
+      productionData.status = 'ready';
+      productionData.timeline.readyForUpload = new Date().toISOString();
       await this.db.updateProductionData(productionData);
       const index = this.pipeline.findIndex(item => item.id === productionId);
       if (index >= 0) this.pipeline[index] = productionData;
