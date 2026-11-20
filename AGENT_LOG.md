@@ -369,3 +369,12 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Updated the wrapper to require acquire + renew + release and start the heartbeat unconditionally. Added missing-renewal regression coverage and updated lease test fixtures.
 - Commits: `6cfc05db9090e561e7c02ab8830ba928298c3733`, `25c0e2e47c86be8de5dc309ad2841a996a3394b5`.
 - Static syntax checks passed for the changed service and tests; package JSON parses. Runtime test suite and lint remain unexecuted. Recheck PR #2 head and CI before proceeding.
+
+
+## 2026-11-20 — Serialize generation lease heartbeat renewals
+
+- Found a concurrency hole in `acquireGenerationJobLease`: timer ticks could launch overlapping DB renewal calls. `assertLease()` and `release()` could then observe only the latest promise while an earlier renewal remained in flight.
+- Chained renewals sequentially, ensuring the lease assertion and release wait for all queued renewal work; callbacks skip after release/failure.
+- Added regression test `testHeartbeatRenewalsAreSerialized()` to `test/generation-job-lease.test.js`, checking that slow renewals never overlap and queued work completes before assertion.
+- Commits: `9e1fa4d2f0196fd79dd5afc783d0da7646d7f517`, `529baa9dd4740ddb73d1afdb0e727a226fd28821`.
+- Static syntax checks passed; runtime tests/lint remain unexecuted. Recheck latest PR head and CI.
