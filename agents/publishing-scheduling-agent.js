@@ -830,8 +830,32 @@ class PublishingSchedulingAgent {
       }
       throw error;
     }
+    let auditRecorded = false;
+    if (this.db.getScheduleEntryByYoutubeId && this.db.updateScheduleEntry) {
+      try {
+        const entry = await this.db.getScheduleEntryByYoutubeId(videoId);
+        if (entry) {
+          entry.metadata = entry.metadata || {};
+          const history = Array.isArray(entry.metadata.packagingChangeHistory)
+            ? entry.metadata.packagingChangeHistory
+            : [];
+          history.push({
+            source: 'operator_post_publish',
+            appliedAt: new Date().toISOString(),
+            previousTitle: String(snippet.title || '').slice(0, 100),
+            title: title.slice(0, 100),
+            thumbnailPath: String(packaging.thumbnailPath).slice(0, 500)
+          });
+          entry.metadata.packagingChangeHistory = history.slice(-20);
+          await this.db.updateScheduleEntry(entry);
+          auditRecorded = true;
+        }
+      } catch (auditError) {
+        this.logger.warn(`Packaging was updated on YouTube, but its local audit record could not be saved: ${auditError.message}`);
+      }
+    }
     this.logger.info(`Applied approved growth-experiment packaging to video: ${videoId}`);
-    return { videoId, title, thumbnailPath: packaging.thumbnailPath };
+    return { videoId, title, thumbnailPath: packaging.thumbnailPath, auditRecorded };
   }
 
   async uploadCaptions(videoId, captionsPath) {
