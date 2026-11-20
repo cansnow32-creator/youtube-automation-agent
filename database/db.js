@@ -1267,20 +1267,33 @@ class Database {
           `UPDATE media_generation_tasks SET production_id = ?, request = ?, updated_at = datetime('now') WHERE id = ?`,
           [productionId, JSON.stringify(input.request || {}), existing.id]
         );
-        return this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId);
+        return {
+          ...(await this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId)),
+          createdByThisInvocation: false
+        };
       }
     }
 
     const id = this.generateId('media');
-    await this.executeQuery(
+    const insertResult = await this.executeQuery(
       `INSERT INTO media_generation_tasks (
         id, job_id, production_id, scene_index, provider, model, status, request, provider_data
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
-      ON CONFLICT(job_id, scene_index, provider) DO UPDATE SET
-        production_id = excluded.production_id, request = excluded.request, updated_at = datetime('now')`,
+      ${jobId ? 'ON CONFLICT(job_id, scene_index, provider) DO NOTHING' : ''}`,
       [id, jobId, productionId, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
     );
-    return this.findMediaGenerationTask(jobId, input.sceneIndex, input.provider, productionId);
+    const createdByThisInvocation = insertResult.changes === 1;
+    if (jobId && !createdByThisInvocation) {
+      await this.executeQuery(
+        `UPDATE media_generation_tasks SET production_id = ?, request = ?, updated_at = datetime('now')
+         WHERE job_id = ? AND scene_index = ? AND provider = ?`,
+        [productionId, JSON.stringify(input.request || {}), jobId, input.sceneIndex, input.provider]
+      );
+    }
+    return {
+      ...(await this.findMediaGenerationTask(jobId, input.sceneIndex, input.provider, productionId)),
+      createdByThisInvocation
+    };
   }
 
   async findMediaGenerationTask(jobId, sceneIndex, provider, productionId = null) {
