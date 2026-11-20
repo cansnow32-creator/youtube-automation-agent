@@ -680,9 +680,12 @@ class AIVideoGenerator {
   }
 
 
-  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration, renderOptions = {}) {
+  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration, renderOptions = {}, assertLease = async () => {}) {
+    await assertLease();
     if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
+    await assertLease();
     const validImages = await this.filterLocalImageAssets(visualAssets);
+    await assertLease();
     const segments = clips.map(clip => ({ type: 'video', path: clip.path, duration: clip.duration }));
     const generatedDuration = segments.reduce((sum, item) => sum + item.duration, 0);
     const remaining = Math.max(0, this.parseDurationSeconds(totalDuration) - generatedDuration);
@@ -695,17 +698,24 @@ class AIVideoGenerator {
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
     const visualTempPath = visualPath.replace(/\.mp4$/i, '_rendering.mp4');
     const visualManifestPath = visualPath + '.render.json';
+    const visualManifestTempPath = visualManifestPath + '.tmp';
     const finalTempPath = outputPath.replace(/\.mp4$/i, '_finalizing.mp4');
+    const assemblyManifestPath = outputPath + '.assembly.json';
+    const assemblyManifestTempPath = assemblyManifestPath + '.tmp';
     const sourceFingerprint = [];
     for (const segment of segments) {
+      await assertLease();
       const stats = await fs.stat(segment.path);
+      await assertLease();
       if (!stats.isFile() || stats.size <= 0) throw new Error(`Hybrid video source is missing or empty: ${segment.path}`);
+      const sha256 = await hashFile(segment.path);
+      await assertLease();
       sourceFingerprint.push({
         type: segment.type,
         path: path.resolve(segment.path),
         size: stats.size,
         mtimeMs: stats.mtimeMs,
-        sha256: await hashFile(segment.path),
+        sha256,
         duration: Number(segment.duration)
       });
     }
@@ -714,12 +724,12 @@ class AIVideoGenerator {
       renderOptions: { width: renderOptions.width || 1920, height: renderOptions.height || 1080, fps: 30, codec: 'libx264', pixelFormat: 'yuv420p' }
     })).digest('hex');
     const audioSha256 = await hashFile(audioPath);
+    await assertLease();
     const assemblyFingerprint = crypto.createHash('sha256').update(JSON.stringify({
       visualFingerprint,
       audioSha256,
       mux: { loopVideo: true, videoCodec: 'copy', audioCodec: 'aac', shortest: true }
     })).digest('hex');
-    const assemblyManifestPath = outputPath + '.assembly.json';
 
     try {
       let visualCached = false;
@@ -728,30 +738,38 @@ class AIVideoGenerator {
           fs.readFile(visualManifestPath, 'utf8').then(JSON.parse),
           fs.stat(visualPath)
         ]);
+        await assertLease();
         if (manifest.fingerprint === visualFingerprint && stats.isFile() && stats.size > 0) {
-          await this.validateRenderedVideo(visualPath);
+          await this.validateRenderedVideo(visualPath, assertLease);
+          await assertLease();
           visualCached = true;
           this.logger.info('Reusing completed hybrid visual timeline; audio mux will resume.');
         }
-      } catch (_cacheError) {
+      } catch (cacheError) {
+        if (isLeaseFailure(cacheError)) throw cacheError;
         visualCached = false;
       }
 
       if (!visualCached) {
+        await assertLease();
         await fs.rm(visualTempPath, { force: true });
-        await this.renderMediaTimeline(segments, visualTempPath, renderOptions);
-        await this.validateRenderedVideo(visualTempPath);
+        await this.renderMediaTimeline(segments, visualTempPath, renderOptions, assertLease);
+        await assertLease();
+        await this.validateRenderedVideo(visualTempPath, assertLease);
+        await assertLease();
         await fs.rm(visualPath, { force: true });
         await fs.rename(visualTempPath, visualPath);
-        const manifestTempPath = visualManifestPath + '.tmp';
-        await fs.writeFile(manifestTempPath, JSON.stringify({
+        await assertLease();
+        await fs.writeFile(visualManifestTempPath, JSON.stringify({
           version: 1,
           fingerprint: visualFingerprint,
           sources: sourceFingerprint,
           renderedAt: new Date().toISOString()
         }, null, 2));
+        await assertLease();
         await fs.rm(visualManifestPath, { force: true });
-        await fs.rename(manifestTempPath, visualManifestPath);
+        await fs.rename(visualManifestTempPath, visualManifestPath);
+        await assertLease();
       }
 
       let finalCached = false;
@@ -760,21 +778,33 @@ class AIVideoGenerator {
           fs.readFile(assemblyManifestPath, 'utf8').then(JSON.parse),
           fs.stat(outputPath)
         ]);
+        await assertLease();
         if (manifest.fingerprint === assemblyFingerprint && stats.isFile() && stats.size > 0) {
-          await this.validateRenderedVideo(outputPath);
+          await this.validateRenderedVideo(outputPath, assertLease);
+          await assertLease();
           finalCached = true;
           this.logger.info('Reusing completed hybrid video and audio mux.');
         }
-      } catch (_cacheError) {
+      } catch (cacheError) {
+        if (isLeaseFailure(cacheError)) throw cacheError;
         finalCached = false;
       }
-      if (finalCached) return outputPath;
+      if (finalCached) {
+        await assertLease();
+        return outputPath;
+      }
 
-      await this.addAudioToVideo(visualPath, audioPath, finalTempPath, { loopVideo: true });
-      await this.validateRenderedVideo(finalTempPath);
+      await assertLease();
+      await this.addAudioToVideo(visualPath, audioPath, finalTempPath, {
+        loopVideo: true,
+        assertLease
+      });
+      await assertLease();
+      await this.validateRenderedVideo(finalTempPath, assertLease);
+      await assertLease();
       await fs.rm(outputPath, { force: true });
       await fs.rename(finalTempPath, outputPath);
-      const assemblyManifestTempPath = assemblyManifestPath + '.tmp';
+      await assertLease();
       await fs.writeFile(assemblyManifestTempPath, JSON.stringify({
         version: 1,
         fingerprint: assemblyFingerprint,
@@ -782,35 +812,43 @@ class AIVideoGenerator {
         audioSha256,
         assembledAt: new Date().toISOString()
       }, null, 2));
+      await assertLease();
       await fs.rm(assemblyManifestPath, { force: true });
       await fs.rename(assemblyManifestTempPath, assemblyManifestPath);
+      await assertLease();
       return outputPath;
     } finally {
-      // Keep the completed visual-only timeline and its manifest: a failed audio
-      // mux must not force the expensive image/clip concatenation to run again.
-      await fs.rm(visualTempPath, { force: true }).catch(() => {});
-      await fs.rm(finalTempPath, { force: true }).catch(() => {});
+      // A lease-loss caller removes the whole attempt through generateVideo().
+      // These per-process temps are always safe to delete here.
+      await removeAttemptFiles([visualTempPath, finalTempPath, visualManifestTempPath, assemblyManifestTempPath]);
     }
   }
 
-  async validateRenderedVideo(filePath) {
+  async validateRenderedVideo(filePath, assertLease = async () => {}) {
+    await assertLease();
     const stats = await fs.stat(filePath).catch(() => null);
+    await assertLease();
     if (!stats?.isFile() || stats.size <= 0) {
       throw new Error('FFmpeg did not produce a non-empty final video file');
     }
     const duration = await this.getMediaDuration(filePath);
+    await assertLease();
     if (!Number.isFinite(duration) || duration <= 0) {
       throw new Error('FFmpeg final video has no valid media duration');
     }
+    await assertLease();
     await this.runFFmpeg(['-v', 'error', '-i', filePath, '-f', 'null', '-']);
+    await assertLease();
     return { path: filePath, size: stats.size, duration };
   }
 
-  async renderMediaTimeline(segments, outputPath, renderOptions = {}) {
+  async renderMediaTimeline(segments, outputPath, renderOptions = {}, assertLease = async () => {}) {
+    await assertLease();
     const width = Number.isInteger(renderOptions.width) && renderOptions.width > 0 ? renderOptions.width : 1920;
     const height = Number.isInteger(renderOptions.height) && renderOptions.height > 0 ? renderOptions.height : 1080;
     const args = ['-y'];
     for (const segment of segments) {
+      await assertLease();
       const duration = Number(segment.duration).toFixed(2);
       if (segment.type === 'image') args.push('-loop', '1', '-t', duration, '-framerate', '30', '-i', segment.path);
       // Loop short clips to fill their slot, but bound the input: an unbounded
@@ -822,7 +860,9 @@ class AIVideoGenerator {
     );
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);
+    await assertLease();
     await runFFmpeg(args);
+    await assertLease();
     return outputPath;
   }
 
