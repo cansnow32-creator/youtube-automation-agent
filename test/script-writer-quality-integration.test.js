@@ -55,7 +55,7 @@ async function run() {
   });
   agent.qualityPipeline.generateAndReview = async () => { throw blockedError; };
   await assert.rejects(agent.generateScriptWithAI({
-    topic: 'Rejected topic', contentType: 'Explainer', angle: 'Evidence first',
+    topic: 'Rejected topic', jobId: 'job_test_1', contentType: 'Explainer', angle: 'Evidence first',
     targetAudience: 'general audience', keywords: [], researchSources: []
   }, { tone: 'informative', pacing: 'steady' }), error => {
     assert.equal(error.qualityReviewId, 'quality_review_test_1');
@@ -63,6 +63,7 @@ async function run() {
     return true;
   });
   assert.equal(persistedReview.topic, 'Rejected topic');
+  assert.equal(persistedReview.jobId, 'job_test_1');
   assert.equal(persistedReview.draft, blockedError.draft);
   assert.equal(persistedReview.qualityReport.score, 61);
 
@@ -80,12 +81,14 @@ async function run() {
   });
   const saved = await database.saveScriptQualityReview({
     topic: 'Persisted topic',
+    jobId: 'job_persisted_1',
     strategy: { topic: 'Persisted topic' },
     draft: '{"title":"Persisted draft"}',
     qualityReport: { status: 'human_review_required', score: 55 }
   });
   assert.match(inserted.sql, /INSERT INTO script_quality_reviews/);
   assert.equal(inserted.params[0], 'quality_review_fixed');
+  assert.equal(inserted.params[1], 'job_persisted_1');
   assert.equal(saved.id, 'quality_review_fixed');
   assert.equal(saved.quality_report.score, 55);
 
