@@ -21,6 +21,34 @@ async function run() {
     return [simulatedPath];
   };
 
+  const leasePartialPath = path.join(os.tmpdir(), `agenttube-lease-lost-visual-${process.pid}-${Date.now()}.png`);
+  let fallbackCalled = false;
+  generator.generateImage = async (_prompt, imagePath) => {
+    await fs.writeFile(imagePath, 'late provider output');
+    return imagePath;
+  };
+  generator.simulateVisualAssets = async () => {
+    fallbackCalled = true;
+    throw new Error('fallback must not run after lease loss');
+  };
+  let leaseChecks = 0;
+
+  try {
+    await assert.rejects(
+      generator.generateVisualAssets('lease-lost scene', 'test', 1, async () => {
+        leaseChecks += 1;
+        if (leaseChecks === 3) {
+          throw Object.assign(new Error('generation lease lost'), { code: 'GENERATION_JOB_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(fallbackCalled, false, 'lease loss must not trigger simulated fallback generation');
+    await assert.rejects(fs.access(leasePartialPath), { code: 'ENOENT' });
+  } finally {
+    await fs.unlink(leasePartialPath).catch(() => {});
+  }
+
   try {
     const result = await generator.generateVisualAssets('test scene', 'test', 1);
     assert.deepEqual(result, [simulatedPath]);
