@@ -123,6 +123,81 @@ async function run() {
     await fs.rm(uploadRoot, { recursive: true, force: true });
   }
 
+
+  // Nested provider work must receive the same production lease assertion.
+  const nestedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-nested-lease-'));
+  try {
+    const nestedBundle = editableBundle();
+    nestedBundle.scenes[0].narrationStatus = 'stale';
+    let visualLeasePassed = false;
+    let narrationLeasePassed = false;
+    const nestedDb = {
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => true,
+      releaseProductionOperationLock: async () => true,
+      updateProductionScene: async (_productionId, _sceneId, changes) => ({ ...nestedBundle.scenes[0], ...changes }),
+      saveProductionSceneRevision: async () => true
+    };
+    const nestedService = new SceneRepairService(nestedDb, {}, { dataRoot: nestedRoot });
+    nestedService.getEditableBundle = async (_id, assertLease) => {
+      assert.equal(typeof assertLease, 'function', 'bundle initialization must receive the active lease');
+      await assertLease();
+      return nestedBundle;
+    };
+    nestedService.regenerationEstimateUnlocked = async (_id, _sceneId, _input, assertLease) => {
+      assert.equal(typeof assertLease, 'function', 'regeneration estimate must receive the active lease');
+      await assertLease();
+      return { paid: false, provider: 'image-provider', generatedSeconds: 0 };
+    };
+    nestedService.isUsableSceneAsset = async () => true;
+    nestedService.narrationDuration = async () => 8;
+    nestedService.videoGenerator = {
+      lastNarrationResult: { provider: 'test-tts', model: 'test-model' },
+      async generateVisualAssets(_prompt, _style, _count, assertLease) {
+        assert.equal(typeof assertLease, 'function', 'visual regeneration must pass the lease into image generation');
+        visualLeasePassed = true;
+        await assertLease();
+        return [path.join(nestedRoot, 'replacement.png')];
+      },
+      async generateTTSAudio(_text, outputPath, options = {}) {
+        assert.equal(typeof options.assertLease, 'function', 'narration regeneration must pass the lease into TTS');
+        narrationLeasePassed = true;
+        await options.assertLease();
+        await fs.writeFile(outputPath, 'test narration');
+        return outputPath;
+      },
+      async isUsableAudioFile() { return true; }
+    };
+    await nestedService.regenerateUnlocked('production-1', 'scene-1', { regenerateNarration: true }, async () => {});
+    assert.equal(visualLeasePassed, true);
+    assert.equal(narrationLeasePassed, true);
+  } finally {
+    await fs.rm(nestedRoot, { recursive: true, force: true });
+  }
+
+  // The public estimate endpoint can initialize a missing manifest, so it must
+  // execute under the same production-operation lock as other scene changes.
+  let estimateLockAcquired = false;
+  let estimateLockReleased = false;
+  const estimateService = new SceneRepairService({
+    acquireProductionOperationLock: async () => { estimateLockAcquired = true; return true; },
+    renewProductionOperationLock: async () => true,
+    releaseProductionOperationLock: async () => { estimateLockReleased = true; }
+  }, {});
+  estimateService.getEditableBundle = async (_id, assertLease) => {
+    assert.equal(typeof assertLease, 'function');
+    await assertLease();
+    return editableBundle();
+  };
+  estimateService.mediaGeneration = {
+    settings: async () => ({ provider: 'slideshow', order: [], clipDuration: 8 }),
+    registry: { select: () => null }
+  };
+  const estimate = await estimateService.regenerationEstimate('production-1', 'scene-1');
+  assert.equal(estimate.paid, false);
+  assert.equal(estimateLockAcquired, true, 'estimate must acquire a production lease before manifest initialization');
+  assert.equal(estimateLockReleased, true, 'estimate must release its production lease');
+
   console.log('Scene edit lease regression tests passed');
 }
 
