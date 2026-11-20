@@ -328,33 +328,40 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async generateVisualAssets(prompt, style = "ethereal", count = 1) {
+  async generateVisualAssets(prompt, style = "ethereal", count = 1, assertLease = async () => {}) {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
     const attemptPaths = [];
 
     try {
+      await assertLease();
       if (!this.openai && !this.gemini) {
-        return await this.simulateVisualAssets(prompt, style, count);
+        return await this.simulateVisualAssets(prompt, style, count, assertLease);
       }
 
       const enhancedPrompt = this.enhanceVisualPrompt(prompt, style);
 
       for (let i = 0; i < count; i++) {
+        await assertLease();
         const imagePath = path.join(__dirname, '..', 'data', 'assets', `visual_${Date.now()}_${crypto.randomUUID()}_${i}.png`);
         attemptPaths.push(imagePath);
-        await this.generateImage(enhancedPrompt, imagePath);
+        await this.generateImage(enhancedPrompt, imagePath, assertLease);
+        await assertLease();
       }
 
       this.logger.info(`Generated ${attemptPaths.length} visual assets`);
       return attemptPaths;
     } catch (error) {
-      for (const imagePath of attemptPaths) await fs.unlink(imagePath).catch(() => {});
+      await removeAttemptFiles(attemptPaths);
+      if (isLeaseFailure(error)) throw error;
+      // A provider failure is recoverable only while this worker still owns the lease.
+      await assertLease();
       this.logger.error('Visual asset generation failed:', error);
-      return await this.simulateVisualAssets(prompt, style, count);
+      return await this.simulateVisualAssets(prompt, style, count, assertLease);
     }
   }
 
-  async generateImage(prompt, imagePath) {
+  async generateImage(prompt, imagePath, assertLease = async () => {}) {
+    await assertLease();
     await fs.mkdir(path.dirname(imagePath), { recursive: true });
 
     const providers = [];
@@ -387,16 +394,22 @@ class AIVideoGenerator {
         '.' + basename + '.' + crypto.randomUUID() + '.' + provider.name.toLowerCase() + extension
       );
       try {
+        await assertLease();
         await provider.run(attemptPath);
+        await assertLease();
         const metadata = await sharp(attemptPath, { failOn: 'error' }).metadata();
         if (!metadata.width || !metadata.height) {
           throw new Error(provider.name + ' returned an invalid image asset');
         }
-        // Same-directory rename publishes only a complete, validated image.
+        // Recheck ownership immediately before publishing the completed image.
+        await assertLease();
         await fs.rename(attemptPath, imagePath);
         return imagePath;
       } catch (error) {
         await fs.unlink(attemptPath).catch(() => {});
+        if (isLeaseFailure(error)) throw error;
+        // Do not start another provider attempt after ownership has expired.
+        await assertLease();
         const description = describeImageProviderError(provider.name, provider.model, error);
         failures.push(description);
         if (index < providers.length - 1) {
@@ -1385,19 +1398,23 @@ class AIVideoGenerator {
     }
   }
 
-  async generateThumbnail(script, style = "ethereal") {
+  async generateThumbnail(script, style = "ethereal", assertLease = async () => {}) {
     this.logger.info('Generating custom thumbnail...');
+    let thumbnailPath = null;
 
     try {
+      await assertLease();
       if (!this.openai && !this.gemini) {
-        return await this.simulateThumbnailGeneration(script, style);
+        return await this.simulateThumbnailGeneration(script, style, assertLease);
       }
 
       const prompt = `YouTube thumbnail for "${script.title}", ${style} style, eye-catching, high contrast text, professional design, clickable, engaging`;
-      const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${Date.now()}.png`);
+      thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${Date.now()}_${crypto.randomUUID()}.png`);
 
-      await this.generateImage(prompt, thumbnailPath);
+      await this.generateImage(prompt, thumbnailPath, assertLease);
+      await assertLease();
       const metadata = await sharp(thumbnailPath).metadata();
+      await assertLease();
 
       return {
         path: thumbnailPath,
@@ -1405,8 +1422,11 @@ class AIVideoGenerator {
         fileSize: await this.getFileSize(thumbnailPath)
       };
     } catch (error) {
+      if (thumbnailPath) await fs.unlink(thumbnailPath).catch(() => {});
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       this.logger.error('Thumbnail generation failed:', error);
-      return await this.simulateThumbnailGeneration(script, style);
+      return await this.simulateThumbnailGeneration(script, style, assertLease);
     }
   }
 
@@ -1429,21 +1449,28 @@ class AIVideoGenerator {
     return infoPath;
   }
 
-  async simulateVisualAssets(prompt, style, count) {
+  async simulateVisualAssets(prompt, style, count, assertLease = async () => {}) {
     this.logger.info(`Simulating ${count} visual assets...`);
     
     const paths = [];
     for (let i = 0; i < count; i++) {
+      await assertLease();
       const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_sim_${Date.now()}_${crypto.randomUUID()}_${i}.info`);
       
-      await fs.writeFile(assetPath, JSON.stringify({
+      try {
+        await fs.writeFile(assetPath, JSON.stringify({
         message: 'AI visual asset would be generated here',
         prompt: prompt,
         style: style,
         timestamp: new Date().toISOString()
-      }, null, 2));
-      
-      paths.push(assetPath);
+        }, null, 2));
+        await assertLease();
+        paths.push(assetPath);
+      } catch (error) {
+        await fs.unlink(assetPath).catch(() => {});
+        await removeAttemptFiles(paths);
+        throw error;
+      }
     }
     
     return paths;
@@ -1471,18 +1498,25 @@ class AIVideoGenerator {
   }
 
 
-  async simulateThumbnailGeneration(script, style) {
+  async simulateThumbnailGeneration(script, style, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Simulating thumbnail generation...');
     
-    const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_sim_${Date.now()}.info`);
+    const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_sim_${Date.now()}_${crypto.randomUUID()}.info`);
     await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
     
-    await fs.writeFile(thumbnailPath, JSON.stringify({
+    try {
+      await fs.writeFile(thumbnailPath, JSON.stringify({
       message: 'AI thumbnail would be generated here',
       title: script.title,
       style: style,
       timestamp: new Date().toISOString()
-    }, null, 2));
+      }, null, 2));
+      await assertLease();
+    } catch (error) {
+      await fs.unlink(thumbnailPath).catch(() => {});
+      throw error;
+    }
     
     return {
       path: thumbnailPath,
