@@ -1,3 +1,16 @@
+## 2026-11-20 — Add a distributed lease around the complete generation job
+
+- Static audit found generation checkpoints and early pipeline stages relied on in-memory `activeJobs` only; two app processes could resume the same job and race through strategy/script/thumbnail/SEO. Production had its own narrower lock, but the full generation job did not.
+- Added `utils/generation-job-lease.js` with owner-scoped `generation:<jobId>` lock, 2-hour lease, 30-second renewal heartbeat, fail-closed lost/unverified lease errors, and owner-only release.
+- Applied the lease for the full `runGenerationJob()` lifetime and passed its assertion into `generateContent()`, each recovery stage, checkpoint reads/writes, artifact validation, retry waits, manual stage resets, human-approved script continuation, ProductionManagementAgent and production-resume calls.
+- `GenerationRecoveryService` now avoids stale completed/failed checkpoint writes after the outer lease loss becomes observable. Generation job final/failed state writes are likewise guarded.
+- Added competing-runner/lease tests in `test/generation-job-lease.test.js`; expanded `test/generation-recovery-prerequisites.test.js` to assert no completed/failed checkpoint is saved after loss during the producer. Added lease test to `npm test`.
+- Commits on `feat/video-concept-approval`: `47f8a16e8bbcd40b975f98cc307bdd565082c7af`, `c00d8f8fecb074dc2d310fa7e9aa56eef978f5f2`, `d2c740c468b5efe30318edc13f7b649bb65022f6`, `63bd2fffd6ed3f426ef07d1280b2262f01490c71`, `5a2eee3e224365d9283529c4518bc8c5df8a0df5`, `7cf40742916eee804dc68cf11633d3342c76212f`, `09930cdd98ced25dcbd4db7f19df6fec5f2877ac`, `4b79565185934266dfed6109cd8a830a3fed8be2`.
+- Re-fetched source/test files through GitHub and verified package script wiring. JavaScript syntax parsing completed for `index.js`, `agents/production-management-agent.js`, `utils/generation-job-lease.js`, `utils/generation-recovery-service.js`, and both updated tests. This is static syntax validation only; no runtime tests or lint executed.
+- Desktop Commander device was online, but its monthly execution quota had been exhausted. GitHub Actions reports zero runs for the current PR #2 head `4b79565185934266dfed6109cd8a830a3fed8be2`.
+- Lease assertions are cooperative, not an atomic DB/filesystem transaction; a side-effect can still race in the small interval after a successful assert and before mutation. Long provider work is checked again on return, and stale checkpoint/job-status writes are suppressed once lease loss is observable.
+- Next: continue production recovery/final artifact audit and obtain CI through an authorized GitHub Actions UI/dispatch. Do not merge.
+ 
 ## 2026-11-20 — Isolate image-provider output and clean Gemini TTS sidecars
 
 - Continued PR #2 provider-internal side-effect audit.
