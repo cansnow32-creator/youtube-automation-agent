@@ -30,3 +30,8 @@ YouTube Analytics reports daily buckets rather than exact publication-hour slice
 Channel-wide recommendations and cohort insights use the exact `7d` window as their comparable baseline. A video that has only a 24-hour or 28-day snapshot is not substituted into the 7-day cohort. This avoids comparing early launch performance with longer cumulative totals. The 24-hour and 28-day snapshots remain available for their own reporting and longitudinal analysis; they do not silently influence the fixed 7-day recommendation cohort.
 
 All these windows are cumulative since publication, not rolling periods. Comparisons remain observational and do not establish that a format, title, or script choice caused the measured outcome.
+
+
+## Content-surface boundaries
+
+Learning recommendations are built separately for Shorts and long-form videos. Their reach, retention, and viewing behavior are not pooled into one cohort. Recommendation evidence and proposed changes retain the originating surface so an observed pattern in one surface cannot silently steer the other.
