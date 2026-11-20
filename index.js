@@ -1607,6 +1607,23 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
+    if (job.details?.qualityReviewId) {
+      const review = await this.db.getScriptQualityReview(job.details.qualityReviewId);
+      if (review && ['pending', 'revision_requested'].includes(review.status)) {
+        const error = new Error('This generation job is waiting for a human script-review decision. Resolve the saved draft in the Script review queue before retrying.');
+        error.status = 409;
+        error.code = 'SCRIPT_QUALITY_REVIEW_PENDING';
+        error.qualityReviewId = review.id;
+        throw error;
+      }
+      if (review && review.status === 'human_approved') {
+        const error = new Error('The saved draft has human approval, but it has not yet been accepted as a generation checkpoint. It will not be silently replaced by a newly generated script.');
+        error.status = 409;
+        error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
+        error.qualityReviewId = review.id;
+        throw error;
+      }
+    }
     const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
     await requireApprovedVideoConcept(this.db, approvedConceptId);
     if (this.activeJobs.has(job.id)) {
@@ -1710,7 +1727,16 @@ class YouTubeAutomationAgent {
         status: cancelled ? 'cancelled' : 'failed',
         stage: failedStage,
         error: error.message,
-        details: { failedStage },
+        details: {
+          failedStage,
+          ...(error.code === 'QUALITY_REVIEW_REQUIRED' && error.qualityReviewId
+            ? {
+                qualityReviewId: error.qualityReviewId,
+                qualityReviewStatus: 'pending',
+                qualityReviewCode: error.code
+              }
+            : {})
+        },
         completedAt: new Date().toISOString()
       });
       await this.operator.notify({
@@ -1756,6 +1782,7 @@ class YouTubeAutomationAgent {
         ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
         : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
+      generated.jobId = jobId;
       if (strategyContext.approvedVideoConcept) {
         generated.approvedVideoConcept = strategyContext.approvedVideoConcept;
         generated.approvedVideoConceptId = strategyContext.approvedVideoConceptId || null;
