@@ -149,7 +149,9 @@ class MediaGenerationService {
         attemptId: safeAttemptId
       };
     } catch (error) {
-      if (isLeaseFailure(error)) await removeAttemptOutputs(attemptOutputPaths);
+      // This invocation cannot return a complete clip set. Remove only the
+      // outputs created during this attempt; reused persisted clips are untouched.
+      await removeAttemptOutputs(attemptOutputPaths);
       throw error;
     }
   }
