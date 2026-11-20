@@ -20,6 +20,7 @@ async function run() {
     let writes = 0;
     const db = {
       acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => true,
       releaseProductionOperationLock: async () => true,
       updateProductionScene: async () => { writes += 1; },
       reorderProductionScenes: async () => { writes += 1; return [{ id: 'scene-1' }]; },
@@ -54,9 +55,19 @@ async function run() {
     );
   }
 
+  const missingRenewal = new SceneRepairService({
+    acquireProductionOperationLock: async () => true,
+    releaseProductionOperationLock: async () => true
+  }, {});
+  await assert.rejects(
+    missingRenewal.updateScene('production-1', 'scene-1', { label: 'Changed' }),
+    error => error.code === 'SCENE_EDIT_LOCK_UNAVAILABLE' && error.status === 503
+  );
+
   let operationRan = false;
   const contended = new SceneRepairService({
     acquireProductionOperationLock: async () => false,
+    renewProductionOperationLock: async () => true,
     releaseProductionOperationLock: async () => true
   }, {});
   await assert.rejects(
