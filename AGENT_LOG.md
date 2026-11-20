@@ -438,3 +438,10 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Lease-loss cleanup removes only the current attempt's files and does not let the stale worker write a failed status. Added regression coverage in the existing Shorts test suite.
 - Commits: `81290bfc53539307587e013af41e31b78ba50783`, `1061a6a9357b11f8de602e774f705b0e59627006`.
 - Static syntax/package/test wiring checks passed; runtime tests/lint not run.
+## 2026-11-20 — Wire Shorts render API into production operation lease
+
+- Audited the full render call chain and found the API route invoked `this.shorts.render()` without the optional `assertLease` callback. The service-level lease checks therefore did not protect the real dashboard/API path.
+- Added `renderShortClip()` on the application agent. It requires `SceneRepairService.withProductionOperationLease()`, passes `assertLease` into the Shorts service, and uses the existing heartbeat/owner-scoped release path. The route now delegates through this method; absent lock support fails closed.
+- Added a regression test for callback propagation, lock contention, guaranteed release, and 503 when DB lock support is unavailable. Wired it into `npm test`.
+- Commits: `9431be18515ac2828d9ebd1d5e3312b511639614`, `db70d2646df8263f35e81778d5914cd3ba9fbdb9`, `d86946d64fe9ad3518b4ff39faf8435ee2034664`.
+- Static syntax and package wiring checks passed. Runtime tests/lint not executed; latest PR #2 head has no workflow runs. PR remains open/draft/unmerged and was not retargeted or rebased.
