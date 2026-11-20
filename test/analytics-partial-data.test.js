@@ -99,6 +99,21 @@ async function run() {
   assert.equal(emptyViews.averageCTR, null);
   assert.equal(emptyViews.available, false);
 
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: { rows: [['2026-11-20', null, null, null]] } })
+    }
+  };
+  const omittedDailyMetrics = await agent.getViewsAnalytics('omitted-video', '2026-11-01', '2026-11-20');
+  assert.equal(omittedDailyMetrics.totalViews, null);
+  assert.equal(omittedDailyMetrics.totalImpressions, null);
+  assert.equal(omittedDailyMetrics.available, false);
+
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: {} })
+    }
+  };
   const emptyWatchTime = await agent.getWatchTimeAnalytics('empty-video', '2026-11-01', '2026-11-20');
   assert.equal(emptyWatchTime.totalWatchTime, null);
   assert.equal(emptyWatchTime.averageViewPercentage, null);
