@@ -926,16 +926,73 @@ class ProductionManagementAgent {
       const subtitleDirection = productionData.strategy?.approvedVideoConcept?.subtitleDirection || {};
       if (captionsPath) {
         const captionedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_captioned.mp4`);
-        await runFFmpeg([
-          '-y', '-i', finalVideoPath,
-          '-vf', buildSubtitleFilter(captionsPath, subtitleDirection),
-          '-map', '0:v:0', '-map', '0:a:0?',
-          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-          '-c:a', 'copy', '-movflags', '+faststart', captionedPath
+        const captionTempPath = `${captionedPath}.rendering.mp4`;
+        const captionManifestPath = `${captionedPath}.render.json`;
+        const [sourceHash, captionsHash, sourceStats] = await Promise.all([
+          new Promise((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const stream = require('node:fs').createReadStream(finalVideoPath);
+            stream.on('error', reject);
+            stream.on('data', chunk => hash.update(chunk));
+            stream.on('end', () => resolve(hash.digest('hex')));
+          }),
+          new Promise((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const stream = require('node:fs').createReadStream(captionsPath);
+            stream.on('error', reject);
+            stream.on('data', chunk => hash.update(chunk));
+            stream.on('end', () => resolve(hash.digest('hex')));
+          }),
+          fs.stat(finalVideoPath)
         ]);
-        const captionedStats = await fs.stat(captionedPath);
-        if (!captionedStats.isFile() || captionedStats.size <= 0) {
-          throw new Error('Subtitle renderer returned an empty captioned video');
+        const captionFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+          sourceHash, captionsHash, subtitleDirection, rendererVersion: 1,
+          codec: 'libx264', preset: 'veryfast', crf: 20
+        })).digest('hex');
+        let captionCached = false;
+        try {
+          const [manifest, cachedStats] = await Promise.all([
+            fs.readFile(captionManifestPath, 'utf8').then(JSON.parse),
+            fs.stat(captionedPath)
+          ]);
+          if (manifest.fingerprint === captionFingerprint && cachedStats.isFile() && cachedStats.size > 0) {
+            const cachedInfo = await getMediaInfo(captionedPath);
+            if (cachedInfo.width && cachedInfo.height && Number.isFinite(cachedInfo.duration) && cachedInfo.duration > 0) {
+              await runFFmpeg(['-v', 'error', '-i', captionedPath, '-f', 'null', '-']);
+              captionCached = true;
+              this.logger.info('Reusing validated caption-rendered video.');
+            }
+          }
+        } catch (_cacheError) {
+          captionCached = false;
+        }
+        if (!captionCached) {
+          await fs.rm(captionTempPath, { force: true });
+          await runFFmpeg([
+            '-y', '-i', finalVideoPath,
+            '-vf', buildSubtitleFilter(captionsPath, subtitleDirection),
+            '-map', '0:v:0', '-map', '0:a:0?',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+            '-c:a', 'copy', '-movflags', '+faststart', captionTempPath
+          ]);
+          const captionedStats = await fs.stat(captionTempPath);
+          if (!captionedStats.isFile() || captionedStats.size <= 0) {
+            throw new Error('Subtitle renderer returned an empty captioned video');
+          }
+          const captionedInfo = await getMediaInfo(captionTempPath);
+          if (!captionedInfo.width || !captionedInfo.height || !Number.isFinite(captionedInfo.duration) || captionedInfo.duration <= 0) {
+            throw new Error('Subtitle renderer returned a video without valid media metadata');
+          }
+          await runFFmpeg(['-v', 'error', '-i', captionTempPath, '-f', 'null', '-']);
+          await fs.rm(captionedPath, { force: true });
+          await fs.rename(captionTempPath, captionedPath);
+          const manifestTempPath = `${captionManifestPath}.tmp`;
+          await fs.writeFile(manifestTempPath, JSON.stringify({
+            version: 1, fingerprint: captionFingerprint, sourceHash, captionsHash,
+            renderedAt: new Date().toISOString()
+          }, null, 2));
+          await fs.rm(captionManifestPath, { force: true });
+          await fs.rename(manifestTempPath, captionManifestPath);
         }
         finalVideoPath = captionedPath;
         productionData.assets.captions.styleApplication = describeSubtitleApplication(subtitleDirection);
