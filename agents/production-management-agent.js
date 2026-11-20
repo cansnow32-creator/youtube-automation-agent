@@ -40,7 +40,7 @@ function getVideoAttemptSidecarPaths(videoPath) {
   if (extension !== '.mp4') return [resolved];
   const stem = resolved.slice(0, -extension.length);
   const hybridVisual = stem + '_hybrid_visual.mp4';
-  return [
+  const paths = [
     resolved,
     resolved + '.info',
     resolved + '.assembly.json',
@@ -57,6 +57,7 @@ function getVideoAttemptSidecarPaths(videoPath) {
     const scenePath = `${stem}_cinecode_scene_${String(index).padStart(2, '0')}.mp4`;
     paths.push(scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp');
   }
+  return paths;
 }
 
 async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
