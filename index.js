@@ -650,9 +650,39 @@ class YouTubeAutomationAgent {
   setupOperatorAPI() {
     const protect = this.requireAPIKey();
 
+    this.app.get('/api/script-quality-reviews', protect, async (req, res) => {
+      try {
+        const status = ['pending', 'human_approved', 'rejected', 'revision_requested', 'all'].includes(req.query.status)
+          ? req.query.status
+          : 'pending';
+        const reviews = await this.db.listScriptQualityReviews(status, Number(req.query.limit) || 50);
+        return res.json({ success: true, reviews });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/script-quality-reviews/:reviewId/decision', protect, async (req, res) => {
+      try {
+        const decision = req.body?.decision;
+        if (!['human_approved', 'rejected', 'revision_requested'].includes(decision)) {
+          return res.status(400).json({ success: false, error: 'Decision must be human_approved, rejected, or revision_requested' });
+        }
+        const review = await this.db.decideScriptQualityReview(
+          req.params.reviewId,
+          decision,
+          req.body?.notes || ''
+        );
+        if (!review) return res.status(404).json({ success: false, error: 'Quality review not found' });
+        return res.json({ success: true, review });
+      } catch (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, engagement, experiments] = await Promise.all([
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, engagement, experiments, scriptQualityReviews] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -686,12 +716,13 @@ class YouTubeAutomationAgent {
               }),
           this.experiments
             ? this.experiments.getSummary()
-            : Promise.resolve({ experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0, evidencePolicy: 'Finish setup to create a controlled growth experiment.' })
+            : Promise.resolve({ experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0, evidencePolicy: 'Finish setup to create a controlled growth experiment.' }),
+          this.db.listScriptQualityReviews('pending', 50)
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
           stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation,
-          channelStrategy, operatorRuns, readiness, engagement, experiments,
+          channelStrategy, operatorRuns, readiness, engagement, experiments, scriptQualityReviews,
           system: {
             version,
             initialized: this.isInitialized,
