@@ -160,6 +160,29 @@ async function run() {
     assert.equal(ranked.length, 1);
     assert.equal(ranked[0].scoreBreakdown.historicalSampleSize, 2,
       'multiple measurement windows for one video count as one independent sample');
+
+    const evidenceRanked = scoreTrendIdeas([
+      { sourceTopic: 'Low evidence trend', topic: 'Low evidence trend video idea', format: 'explainer' },
+      { sourceTopic: 'Well supported trend', topic: 'Well supported trend video idea', format: 'explainer' }
+    ], [
+      { topic: 'Low evidence trend', score: 100, sources: ['trending'], evidence: [{ url: 'https://example.com/one' }] },
+      { topic: 'Well supported trend', score: 60, sources: ['trending', 'competitor'], evidence: [
+        { url: 'https://example.com/two' },
+        { url: 'https://example.com/three' },
+        { url: 'https://example.com/four' }
+      ] }
+    ], {}, [], []);
+    const lowEvidence = evidenceRanked.find(item => item.sourceTopic === 'Low evidence trend');
+    const wellSupported = evidenceRanked.find(item => item.sourceTopic === 'Well supported trend');
+    assert.ok(wellSupported.score > lowEvidence.score,
+      'a moderate trend with independent source and evidence support should outrank a high score backed by one item');
+    assert.equal(lowEvidence.scoreBreakdown.trendSourceCount, 1);
+    assert.equal(lowEvidence.scoreBreakdown.trendEvidenceCount, 1);
+    assert.equal(lowEvidence.scoreBreakdown.trendEvidenceConfidence, 0.75);
+    assert.equal(wellSupported.scoreBreakdown.trendEvidenceConfidence, 0.95);
+    assert.equal(lowEvidence.scoreBreakdown.rawTrend, 100);
+    assert.ok(lowEvidence.scoreBreakdown.trend < lowEvidence.scoreBreakdown.rawTrend,
+      'weak evidence must pull the effective trend score toward neutral');
     assert.equal(ranked[0].scoreBreakdown.historicalConfidence, 0.5,
       'two independent videos receive a 50% confidence weight');
     assert.equal(ranked[0].scoreBreakdown.historicalPillarMatches, 2,
