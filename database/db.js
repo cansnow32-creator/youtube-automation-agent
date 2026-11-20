@@ -1467,8 +1467,10 @@ class Database {
     } : null;
   }
 
-  async replaceProductionScenes(productionId, scenes = []) {
-    await this.executeQuery('DELETE FROM production_scenes WHERE production_id = ?', [productionId]);
+  async replaceProductionScenes(productionId, scenes = [], lease = null) {
+    const guard = this.leaseGuard(lease, productionId);
+    const deleted = await this.executeQuery(`DELETE FROM production_scenes WHERE production_id = ?${guard.sql}`, [productionId, ...guard.params]);
+    await this.requireLeaseWrite(deleted, lease);
     for (const [position, scene] of scenes.entries()) {
       const id = scene.id || this.generateId('scene');
       await this.executeQuery(
@@ -1480,7 +1482,7 @@ class Database {
           external_task_id, status, narration_status, revision, locked,
           rights_confirmed, provenance_source_ids, contains_synthetic_media,
           estimated_cost, actual_cost
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE 1 = 1${guard.sql}`,
         [
           id, productionId, position, scene.label, scene.scriptText || '', scene.prompt || '', scene.duration,
           scene.assetType || 'missing', scene.assetOrigin || 'generated', scene.assetPath || null,
@@ -1490,9 +1492,10 @@ class Database {
           scene.status || 'ready', scene.narrationStatus || 'current', scene.revision || 1,
           scene.locked ? 1 : 0, scene.rightsConfirmed ? 1 : 0,
           JSON.stringify(scene.provenanceSourceIds || []), scene.containsSyntheticMedia ? 1 : 0,
-          JSON.stringify(scene.estimatedCost || {}), JSON.stringify(scene.actualCost || {})
+          JSON.stringify(scene.estimatedCost || {}), JSON.stringify(scene.actualCost || {}), ...guard.params
         ]
       );
+      // Each insert is independently fenced so an expired worker cannot keep writing after takeover.
     }
     return this.listProductionScenes(productionId);
   }
@@ -1545,7 +1548,8 @@ class Database {
     return this.getProductionScene(productionId, sceneId);
   }
 
-  async reorderProductionScenes(productionId, orderedIds = []) {
+  async reorderProductionScenes(productionId, orderedIds = [], lease = null) {
+    const guard = this.leaseGuard(lease, productionId);
     const scenes = await this.listProductionScenes(productionId);
     if (orderedIds.length !== scenes.length || new Set(orderedIds).size !== scenes.length ||
       scenes.some(scene => !orderedIds.includes(scene.id))) {
@@ -1553,31 +1557,33 @@ class Database {
     }
     // Move through temporary negative positions to preserve the unique constraint.
     for (const scene of scenes) {
-      await this.executeQuery('UPDATE production_scenes SET position = ? WHERE id = ?', [-(scene.position + 1), scene.id]);
+      const moved = await this.executeQuery(`UPDATE production_scenes SET position = ? WHERE id = ?${guard.sql}`, [-(scene.position + 1), scene.id, ...guard.params]);
+      await this.requireLeaseWrite(moved, lease);
     }
     for (const [position, sceneId] of orderedIds.entries()) {
-      await this.executeQuery(
-        `UPDATE production_scenes SET position = ?, status = 'needs_rebuild', updated_at = datetime('now') WHERE id = ?`,
-        [position, sceneId]
+      const moved = await this.executeQuery(
+        `UPDATE production_scenes SET position = ?, status = 'needs_rebuild', updated_at = datetime('now') WHERE id = ?${guard.sql}`,
+        [position, sceneId, ...guard.params]
       );
+      await this.requireLeaseWrite(moved, lease);
     }
     return this.listProductionScenes(productionId);
   }
 
   async saveProductionSceneRevision(input = {}, lease = null) {
     const id = this.generateId('scene_revision');
+    const guard = this.leaseGuard(lease, input.productionId);
     const result = await this.executeQuery(
       `INSERT INTO production_scene_revisions (
         id, production_id, scene_id, action, status, before_state, after_state,
         cost_evidence, error, completed_at
-       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-       WHERE EXISTS (SELECT 1 FROM production_operation_locks WHERE production_id = ? AND owner = ? AND expires_at > ?)`,
+       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${guard.sql ? guard.sql.replace(' AND EXISTS (SELECT 1 FROM production_operation_locks', ' WHERE EXISTS (SELECT 1 FROM production_operation_locks') : ''}`,
       [
         id, input.productionId, input.sceneId, input.action, input.status || 'completed',
         JSON.stringify(input.before || {}), JSON.stringify(input.after || {}),
         JSON.stringify(input.costEvidence || {}), input.error || null,
         input.completedAt || new Date().toISOString(),
-        input.productionId, lease?.owner || '', Date.now()
+        ...guard.params
       ]
     );
     await this.requireLeaseWrite(result, lease);
