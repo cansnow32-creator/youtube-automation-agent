@@ -32,8 +32,13 @@ async function testValidationAndArguments(directory) {
   await fs.writeFile(musicPath, Buffer.from('music'));
 
   let capturedArgs = null;
+  let leaseChecks = 0;
+  const assertLease = async () => { leaseChecks += 1; };
   const result = await mixBackgroundMusic(videoPath, outputPath, licensedMusic({ path: musicPath, licenseUrl: 'https://example.com/license' }), {
-    runFFmpeg: async args => {
+    assertLease,
+    runFFmpeg: async (args, options = {}) => {
+      assert.equal(typeof options.assertLease, 'function', 'audio FFmpeg calls must receive the lease guard');
+      await options.assertLease();
       if (args[args.length - 1].endsWith('.mixing.mp4')) {
         capturedArgs = args;
         await fs.writeFile(args[args.length - 1], Buffer.from('mixed'));
@@ -43,6 +48,7 @@ async function testValidationAndArguments(directory) {
     getAudioInfo: async () => ({ duration: 8, codec: 'pcm_s16le' })
   });
   assert.equal(result.status, 'mixed');
+  assert.ok(leaseChecks >= 5, 'audio mixing must verify the lease throughout its file and FFmpeg stages');
   assert.equal(result.licenseType, 'user_owned');
   assert.equal(result.rightsConfirmed, true);
   assert.equal(result.trackDuration, 8);
