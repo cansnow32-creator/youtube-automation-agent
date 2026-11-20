@@ -387,14 +387,19 @@ class PublishingSchedulingAgent {
 
   async syncShortStatus(scheduleEntry, status, error = null) {
     const clipId = scheduleEntry.metadata?.shortClipId;
-    if (!clipId || !this.db.updateShortClip) return null;
-    return this.db.updateShortClip(clipId, {
+    if (!clipId) return null;
+    if (typeof this.db.updateShortClipForSchedule !== 'function') {
+      this.logger.warn('Skipping Shorts status sync because schedule-scoped compare-and-set support is unavailable');
+      return null;
+    }
+    const updated = await this.db.updateShortClipForSchedule(clipId, scheduleEntry.id, {
       status,
-      scheduleId: scheduleEntry.id,
       youtubeId: scheduleEntry.youtubeId || null,
       youtubeUrl: scheduleEntry.youtubeUrl || null,
       error
     });
+    if (!updated) this.logger.warn(`Skipped stale Shorts status update for ${clipId} from schedule ${scheduleEntry.id}`);
+    return updated;
   }
 
   async getVideoStream(videoPath) {
