@@ -7,11 +7,6 @@ const { runFFmpeg } = require('./ffmpeg');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
-function isLeaseFailure(error) {
-  const code = String(error?.code || '').toUpperCase();
-  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
-}
-
 async function removeAttemptOutputs(paths = []) {
   await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
     .map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
