@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20
+Last reconciled: 2026-11-20 (PR #2 head verified at `7940c5410c7caa3c3c82de47bcf628abec5adc80`; PR #3 head must be queried live because this update itself advances that branch)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
