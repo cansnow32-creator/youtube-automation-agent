@@ -429,12 +429,12 @@ class ChannelLearningEngine {
         category: 'outcome_alignment',
         title: `Allocate more ${dimension} capacity to ${this.readable(best.value)}`,
         rationale: `${this.readable(best.value)} averaged ${this.formatOutcome(best.average, goal)} across ${best.count} videos versus ${this.formatOutcome(weakest.average, goal)} for ${this.readable(weakest.value)}, aligned to the configured ${goal.label.toLowerCase()} goal.`,
-        evidence: { primaryKpi: goal.id, metric: goal.metric, dimension, best, weakest, minimumSamplesPerGroup: 2 },
+        evidence: { primaryKpi: goal.id, metric: goal.metric, dimension, best, weakest, minimumSamplesPerGroup: 3 },
         proposedChange: {
           target: 'future_plans', dimension, prefer: best.value, deprioritize: weakest.value,
           primaryKpi: goal.id, autoApply: false
         },
-        confidence: best.count >= 4 && weakest.count >= 4 ? 'high' : 'medium'
+        confidence: best.count >= 5 && weakest.count >= 5 ? 'high' : 'moderate'
       });
     }
     return candidates;
