@@ -148,10 +148,52 @@ async function testGenerationRunnerHoldsLeaseUntilAllStagesFinish() {
   assert.equal(updates.some(item => item.changes.status === 'completed'), true);
 }
 
+async function testHeartbeatRenewalsAreSerialized() {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  let heartbeat;
+  let resolveFirstRenewal;
+  const firstRenewal = new Promise(resolve => { resolveFirstRenewal = resolve; });
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  const db = {
+    async acquireProductionOperationLock() { return true; },
+    async renewProductionOperationLock() {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (calls === 1) await firstRenewal;
+      active -= 1;
+      return true;
+    },
+    async releaseProductionOperationLock() {}
+  };
+  global.setInterval = callback => { heartbeat = callback; return { unref() {} }; };
+  global.clearInterval = () => {};
+  try {
+    const lease = await acquireGenerationJobLease(db, 'job-heartbeat', { heartbeatMs: 1000 });
+    heartbeat();
+    heartbeat();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(calls, 1, 'a second renewal waits for the first renewal to finish');
+    resolveFirstRenewal();
+    await lease.assertLease();
+    assert.equal(calls, 2, 'queued heartbeat renewal is completed before lease assertion');
+    assert.equal(maxActive, 1, 'heartbeat renewals must never overlap');
+    await lease.release();
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+}
+
 async function run() {
   await testCompetingWorkersCannotAcquireSameJob();
   await testLeaseLossFailsClosedAndReleasesOnlyOwnedLock();
   await testMissingLockSupportFailsClosed();
+  await testHeartbeatRenewalsAreSerialized();
   await testGenerationRunnerHoldsLeaseUntilAllStagesFinish();
   console.log('Generation job lease tests passed');
 }
