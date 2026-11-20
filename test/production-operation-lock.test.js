@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const sqlite3 = require('sqlite3').verbose();
 const { Database } = require('../database/db');
 const { SceneRepairService, replaceFileWithRollback } = require('../utils/scene-repair-service');
 const { ProductionManagementAgent } = require('../agents/production-management-agent');
@@ -21,6 +22,56 @@ async function run() {
     assert.equal(await fs.readFile(destination, 'utf8'), 'keep-this-output', 'failed replacement restores the previous output');
   } finally {
     await fs.rm(replacementDir, { recursive: true, force: true });
+  }
+
+  // Exercise the lock against two independent SQLite connections. The
+  // mocked assertions below verify SQL shape; this integration check verifies
+  // SQLite's atomic conflict handling across separate connections.
+  const lockDir = await fs.mkdtemp(path.join(os.tmpdir(), 'production-lock-sqlite-'));
+  const lockPath = path.join(lockDir, 'locks.sqlite');
+  const connectionA = Object.create(Database.prototype);
+  const connectionB = Object.create(Database.prototype);
+  connectionA.db = new sqlite3.Database(lockPath);
+  connectionB.db = new sqlite3.Database(lockPath);
+  connectionA.db.configure('busyTimeout', 5000);
+  connectionB.db.configure('busyTimeout', 5000);
+  try {
+    // Create the table before racing the two independent connections.
+    assert.equal(await connectionA.acquireProductionOperationLock('bootstrap', 'setup', 10000), true);
+    await connectionA.releaseProductionOperationLock('bootstrap', 'setup');
+
+    const claims = await Promise.all([
+      connectionA.acquireProductionOperationLock('shared-job', 'worker-a', 10000),
+      connectionB.acquireProductionOperationLock('shared-job', 'worker-b', 10000)
+    ]);
+    assert.equal(claims.filter(Boolean).length, 1, 'exactly one SQLite connection acquires a contested lock');
+
+    const winner = claims[0] ? connectionA : connectionB;
+    const loser = claims[0] ? connectionB : connectionA;
+    const winnerOwner = claims[0] ? 'worker-a' : 'worker-b';
+    const loserOwner = claims[0] ? 'worker-b' : 'worker-a';
+
+    assert.equal(await loser.renewProductionOperationLock('shared-job', loserOwner, 10000), false,
+      'a different connection cannot renew the current owner lease');
+    await loser.releaseProductionOperationLock('shared-job', loserOwner);
+    assert.equal(await winner.renewProductionOperationLock('shared-job', winnerOwner, 10000), true,
+      'releasing as a non-owner does not remove the active lease');
+
+    await winner.executeQuery(
+      'UPDATE production_operation_locks SET expires_at = ? WHERE production_id = ?',
+      [Date.now() - 1, 'shared-job']
+    );
+    assert.equal(await loser.acquireProductionOperationLock('shared-job', loserOwner, 10000), true,
+      'an expired lease can be atomically taken over');
+    assert.equal(await winner.renewProductionOperationLock('shared-job', winnerOwner, 10000), false,
+      'the previous owner cannot renew after lease takeover');
+    await loser.releaseProductionOperationLock('shared-job', loserOwner);
+  } finally {
+    await Promise.all([
+      new Promise(resolve => connectionA.db.close(() => resolve())),
+      new Promise(resolve => connectionB.db.close(() => resolve()))
+    ]);
+    await fs.rm(lockDir, { recursive: true, force: true });
   }
 
   const database = Object.create(Database.prototype);
