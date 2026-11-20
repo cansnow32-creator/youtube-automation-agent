@@ -689,8 +689,12 @@ class ProductionManagementAgent {
           updatedAt: new Date().toISOString()
         };
         // Persist immediately: a later scene failure must not lose earlier images.
+        await assertLease();
         await this.db.updateProductionData(productionData);
       } catch (error) {
+        // Lease loss/unverifiable ownership is not a provider failure and must
+        // never be swallowed into the retry/fallback path.
+        await assertLease();
         failures.push({ sceneIndex, message: String(error?.message || error).slice(0, 300) });
         this.logger.warn(`Visual scene ${sceneIndex + 1}/${visualPrompts.length} failed: ${error.message}`);
         // Stop at the first provider failure to avoid spending on later scenes
