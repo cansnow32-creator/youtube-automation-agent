@@ -20,7 +20,7 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - [x] done — Fix CI integrity issue: stop rewriting the committed lockfile before `npm ci`; generate the npm audit remediation candidate separately. Commit `96ac8f7c27be5009c981576650dd93c365cd160e` on PR #2 branch.
 - [x] done — Broaden PR #1 base workflow's `pull_request` branch filter so stacked PR #2 is eligible for CI; commit `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81` on PR #1 branch.
 - [x] done — Tighten a weak SQL assertion in the lease-renewal regression test to require the literal `?` placeholder; commit `5c346c23f75aa240c083371a8de42decdd80fed2` on PR #2 branch.
-- [ ] todo — Fix any additional verified application failures with focused regression tests; do not merge.
+- [ ] in_progress — Fence route-level `refreshContentReview()` with scene mutations. Current handlers refresh only after service methods release the production lock, allowing a stale quality-check result to overwrite review state after another edit. Keep mutation and review refresh under one production-scoped lease, or reject stale review persistence by scene revision; add regression coverage.
 - [x] done — Review PR #1 / PR #2 dependency: PR #2 intentionally targets PR #1's branch. Keep the stacked relationship; do not retarget without a full dependency review.
 - [x] done — Add database-backed SQLite lock/concurrency regression coverage using two independent connections, contested acquisition, non-owner renewal/release, and expired-lease takeover. Commit `7940c5410c7caa3c3c82de47bcf628abec5adc80`; execution is still pending.
 
