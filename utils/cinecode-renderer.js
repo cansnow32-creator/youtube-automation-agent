@@ -6,6 +6,16 @@ const sharp = require('sharp');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
+async function removeAttemptFiles(paths = []) {
+  await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
+    .map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
+}
+
 async function hashFile(filePath) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
@@ -40,6 +50,7 @@ class CineCodeRenderer {
   }
 
   async renderScenes(input = {}) {
+    const assertLease = typeof input.assertLease === 'function' ? input.assertLease : async () => {};
     const visualAssets = Array.isArray(input.visualAssets) ? input.visualAssets : [];
     if (!visualAssets.length) throw new Error('CineCode requires real generated image assets; placeholder files are not accepted');
     const totalDuration = Math.max(3, Number(input.totalDuration) || 30);
@@ -52,120 +63,149 @@ class CineCodeRenderer {
     const grade = colorGrade(visualDirection.palette);
     const outputDir = input.outputDir || path.join(process.cwd(), 'data', 'videos');
     const prefix = String(input.outputPrefix || 'cinecode-film').replace(/[^a-zA-Z0-9_-]/g, '_');
+    await assertLease();
     await fs.mkdir(outputDir, { recursive: true });
+    await assertLease();
 
     const durations = selectedAssets.map(() => Number((totalDuration / selectedAssets.length).toFixed(3)));
     const rendered = [];
-    for (let index = 0; index < selectedAssets.length; index++) {
-      const imagePath = selectedAssets[index];
-      if (typeof imagePath !== 'string' || path.extname(imagePath).toLowerCase() === '.info') {
-        throw new Error('CineCode cannot render simulated or non-image assets');
-      }
-      const imageStats = await fs.stat(imagePath);
-      if (!imageStats.isFile() || imageStats.size <= 0) throw new Error(`CineCode image asset ${index + 1} is missing or empty`);
-      let imageMetadata;
-      try {
-        imageMetadata = await sharp(imagePath, { failOn: 'error' }).metadata();
-      } catch (error) {
-        throw new Error(`CineCode image asset ${index + 1} is not a decodable image: ${error.message}`);
-      }
-      if (!imageMetadata.width || !imageMetadata.height || !['png', 'jpeg', 'webp'].includes(imageMetadata.format)) {
-        throw new Error(`CineCode image asset ${index + 1} has an unsupported or invalid image format`);
+    const createdPaths = [];
+    try {
+      for (let index = 0; index < selectedAssets.length; index++) {
+        await assertLease();
+        const imagePath = selectedAssets[index];
+        if (typeof imagePath !== 'string' || path.extname(imagePath).toLowerCase() === '.info') {
+          throw new Error('CineCode cannot render simulated or non-image assets');
+        }
+        const imageStats = await fs.stat(imagePath);
+        await assertLease();
+        if (!imageStats.isFile() || imageStats.size <= 0) throw new Error(`CineCode image asset ${index + 1} is missing or empty`);
+        let imageMetadata;
+        try {
+          imageMetadata = await sharp(imagePath, { failOn: 'error' }).metadata();
+        } catch (error) {
+          throw new Error(`CineCode image asset ${index + 1} is not a decodable image: ${error.message}`);
+        }
+        await assertLease();
+        if (!imageMetadata.width || !imageMetadata.height || !['png', 'jpeg', 'webp'].includes(imageMetadata.format)) {
+          throw new Error(`CineCode image asset ${index + 1} has an unsupported or invalid image format`);
+        }
+
+        const scene = scenePlan[index % Math.max(1, scenePlan.length)] || {};
+        const duration = durations[index];
+        const fadeOutStart = Math.max(0, duration - 0.45);
+        const panDirection = index % 2 === 0 ? 1 : -1;
+        const filter = [
+          `scale=${width}:${height}:force_original_aspect_ratio=increase`,
+          `crop=${width}:${height}`,
+          `zoompan=z='min(zoom+0.00004,1.08)':x='iw/2-(iw/zoom/2)+sin(on/120)*iw*0.008*${panDirection}':y='ih/2-(ih/zoom/2)+cos(on/150)*ih*0.004':d=1:s=${width}x${height}:fps=30`,
+          grade,
+          'vignette=PI/5',
+          'fade=t=in:st=0:d=0.45',
+          `fade=t=out:st=${fadeOutStart.toFixed(3)}:d=0.45`,
+          'format=yuv420p'
+        ].join(',');
+        const outputPath = path.join(outputDir, `${prefix}_cinecode_scene_${String(index + 1).padStart(2, '0')}.mp4`);
+        const manifestPath = `${outputPath}.render.json`;
+        const temporaryPath = `${outputPath}.rendering.mp4`;
+        const manifestTemp = `${manifestPath}.tmp`;
+        const imageFingerprint = {
+          path: path.resolve(imagePath),
+          size: imageStats.size,
+          mtimeMs: imageStats.mtimeMs,
+          sha256: await hashFile(imagePath)
+        };
+        await assertLease();
+        const renderFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+          image: imageFingerprint,
+          duration,
+          width,
+          height,
+          filter,
+          encoder: 'libx264-veryfast-crf21'
+        })).digest('hex');
+        let reusable = false;
+        try {
+          const [manifest, cachedStats] = await Promise.all([
+            fs.readFile(manifestPath, 'utf8').then(JSON.parse),
+            fs.stat(outputPath)
+          ]);
+          reusable = manifest.fingerprint === renderFingerprint &&
+            cachedStats.isFile() && cachedStats.size > 0;
+        } catch (_error) {
+          // Missing or invalid cache metadata forces a fresh render.
+        }
+        await assertLease();
+
+        if (!reusable) {
+          try {
+            await assertLease();
+            await fs.rm(temporaryPath, { force: true });
+            await this.runFFmpeg([
+              '-y', '-loop', '1', '-framerate', '30', '-i', imagePath,
+              '-t', duration.toFixed(3), '-vf', filter,
+              '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
+              '-r', '30', '-movflags', '+faststart', temporaryPath
+            ]);
+            await assertLease();
+            const outputStats = await fs.stat(temporaryPath);
+            if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
+            await assertLease();
+            await fs.rm(outputPath, { force: true });
+            await fs.rename(temporaryPath, outputPath);
+            createdPaths.push(outputPath);
+            await assertLease();
+            await fs.writeFile(manifestTemp, JSON.stringify({
+              fingerprint: renderFingerprint,
+              source: imageFingerprint,
+              renderedAt: new Date().toISOString()
+            }, null, 2));
+            await assertLease();
+            await fs.rename(manifestTemp, manifestPath);
+            createdPaths.push(manifestPath);
+            await assertLease();
+          } catch (error) {
+            await removeAttemptFiles([temporaryPath, manifestTemp]);
+            if (isLeaseFailure(error)) {
+              await removeAttemptFiles([outputPath, manifestPath, ...createdPaths]);
+              createdPaths.length = 0;
+            }
+            throw error;
+          }
+        } else {
+          await assertLease();
+          this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
+        }
+
+        const outputStats = await fs.stat(outputPath);
+        await assertLease();
+        if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
+        rendered.push({
+          index: index + 1,
+          label: scene.purpose || `Scene ${index + 1}`,
+          prompt: scene.visual || visualDirection.style || 'Approved visual direction',
+          duration,
+          path: outputPath,
+          provider: 'cinecode',
+          model: 'local-ffmpeg-camera-motion'
+        });
+        this.logger.info(`CineCode rendered scene ${index + 1}/${selectedAssets.length}`);
       }
 
-      const scene = scenePlan[index % Math.max(1, scenePlan.length)] || {};
-      const duration = durations[index];
-      const fadeOutStart = Math.max(0, duration - 0.45);
-      const panDirection = index % 2 === 0 ? 1 : -1;
-      const filter = [
-        `scale=${width}:${height}:force_original_aspect_ratio=increase`,
-        `crop=${width}:${height}`,
-        `zoompan=z='min(zoom+0.00004,1.08)':x='iw/2-(iw/zoom/2)+sin(on/120)*iw*0.008*${panDirection}':y='ih/2-(ih/zoom/2)+cos(on/150)*ih*0.004':d=1:s=${width}x${height}:fps=30`,
-        grade,
-        'vignette=PI/5',
-        'fade=t=in:st=0:d=0.45',
-        `fade=t=out:st=${fadeOutStart.toFixed(3)}:d=0.45`,
-        'format=yuv420p'
-      ].join(',');
-      const outputPath = path.join(outputDir, `${prefix}_cinecode_scene_${String(index + 1).padStart(2, '0')}.mp4`);
-      const manifestPath = `${outputPath}.render.json`;
-      const imageFingerprint = {
-        path: path.resolve(imagePath),
-        size: imageStats.size,
-        mtimeMs: imageStats.mtimeMs,
-        sha256: await hashFile(imagePath)
-      };
-      const renderFingerprint = crypto.createHash('sha256').update(JSON.stringify({
-        image: imageFingerprint,
-        duration,
+      await assertLease();
+      return {
+        clips: rendered,
+        totalDuration: durations.reduce((sum, duration) => sum + duration, 0),
+        model: 'local-ffmpeg-camera-motion',
+        resolution: `${width}x${height}`,
         width,
         height,
-        filter,
-        encoder: 'libx264-veryfast-crf21'
-      })).digest('hex');
-      let reusable = false;
-      try {
-        const [manifest, cachedStats] = await Promise.all([
-          fs.readFile(manifestPath, 'utf8').then(JSON.parse),
-          fs.stat(outputPath)
-        ]);
-        reusable = manifest.fingerprint === renderFingerprint &&
-          cachedStats.isFile() && cachedStats.size > 0;
-      } catch (_error) {
-        // Missing or invalid cache metadata forces a fresh render.
-      }
-
-      if (!reusable) {
-        const temporaryPath = `${outputPath}.rendering.mp4`;
-        await fs.rm(temporaryPath, { force: true });
-        try {
-          await this.runFFmpeg([
-            '-y', '-loop', '1', '-framerate', '30', '-i', imagePath,
-            '-t', duration.toFixed(3), '-vf', filter,
-            '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
-            '-r', '30', '-movflags', '+faststart', temporaryPath
-          ]);
-          const outputStats = await fs.stat(temporaryPath);
-          if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
-          await fs.rm(outputPath, { force: true });
-          await fs.rename(temporaryPath, outputPath);
-          const manifestTemp = `${manifestPath}.tmp`;
-          await fs.writeFile(manifestTemp, JSON.stringify({
-            fingerprint: renderFingerprint,
-            source: imageFingerprint,
-            renderedAt: new Date().toISOString()
-          }, null, 2));
-          await fs.rename(manifestTemp, manifestPath);
-        } catch (error) {
-          await fs.rm(temporaryPath, { force: true }).catch(() => {});
-          throw error;
-        }
-      } else {
-        this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
-      }
-      const outputStats = await fs.stat(outputPath);
-      if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
-      rendered.push({
-        index: index + 1,
-        label: scene.purpose || `Scene ${index + 1}`,
-        prompt: scene.visual || visualDirection.style || 'Approved visual direction',
-        duration,
-        path: outputPath,
-        provider: 'cinecode',
-        model: 'local-ffmpeg-camera-motion'
-      });
-      this.logger.info(`CineCode rendered scene ${index + 1}/${selectedAssets.length}`);
+        colorGrade: grade
+      };
+    } catch (error) {
+      if (isLeaseFailure(error)) await removeAttemptFiles(createdPaths);
+      throw error;
     }
-
-    return {
-      clips: rendered,
-      totalDuration: durations.reduce((sum, duration) => sum + duration, 0),
-      model: 'local-ffmpeg-camera-motion',
-      resolution: `${width}x${height}`,
-      width,
-      height,
-      colorGrade: grade
-    };
   }
 }
 
