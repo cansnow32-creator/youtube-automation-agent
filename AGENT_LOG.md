@@ -486,3 +486,12 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Static syntax checks passed; runtime tests/lint were not executed.
 
 - Final guard: missing `videos.insert` response ID is now treated as ambiguous (502) and remains blocked for operator reconciliation; added an assertion that upload claims persist their start time. Final PR #2 head: `25e6e6489e495b0658cf0e4a18a29d9df20179a7`. Static syntax/package checks passed; runtime tests/lint were not run; no workflow run was returned.
+
+
+## 2026-11-20 — Harden existing-video recovery verification
+
+- Audited restart/recovery path and found the persisted-ID path weaker than manual operator reconciliation: it checked only that a YouTube ID existed. Updated it to verify authenticated channel ownership and normalized scheduled title before publishing state.
+- Added exact-status/video-ID SQLite CAS for verified recovery. Wrong channel/title and missing video remain unresolved; API transport failures leave the prior state untouched.
+- Added real-SQLite regression coverage for valid recovery, invalid ownership/title, and competing verification results. Updated reconciliation documentation.
+- Commits: `efce2165618ff2ed8034a13f4faf1625f9bcc399`, `821ba70667b7a2f28968894685170e2b841e1f69`, `2e710188755e384adc4bdd52a0434544e4f729c8`, `13e2cfbef02784d226e99596de60272892faff49`.
+- Static syntax/package checks passed. Runtime tests/lint not run; no workflow run returned for latest PR head.
