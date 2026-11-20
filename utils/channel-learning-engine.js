@@ -124,8 +124,8 @@ class ChannelLearningEngine {
       ),
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
       source: strategy.planRationale ? 'autonomous_operator' : 'manual',
-      appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings),
-      learningGuidance: this.extractLearningGuidance(strategy.approvedScriptLearnings),
+      appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings, script),
+      learningGuidance: this.extractLearningGuidance(strategy.approvedScriptLearnings, script.metadata?.verifiedAppliedLearnings),
       packagingChangeHistory: (Array.isArray(context.packagingChangeHistory) ? context.packagingChangeHistory : [])
         .slice(-20)
         .map(change => ({
@@ -158,8 +158,8 @@ class ChannelLearningEngine {
     return this.normalizeSurface(snapshot?.contentAttributes?.surface);
   }
 
-  extractAppliedLearnings(strategy = {}, appliedLearnings = []) {
-    const candidates = (Array.isArray(appliedLearnings) ? appliedLearnings : [])
+  extractAppliedLearnings(strategy = {}, appliedLearnings = [], script = {}) {
+    const packagingCandidates = (Array.isArray(appliedLearnings) ? appliedLearnings : [])
       .filter(item => item?.recommendationId && item.category === 'packaging_experiment')
       .map(item => ({
         recommendationId: String(item.recommendationId),
@@ -168,6 +168,29 @@ class ChannelLearningEngine {
         source: item.source || 'unknown'
       }))
       .filter(item => item.appliedTo.length > 0);
+    const approvedGuidance = new Map((Array.isArray(strategy.approvedScriptLearnings) ? strategy.approvedScriptLearnings : [])
+      .filter(item => item?.recommendationId && item.category === 'hookLength')
+      .map(item => [String(item.recommendationId), item]));
+    const verifiedScriptCandidates = (Array.isArray(script.metadata?.verifiedAppliedLearnings) ? script.metadata.verifiedAppliedLearnings : [])
+      .filter(item => {
+        const approved = approvedGuidance.get(String(item?.recommendationId || ''));
+        const expected = String(approved?.proposedChange?.prefer || '').trim().toLowerCase();
+        const observed = String(item?.observedValue || '');
+        const wordCount = Number(item?.observedWordCount);
+        return item?.category === 'hookLength' &&
+          item?.verificationMethod === 'generated_hook_word_count_threshold_40' &&
+          item?.status === 'verified_applied' &&
+          ['concise', 'extended'].includes(expected) && expected === item.expectedValue &&
+          observed === expected && Number.isInteger(wordCount) && wordCount > 0 &&
+          (observed === 'concise' ? wordCount <= 40 : wordCount > 40);
+      })
+      .map(item => ({
+        recommendationId: String(item.recommendationId),
+        category: 'hookLength',
+        appliedTo: ['hook'],
+        source: 'script_output_deterministic_verification'
+      }));
+    const candidates = [...packagingCandidates, ...verifiedScriptCandidates];
     const unique = new Map();
     for (const item of candidates) {
       if (!unique.has(item.recommendationId)) unique.set(item.recommendationId, item);
@@ -175,7 +198,10 @@ class ChannelLearningEngine {
     return [...unique.values()].slice(0, 12);
   }
 
-  extractLearningGuidance(approvedScriptLearnings = []) {
+  extractLearningGuidance(approvedScriptLearnings = [], verifiedAppliedLearnings = []) {
+    const verifiedIds = new Set((Array.isArray(verifiedAppliedLearnings) ? verifiedAppliedLearnings : [])
+      .filter(item => item?.status === 'verified_applied' && item?.verificationMethod === 'generated_hook_word_count_threshold_40')
+      .map(item => String(item.recommendationId || '')));
     const unique = new Map();
     for (const item of Array.isArray(approvedScriptLearnings) ? approvedScriptLearnings : []) {
       if (!item?.recommendationId) continue;
@@ -185,7 +211,7 @@ class ChannelLearningEngine {
         recommendationId,
         category: String(item.category || 'unknown').slice(0, 40),
         target: String(item.proposedChange?.target || 'future_scripts').slice(0, 40),
-        status: 'provided_to_generation_not_verified_as_applied'
+        status: verifiedIds.has(recommendationId) ? 'verified_applied' : 'provided_to_generation_not_verified_as_applied'
       });
     }
     return [...unique.values()].slice(0, 12);
