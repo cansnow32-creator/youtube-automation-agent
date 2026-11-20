@@ -2,6 +2,16 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Extend production lease guards across visual, narration and editing stages
+
+- Continued PR #2 audit after script/thumbnail protections. Found stage helpers could continue after a job/resume lease was lost: visual generation could persist scene metadata, failed TTS could fall back to a simulated audio file, and captions/video editing could write or publish outputs without checking ownership.
+- Passed the stage-scoped assertLease callback through both initial production and resume paths into generateVideoContent(), generateAudioNarration(), generateCaptions(), and assembleVideo(). Added checks around provider calls, database checkpoints, caption writes, FFmpeg caption rendering/replacement, audio mixing, and fallback artifact creation. Lease loss is rechecked in visual/audio/video catch paths so it is not swallowed into retry/simulation behavior.
+- Added regression coverage for lease loss after TTS provider failure (no simulated narration write) and after visual provider return (no stale scene persistence); existing script/thumbnail tests remain in the same production-operation-lock test.
+- Commits on feat/video-concept-approval: 2bf343dce295143df441fc3f61b9f50c976dfbc1, 8c82636fcf070631e16e427c56c82653735a25d2, 683c3c45298df8216851464a700269eb8543fe70, b9ef6fd2229d8f89cb1f032072cc3a9347c930eb.
+- Re-fetched current PR #2 metadata: open/draft/unmerged, still based on feat/local-first-quality-gate; current head b9ef6fd2229d8f89cb1f032072cc3a9347c930eb. GitHub reports zero workflow runs on this head. Tests and lint have not been executed; no pass is claimed.
+- These are cooperative lease checks at application boundaries, not atomic OS-level fencing. A worker could still race if the lease expires in the tiny interval after a check and before a side effect; provider internals may also create their own files before returning.
+- Next: continue reviewing all filesystem/database side effects and the `sceneRepair.initializeProduction()` boundary, then get CI execution. Preserve PR #2's stacked base. Do not merge.
+
 ## 2026-11-20 — Fence visual scene persistence against generation-job lease loss
 
 - Static review of generateVideoContent() found that provider errors and lease assertion failures shared one catch path. A lease loss could be temporarily classified as a scene-provider failure; more importantly, the per-scene persistence boundary needed its own immediate ownership assertion.
