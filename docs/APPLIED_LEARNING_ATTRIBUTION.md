@@ -23,3 +23,17 @@ Approved channel-learning recommendations are recorded on the production strateg
 - `negative_signal`: median baseline-relative delta is at most -5%.
 
 These are observational associations, not causal conclusions. They do not approve, reject, or automatically change any learning recommendation. Human review remains required.
+
+
+## Packaging experiment evidence boundary
+
+The current packaging experiment runner rotates title/thumbnail packages sequentially on the same video. YouTube Analytics returns video-level measurements and does not expose randomized viewer assignment or per-arm impression/click attribution for this workflow.
+
+- Arm snapshots may be displayed as descriptive observations only.
+- Sequential CTR differences are not treated as independent randomized samples; no z-score or causal lift is calculated.
+- The current sequential workflow cannot select a winner, even when an observed CTR difference is large or impression counts exceed the configured threshold.
+- Experiment feedback exposes `comparisonMethod: sequential_same_video_observational`, `exposureAttribution: unavailable_from_youtube_analytics`, and `causalInterpretation: observational_only_no_causal_winner`.
+- Such experiments finish as `inconclusive`; they cannot create an approved learning recommendation or be adopted as a validated winner.
+- A causal winner requires a future integration that provides verifiable randomized assignment and arm-level exposure/outcome metrics. Until then, human review may inspect observations, but the system must not label them an A/B winner.
+
+This safeguard intentionally favors honest evidence over a misleading statistical result.
