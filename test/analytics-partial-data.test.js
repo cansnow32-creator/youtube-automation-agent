@@ -67,6 +67,21 @@ async function run() {
   assert.equal(views.totalImpressions, 10000);
   assert.equal(views.averageCTR, 9.2, 'CTR must be impression-weighted');
 
+  // A single demographic dimension failure must preserve the other real dimension.
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async ({ dimensions }) => {
+        if (dimensions === 'gender') throw new Error('gender breakdown unavailable');
+        return { data: { rows: [['25-34', 62]] } };
+      }
+    }
+  };
+  const demographics = await agent.getDemographicsAnalytics('demographic-video', '2026-11-18', '2026-11-19');
+  assert.deepEqual(demographics.ageGroups, [['25-34', 62]]);
+  assert.deepEqual(demographics.gender, []);
+  assert.equal(demographics.dataQuality.partial, true);
+  assert.ok(demographics.dataQuality.unavailable.gender);
+
   // If every core metric endpoint fails, the fallback is explicit and ineligible for learning.
   for (const method of [
     'getViewsAnalytics',
