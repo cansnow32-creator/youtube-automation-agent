@@ -1272,7 +1272,7 @@ class ProductionManagementAgent {
           );
         }
         await assertLease();
-        const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
+        const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, { ...this.audioMixerDependencies, assertLease });
         if (mixResult?.path && mixResult.path !== previousBackgroundMusic?.path) generatedPaths.push(mixResult.path);
         await assertLease();
         finalVideoPath = mixResult.path;
