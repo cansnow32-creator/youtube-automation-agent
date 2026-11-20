@@ -52,7 +52,9 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
   const readVideoInfo = dependencies.getMediaInfo || getMediaInfo;
   const readAudioInfo = dependencies.getAudioInfo || getAudioInfo;
   const fileSystem = dependencies.fs || fs;
+  const assertLease = typeof dependencies.assertLease === 'function' ? dependencies.assertLease : async () => {};
 
+  await assertLease();
   validateMusicRights(music);
   const musicPath = path.resolve(cleanText(music.path, 2048));
   if (!music.path || !path.isAbsolute(musicPath)) {
@@ -107,7 +109,7 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       const tolerance = Math.max(1, videoInfo.duration * 0.03);
       if (cachedInfo.hasAudio && Number.isFinite(cachedInfo.duration) &&
           Math.abs(cachedInfo.duration - videoInfo.duration) <= tolerance) {
-        await run(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+        await run(['-v', 'error', '-i', outputPath, '-f', 'null', '-'], { assertLease });
         return {
           ...manifest.result,
           status: 'mixed',
@@ -123,9 +125,11 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
   } catch (_cacheError) {
     // Missing, stale, or invalid cache: perform a fresh mix.
   }
+  await assertLease();
   await fileSystem.rm(temporaryPath, { force: true });
 
   try {
+    await assertLease();
     await run([
       '-y',
       '-i', videoPath,
@@ -140,8 +144,9 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       '-shortest',
       '-movflags', '+faststart',
       temporaryPath
-    ]);
-    await run(['-v', 'error', '-i', temporaryPath, '-f', 'null', '-']);
+    ], { assertLease });
+    await assertLease();
+    await run(['-v', 'error', '-i', temporaryPath, '-f', 'null', '-'], { assertLease });
 
     const outputStats = await fileSystem.stat(temporaryPath);
     const outputInfo = await readVideoInfo(temporaryPath);
@@ -156,8 +161,10 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       throw new Error('Background music mix changed the video duration beyond the allowed tolerance');
     }
 
+    await assertLease();
     await fileSystem.rm(outputPath, { force: true });
     await fileSystem.rename(temporaryPath, outputPath);
+    await assertLease();
     const result = {
       status: 'mixed',
       path: outputPath,
@@ -181,9 +188,12 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       mixedAt: new Date().toISOString()
     };
     const manifestTempPath = `${manifestPath}.tmp`;
+    await assertLease();
     await fileSystem.writeFile(manifestTempPath, JSON.stringify({ version: 1, fingerprint, result }, null, 2));
+    await assertLease();
     await fileSystem.rm(manifestPath, { force: true });
     await fileSystem.rename(manifestTempPath, manifestPath);
+    await assertLease();
     return result;
   } catch (error) {
     await fileSystem.rm(temporaryPath, { force: true }).catch(() => {});
