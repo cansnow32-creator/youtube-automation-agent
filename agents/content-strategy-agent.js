@@ -39,6 +39,9 @@ class ContentStrategyAgent {
   }
 
   async analyzeTrends() {
+    // Never let results from an earlier invocation survive a failed or empty refresh.
+    this.trendingTopics = [];
+    this.competitorData = [];
     try {
       // Analyze YouTube trends
       const trends = await this.fetchYouTubeTrends();
