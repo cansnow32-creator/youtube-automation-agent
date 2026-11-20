@@ -33,7 +33,12 @@ async function createHarness(mediaInfo) {
   const db = {
     getProductionBundle: async () => bundle,
     getShortClip: async () => ({ ...clip, ...state }),
-    updateShortClip: async (_id, changes) => Object.assign(state, changes)
+    updateShortClip: async (_id, changes) => Object.assign(state, changes),
+    updateShortClipForRender: async (_id, attemptId, changes) => {
+      if (state.status !== 'rendering' || state.renderAttemptId !== attemptId) return null;
+      Object.assign(state, changes);
+      return { ...clip, ...state };
+    }
   };
   const runFFmpeg = async args => {
     const destination = args[args.length - 1];
@@ -70,8 +75,32 @@ async function testLeaseLossCleansOnlyTheCurrentShortAttempt() {
     await fs.rm(harness.root, { recursive: true, force: true });
   }
 }
+async function testSupersededRenderAttemptCannotCommit() {
+  const harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
+  harness.service.runFFmpeg = async args => {
+    const destination = args[args.length - 1];
+    if (String(destination).endsWith('.rendering.mp4')) {
+      await fs.writeFile(destination, Buffer.from('rendered by stale attempt'));
+      harness.state.renderAttemptId = 'newer-attempt';
+    }
+  };
+  try {
+    await assert.rejects(
+      harness.service.render(harness.productionId, harness.clip.id),
+      error => error.code === 'SHORTS_RENDER_ATTEMPT_SUPERSEDED' && error.status === 409
+    );
+    assert.equal(harness.state.status, 'rendering');
+    assert.equal(harness.state.renderAttemptId, 'newer-attempt');
+    const outputDir = path.join(harness.root, 'shorts', harness.productionId);
+    assert.deepEqual(await fs.readdir(outputDir), [], 'superseded attempt output and captions must be removed');
+  } finally {
+    await fs.rm(harness.root, { recursive: true, force: true });
+  }
+}
+
 async function run() {
   await testLeaseLossCleansOnlyTheCurrentShortAttempt();
+  await testSupersededRenderAttemptCannotCommit();
   let harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
   try {
     const rendered = await harness.service.render(harness.productionId, harness.clip.id);
