@@ -190,3 +190,8 @@ More from darkzOGx:
 - [open-sales-researcher](https://github.com/darkzOGx/open-sales-researcher): autonomous B2B company research. Works with Claude Code, Cursor, Copilot.
 - [darkzseo](https://github.com/darkzOGx/darkzseo): SEO tooling
 - [ConstructionBids.ai](https://constructionbids.ai): AI scans every federal, state & local public works bid and matches you to contracts you'll win.
+
+
+### Resumable scene image generation
+
+Production visual assets are persisted after each completed scene. A retry reuses existing image files when their scene index and prompt/style hash still match, and regenerates only missing, invalid, or changed scenes. Placeholder `.info` files are never accepted as completed visual assets.
