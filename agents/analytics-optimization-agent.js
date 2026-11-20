@@ -251,9 +251,13 @@ class AnalyticsOptimizationAgent {
       engagement: results.engagement || { engagementRate: null, likeRatio: null, commentsPerView: null, engagementQuality: 'unknown' },
       dataQuality: {
         source: 'youtube_api',
-        partial: Object.keys(unavailable).length > 0,
+        partial: Object.keys(unavailable).length > 0 ||
+          Object.values(results).some(result => result?.dataQuality?.partial),
         available: Object.keys(results),
-        unavailable
+        unavailable,
+        sections: Object.fromEntries(Object.entries(results)
+          .filter(([, result]) => result?.dataQuality)
+          .map(([name, result]) => [name, result.dataQuality]))
       }
     };
   }
@@ -306,34 +310,40 @@ class AnalyticsOptimizationAgent {
   }
 
   async getDemographicsAnalytics(videoId, startDate, endDate) {
-    try {
-      const [ageResponse, genderResponse] = await Promise.all([
-        this.youtubeAnalytics.reports.query({
-          ids: 'channel==MINE',
-          startDate,
-          endDate,
-          metrics: 'viewerPercentage',
-          dimensions: 'ageGroup',
-          filters: `video==${videoId}`
-        }),
-        this.youtubeAnalytics.reports.query({
-          ids: 'channel==MINE',
-          startDate,
-          endDate,
-          metrics: 'viewerPercentage',
-          dimensions: 'gender',
-          filters: `video==${videoId}`
-        })
-      ]);
-      
-      return {
-        ageGroups: ageResponse.data.rows || [],
-        gender: genderResponse.data.rows || [],
-        primaryAudience: this.identifyPrimaryAudience(ageResponse.data.rows, genderResponse.data.rows)
-      };
-    } catch (error) {
-      return this.getSimulatedDemographics();
+    const queries = [
+      ['ageGroups', 'ageGroup'],
+      ['gender', 'gender']
+    ];
+    const settled = await Promise.allSettled(queries.map(([, dimension]) =>
+      this.youtubeAnalytics.reports.query({
+        ids: 'channel==MINE',
+        startDate,
+        endDate,
+        metrics: 'viewerPercentage',
+        dimensions: dimension,
+        filters: `video==${videoId}`
+      })
+    ));
+    const result = { ageGroups: [], gender: [] };
+    const unavailable = {};
+    settled.forEach((item, index) => {
+      const [name] = queries[index];
+      if (item.status === 'fulfilled') result[name] = item.value.data.rows || [];
+      else unavailable[name] = String(item.reason?.message || item.reason || 'Request failed').slice(0, 240);
+    });
+    if (Object.keys(unavailable).length === queries.length) {
+      throw new Error(`Demographics unavailable: ${Object.values(unavailable).join('; ')}`);
     }
+    return {
+      ...result,
+      primaryAudience: result.ageGroups.length || result.gender.length
+        ? this.identifyPrimaryAudience(result.ageGroups, result.gender)
+        : null,
+      dataQuality: {
+        partial: Object.keys(unavailable).length > 0,
+        unavailable
+      }
+    };
   }
 
   async getTrafficSourcesAnalytics(videoId, startDate, endDate) {
