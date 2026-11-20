@@ -214,6 +214,7 @@ function renderJobs(jobs) {
     const mediaProviders = [...new Set(mediaTasks.map(item => label(item.provider)))].join(', ');
     const resumeFrom = stages.find(stage => !completed.has(stage)) || 'quality_review';
     const recoverable = ['failed', 'interrupted'].includes(job.status);
+    const awaitingScriptReview = Boolean(job.details?.qualityReviewId);
     return `
     <article class="job-card">
       <div class="job-meta">
@@ -221,10 +222,12 @@ function renderJobs(jobs) {
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
+        ${awaitingScriptReview ? `<div class="checkpoint-line quality-review-job-note">Script review ${escapeHTML(job.details.qualityReviewId)} is linked to this job. Resolve the saved draft before any retry.</div>` : ''}
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       </div>
       ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancel</button>` : ''}
-      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${recoverable && !awaitingScriptReview ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${awaitingScriptReview ? `<button class="button secondary small" data-view="pipeline">Open script review queue</button>` : ''}
     </article>`;
   }).join('');
 }
