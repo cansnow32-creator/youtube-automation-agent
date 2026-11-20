@@ -10,12 +10,12 @@ async function close(db) {
   await new Promise((resolve, reject) => db.close(error => error ? reject(error) : resolve()));
 }
 
-async function insertSchedule(db, id, status = 'reconciliation_required', title = 'Expected title') {
+async function insertSchedule(db, id, status = 'reconciliation_required', title = 'Expected title', uploadStartedAt = new Date(Date.now() - 11 * 60 * 1000).toISOString()) {
   await db.executeQuery(
     `INSERT INTO publish_schedule
-      (id, production_id, title, publish_time, status, priority, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, id, title, new Date().toISOString(), status, 50, JSON.stringify({ seo: { title } })]
+      (id, production_id, title, publish_time, status, priority, metadata, upload_started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, id, title, new Date().toISOString(), status, 50, JSON.stringify({ seo: { title } }), uploadStartedAt]
   );
 }
 
@@ -27,7 +27,7 @@ async function main() {
     await db.executeQuery(`CREATE TABLE publish_schedule (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, title TEXT NOT NULL,
       publish_time TEXT NOT NULL, status TEXT, priority INTEGER, metadata TEXT,
-      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT,
+      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -36,6 +36,7 @@ async function main() {
     await insertSchedule(db, 'schedule-wrong-title', 'uploading', 'Expected title');
     await insertSchedule(db, 'schedule-absent');
     await insertSchedule(db, 'schedule-race');
+    await insertSchedule(db, 'schedule-fresh-uploading', 'uploading', 'Expected title', new Date().toISOString());
 
     const agent = Object.create(PublishingSchedulingAgent.prototype);
     agent.db = db;
@@ -84,6 +85,12 @@ async function main() {
       agent.resolveUnresolvedUploadAsAbsent('schedule-absent', false),
       error => error.code === 'UPLOAD_ABSENCE_CONFIRMATION_REQUIRED'
     );
+    await assert.rejects(
+      agent.resolveUnresolvedUploadAsAbsent('schedule-fresh-uploading', true),
+      error => error.code === 'UPLOAD_GRACE_PERIOD_ACTIVE'
+    );
+    assert.equal((await db.getScheduleEntry('schedule-fresh-uploading')).status, 'uploading');
+
     const absent = await agent.resolveUnresolvedUploadAsAbsent('schedule-absent', true);
     assert.equal(absent.status, 'failed');
     assert.equal(absent.youtubeId, null);
@@ -102,7 +109,7 @@ async function main() {
     const unresolved = await db.listUnresolvedPublishScheduleEntries(20);
     assert.deepEqual(
       unresolved.map(entry => entry.id).sort(),
-      ['schedule-wrong-channel', 'schedule-wrong-title']
+      ['schedule-fresh-uploading', 'schedule-wrong-channel', 'schedule-wrong-title']
     );
     process.stdout.write('Publishing reconciliation tests passed\\n');
   } finally {
