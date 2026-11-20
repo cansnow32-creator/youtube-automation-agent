@@ -427,8 +427,9 @@ class MediaGenerationService {
       error.status = 400;
       throw error;
     }
-    if (typeof this.db?.getMediaGenerationTaskById !== 'function') {
-      const error = new Error('Media task reconciliation requires database task lookup support');
+    if (typeof this.db?.getMediaGenerationTaskById !== 'function' ||
+        typeof this.db?.compareAndSetMediaGenerationTask !== 'function') {
+      const error = new Error('Media task reconciliation requires database lookup and atomic state-update support');
       error.code = 'MEDIA_TASK_RECONCILIATION_UNAVAILABLE';
       error.status = 503;
       throw error;
@@ -497,18 +498,30 @@ class MediaGenerationService {
     const previousTasks = Array.isArray(task.providerData?.previousTasks)
       ? task.providerData.previousTasks
       : [];
-    return this.db.updateMediaGenerationTask(taskId, {
-      externalTaskId: remoteId,
-      status,
-      outputPath: null,
-      providerData: {
-        ...this.providerData(remote),
-        ...(previousTasks.length ? { previousTasks } : {}),
-        ...(providerTaskType ? { taskType: providerTaskType } : {})
-      },
-      error: remote.error || null,
-      completedAt: ['failed', 'cancelled'].includes(status) ? new Date().toISOString() : null
-    });
+    const update = await this.db.compareAndSetMediaGenerationTask(
+      taskId,
+      task.status,
+      task.external_task_id || null,
+      {
+        externalTaskId: remoteId,
+        status,
+        outputPath: null,
+        providerData: {
+          ...this.providerData(remote),
+          ...(previousTasks.length ? { previousTasks } : {}),
+          ...(providerTaskType ? { taskType: providerTaskType } : {})
+        },
+        error: remote.error || null,
+        completedAt: ['failed', 'cancelled'].includes(status) ? new Date().toISOString() : null
+      }
+    );
+    if (!update?.updated) {
+      const error = new Error('Media task changed while the provider status was being checked; reload the task before retrying reconciliation');
+      error.code = 'MEDIA_TASK_RECONCILIATION_CONFLICT';
+      error.status = 409;
+      throw error;
+    }
+    return update.task;
   }
 
   async resolveAmbiguousSubmissionAsAbsent(taskId, confirmedNoRemoteTask) {
@@ -518,8 +531,9 @@ class MediaGenerationService {
       error.status = 400;
       throw error;
     }
-    if (typeof this.db?.getMediaGenerationTaskById !== 'function') {
-      const error = new Error('Media task resolution requires database task lookup support');
+    if (typeof this.db?.getMediaGenerationTaskById !== 'function' ||
+        typeof this.db?.compareAndSetMediaGenerationTask !== 'function') {
+      const error = new Error('Media task resolution requires database lookup and atomic state-update support');
       error.code = 'MEDIA_TASK_RECONCILIATION_UNAVAILABLE';
       error.status = 503;
       throw error;
@@ -549,20 +563,32 @@ class MediaGenerationService {
     const previousTasks = Array.isArray(task.providerData?.previousTasks)
       ? task.providerData.previousTasks
       : [];
-    return this.db.updateMediaGenerationTask(taskId, {
-      status: 'failed',
-      externalTaskId: null,
-      outputPath: null,
-      providerData: {
-        ...(previousTasks.length ? { previousTasks } : {}),
-        operatorResolution: {
-          action: 'confirmed_no_remote_task',
-          confirmedAt: now
-        }
-      },
-      error: 'Operator confirmed that no remote provider task exists; a new attempt may now be submitted',
-      completedAt: now
-    });
+    const update = await this.db.compareAndSetMediaGenerationTask(
+      taskId,
+      task.status,
+      null,
+      {
+        status: 'failed',
+        externalTaskId: null,
+        outputPath: null,
+        providerData: {
+          ...(previousTasks.length ? { previousTasks } : {}),
+          operatorResolution: {
+            action: 'confirmed_no_remote_task',
+            confirmedAt: now
+          }
+        },
+        error: 'Operator confirmed that no remote provider task exists; a new attempt may now be submitted',
+        completedAt: now
+      }
+    );
+    if (!update?.updated) {
+      const error = new Error('Media task changed before the operator resolution could be committed; reload and inspect its current state');
+      error.code = 'MEDIA_TASK_RECONCILIATION_CONFLICT';
+      error.status = 409;
+      throw error;
+    }
+    return update.task;
   }
 
   async cancelRemoteTaskOnLeaseLoss(provider, taskId) {
