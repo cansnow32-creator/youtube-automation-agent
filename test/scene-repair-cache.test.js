@@ -67,6 +67,27 @@ async function run() {
     const changedDuration = await service.buildRebuildFingerprint([{ ...scenes[0], duration: 13 }], null);
     assert.notEqual(changedDuration, first, 'duration changes must invalidate repair cache');
 
+    const leaseDir = path.join(directory, 'lease-loss');
+    const leaseService = new SceneRepairService({}, {}, {
+      dataRoot: leaseDir,
+      getMediaDuration: async () => 8,
+      runFFmpeg: async args => {
+        const output = args[args.length - 1];
+        if (output !== '-') await fs.writeFile(output, 'rendered-audio');
+      }
+    });
+    await fs.mkdir(path.join(leaseDir, 'audio'), { recursive: true });
+    await assert.rejects(
+      leaseService.rebuildNarration('lease-lost-production', [{
+        narrationStatus: 'current', audioPath, duration: 8
+      }], null, 'lease-fingerprint', async () => {
+        throw Object.assign(new Error('lease lost'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+      }),
+      error => error.code === 'SCENE_REBUILD_LEASE_LOST'
+    );
+    const audioFilesAfterLeaseLoss = await fs.readdir(path.join(leaseDir, 'audio'));
+    assert.deepEqual(audioFilesAfterLeaseLoss, [], 'lost lease must not publish a shared narration cache file');
+
     const fallbackPath = path.join(directory, 'full-narration.mp3');
     await fs.writeFile(fallbackPath, Buffer.from('fallback-audio'));
     const fallbackOne = await service.buildRebuildFingerprint([{ ...scenes[0], audioPath: null }], fallbackPath);
