@@ -210,6 +210,12 @@ async function run() {
   assert.equal(otherOnlyTraffic.sources[0].known, false);
   assert.equal(agent.analyzeSearchPerformance(otherOnlyTraffic).searchQuality, 'unknown',
     'unclassified traffic must not be presented as measured search performance');
+  assert.equal(otherOnlyTraffic.topSource, 'unknown',
+    'an unclassified bucket must not be hidden behind a smaller known source');
+  assert.equal(otherOnlyTraffic.organicPercentage, null,
+    'OTHER cannot be assumed to be non-organic when calculating organic share');
+  assert.equal(agent.calculateOrganicPercentage([['YT_SEARCH', 75], ['OTHER', 25]]), null);
+
   assert.equal(agent.calculateOrganicPercentage([['YT_SEARCH', 75], ['RELATED_VIDEO', 15], ['EXT_URL', 10]]), 90);
   assert.equal(agent.calculateOrganicPercentage([['YT_SEARCH', null], ['EXT_URL', 10]]), null);
 
