@@ -1,6 +1,6 @@
 # ChatGPT Dot — GitHub Handoff Setup
 
-Dot availability depends on account plan, region and gradual rollout.
+Dot availability depends on account plan, region and gradual rollout. Current OpenAI Help Center eligibility lists Pro, Business Premium, Enterprise, Edu and Healthcare offerings; Free is not listed. Do not upgrade solely for this project before checking whether the feature is actually available at https://chatgpt.com/dots.
 
 ## 1. Check Dot access
 
