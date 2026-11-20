@@ -28,17 +28,12 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit
-          npm ci
+      # Install and test exactly the dependency graph committed in this PR.
+      # Do not silently rewrite package-lock.json before npm ci.
+      - name: Install committed dependencies
+        run: npm ci
 
-      - name: Generate safe dependency remediation candidate
-        run: |
-          npm audit fix --package-lock-only --ignore-scripts || echo "Safe fixes applied where possible; remaining advisories will be reported separately."
-          npm ci
-
-      - name: Dependency audit report (non-blocking)
+      - name: Audit committed dependency lockfile (non-blocking)
         run: |
           npm audit --json > npm-audit.json || true
           node - <<'NODE'
@@ -51,12 +46,21 @@ jobs:
           }
           NODE
 
+      # Produce a reviewable candidate separately. The installed node_modules
+      # and the committed lockfile used by CI tests remain unchanged.
+      - name: Generate safe dependency remediation candidate
+        run: |
+          cp package-lock.json package-lock.original.json
+          npm audit fix --package-lock-only --ignore-scripts || echo "Safe fixes applied where possible; remaining advisories will be reported separately."
+          cp package-lock.json npm-security-remediation-candidate.json
+          mv package-lock.original.json package-lock.json
+
       - name: Upload dependency remediation candidate
         uses: actions/upload-artifact@v4
         with:
           name: npm-security-remediation-candidate
           path: |
-            package-lock.json
+            npm-security-remediation-candidate.json
             npm-audit.json
           retention-days: 7
 
