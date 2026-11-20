@@ -51,3 +51,9 @@ Never attach a video ID based only on its title or a public search result. The a
 
 
 The automatic recovery path for a previously recorded video ID applies the same ownership and normalized-title checks as operator reconciliation. It updates the schedule only with a compare-and-set against the exact previously observed status and video ID; stale verification results are rejected.
+
+## Scheduled queue recovery
+
+The publishing scheduler reloads `scheduled` and `paused` entries from SQLite on every 15-minute processing tick. This makes overdue scheduled rows eligible for catch-up after an application restart and prevents the scheduler from relying on a stale in-memory snapshot. If the database read fails, the in-memory queue is cleared and that tick does not publish from stale data.
+
+A scheduled row with an invalid `publish_time` is moved to `failed` with an explanatory error instead of being treated as due. Correct the schedule through the normal operator flow before retrying. Entries in `uploading` or `reconciliation_required` remain excluded from the automatic queue and must follow the reconciliation procedure above. Atomic SQLite upload claims remain the final cross-process duplicate-upload guard.
