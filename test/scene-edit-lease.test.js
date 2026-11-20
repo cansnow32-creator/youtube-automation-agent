@@ -76,6 +76,25 @@ async function run() {
   );
   assert.equal(operationRan, false);
 
+  const assetService = new SceneRepairService({}, {});
+  let assetUnlockedCalled = false;
+  assetService.withProductionOperationLease = async (_id, callback) => callback(async () => {});
+  assetService.replaceAssetUnlocked = async (...args) => {
+    assetUnlockedCalled = true;
+    assert.equal(typeof args[3], 'function', 'asset replacement receives the lease assertion');
+    return 'asset-replaced';
+  };
+  assert.equal(await assetService.replaceAsset('production-asset', 'scene-asset', {}), 'asset-replaced');
+  assert.equal(assetUnlockedCalled, true, 'asset replacement enters through the shared production lease');
+
+  const assetLeaseLost = new SceneRepairService({}, {});
+  await assert.rejects(
+    assetLeaseLost.replaceAssetUnlocked('production-asset', 'scene-asset', {}, async () => {
+      throw Object.assign(new Error('asset lease lost'), { code: 'SCENE_EDIT_LEASE_LOST' });
+    }),
+    error => error.code === 'SCENE_EDIT_LEASE_LOST'
+  );
+
   console.log('Scene edit lease regression tests passed');
 }
 
