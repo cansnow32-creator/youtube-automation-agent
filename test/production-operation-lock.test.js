@@ -454,6 +454,65 @@ async function run() {
   assert.equal(editCallbackRan, true, 'scene edit runs after acquiring the production lock');
   assert.equal(editLockReleased, true, 'scene edit releases only its owned lock after completion');
 
+  // Long-running scene regeneration/override operations share the production
+  // lock and renew it while provider work is in flight.
+  let operationCallbackRan = false;
+  const sceneOperationBlocked = new SceneRepairService({
+    acquireProductionOperationLock: async () => false,
+    releaseProductionOperationLock: async () => { throw new Error('must not release another scene operation lock'); }
+  }, {}, { dataRoot: '/tmp' });
+  await assert.rejects(
+    sceneOperationBlocked.withProductionOperationLease('scene-op-blocked', async () => {
+      operationCallbackRan = true;
+    }, 'test operation'),
+    error => error.code === 'SCENE_EDIT_IN_PROGRESS' && error.status === 409
+  );
+  assert.equal(operationCallbackRan, false, 'long-running scene operation does not start without the shared lock');
+
+  const operationSetInterval = global.setInterval;
+  const operationClearInterval = global.clearInterval;
+  let operationHeartbeat;
+  let operationReleased = false;
+  global.setInterval = callback => {
+    operationHeartbeat = callback;
+    return { unref() {} };
+  };
+  global.clearInterval = () => {};
+  try {
+    const sceneOperationLeaseLost = new SceneRepairService({
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => false,
+      releaseProductionOperationLock: async () => { operationReleased = true; }
+    }, {}, { dataRoot: '/tmp' });
+    await assert.rejects(
+      sceneOperationLeaseLost.withProductionOperationLease('scene-op-lost', async assertLease => {
+        operationHeartbeat();
+        await assertLease();
+      }, 'test operation'),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(operationReleased, true, 'long-running scene operation releases only its owned lock after lease loss');
+  } finally {
+    global.setInterval = operationSetInterval;
+    global.clearInterval = operationClearInterval;
+  }
+
+  // Public mutation entry points must all enter the lease wrapper.
+  for (const [method, args] of [
+    ['regenerateNarration', ['p', 's', { confirmCost: true }]],
+    ['regenerate', ['p', 's', {}]],
+    ['setSilenceOverride', ['p', { enabled: true, confirmed: true, reason: 'approved test reason' }]]
+  ]) {
+    const service = new SceneRepairService({}, {}, { dataRoot: '/tmp' });
+    let entered = false;
+    service.withProductionOperationLease = async (_id, callback) => callback(async () => {});
+    const unlocked = method === 'regenerateNarration' ? 'regenerateNarrationUnlocked'
+      : method === 'regenerate' ? 'regenerateUnlocked' : 'setSilenceOverrideUnlocked';
+    service[unlocked] = async (...callArgs) => { entered = true; return callArgs.at(-1) instanceof Function; };
+    assert.equal(await service[method](...args), true, `${method} forwards the lease assertion to its protected implementation`);
+    assert.equal(entered, true, `${method} executes only through its lease wrapper`);
+  }
+
   process.stdout.write('Production operation lock tests passed\\n');
 }
 
