@@ -513,26 +513,73 @@ class PublishingSchedulingAgent {
   }
 
   async reconcileUploadedVideo(scheduleEntry) {
-    const response = await this.youtube.videos.list({ part: 'id,status', id: scheduleEntry.youtubeId });
-    if (!response.data.items?.some(video => video.id === scheduleEntry.youtubeId)) {
-      scheduleEntry.status = 'reconciliation_required';
-      scheduleEntry.error = 'The recorded YouTube video ID could not be verified';
-      await this.db.updateScheduleEntry(scheduleEntry);
-      await this.syncShortStatus(scheduleEntry, 'reconciliation_required', scheduleEntry.error);
-      const error = new Error('The recorded upload could not be verified on YouTube. Resolve it before attempting another upload.');
-      error.status = 409;
-      error.code = 'UPLOAD_OUTCOME_UNKNOWN';
+    if (!this.youtube || typeof this.db.updateScheduleEntryUploadVerification !== 'function') {
+      const error = new Error('Safe verification for recorded YouTube uploads is unavailable');
+      error.status = 503;
+      error.code = 'PUBLISH_RECONCILIATION_UNAVAILABLE';
       throw error;
     }
-    scheduleEntry.status = 'published';
-    scheduleEntry.publishedAt = scheduleEntry.publishedAt || new Date().toISOString();
-    scheduleEntry.youtubeUrl = scheduleEntry.youtubeUrl || `https://www.youtube.com/watch?v=${scheduleEntry.youtubeId}`;
-    scheduleEntry.error = null;
-    await this.db.updateScheduleEntry(scheduleEntry);
-    await this.syncShortStatus(scheduleEntry, 'published');
-    this.publishQueue = this.publishQueue.filter(entry => entry.productionId !== scheduleEntry.productionId);
-    this.logger.success(`Reconciled existing YouTube upload: ${scheduleEntry.youtubeUrl}`);
-    return scheduleEntry;
+    const videoId = String(scheduleEntry.youtubeId || '').trim();
+    let video = null;
+    let channelId = null;
+    try {
+      const [videoResponse, channelResponse] = await Promise.all([
+        this.youtube.videos.list({ part: 'id,snippet,status', id: videoId }),
+        this.youtube.channels.list({ part: 'id', mine: true })
+      ]);
+      video = (videoResponse.data.items || []).find(item => item.id === videoId) || null;
+      channelId = channelResponse.data.items?.[0]?.id || null;
+    } catch (cause) {
+      const error = new Error(`YouTube could not verify the recorded upload: ${cause.message}`);
+      error.status = 502;
+      error.code = 'YOUTUBE_VERIFICATION_FAILED';
+      throw error;
+    }
+
+    const expectedTitle = String(scheduleEntry.metadata?.seo?.title || scheduleEntry.title || '')
+      .trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
+    const actualTitle = String(video?.snippet?.title || '')
+      .trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
+    let reason = null;
+    let code = null;
+    if (!video) {
+      reason = 'The recorded YouTube video ID could not be found on the authenticated channel';
+      code = 'YOUTUBE_VIDEO_NOT_FOUND';
+    } else if (!channelId || video.snippet?.channelId !== channelId) {
+      reason = 'The recorded YouTube video does not belong to the authenticated channel';
+      code = 'YOUTUBE_CHANNEL_MISMATCH';
+    } else if (!expectedTitle || actualTitle !== expectedTitle) {
+      reason = 'The recorded YouTube video title does not match the scheduled content';
+      code = 'YOUTUBE_TITLE_MISMATCH';
+    }
+
+    const nextStatus = reason ? 'reconciliation_required' : 'published';
+    const updated = await this.db.updateScheduleEntryUploadVerification(
+      scheduleEntry.id,
+      scheduleEntry.status,
+      videoId,
+      nextStatus,
+      reason,
+      new Date().toISOString()
+    );
+    if (!updated) {
+      const latest = await this.db.getScheduleEntry(scheduleEntry.id);
+      if (latest?.status === 'published' && latest.youtubeId === videoId) return latest;
+      const error = new Error('The schedule changed during YouTube verification; reload and inspect its current state');
+      error.status = 409;
+      error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
+      throw error;
+    }
+    await this.syncShortStatus(updated, nextStatus, reason);
+    if (reason) {
+      const error = new Error(reason);
+      error.status = 409;
+      error.code = code;
+      throw error;
+    }
+    this.publishQueue = this.publishQueue.filter(entry => entry.id !== scheduleEntry.id);
+    this.logger.success(`Reconciled existing YouTube upload: ${updated.youtubeUrl}`);
+    return updated;
   }
 
   async syncShortStatus(scheduleEntry, status, error = null) {
