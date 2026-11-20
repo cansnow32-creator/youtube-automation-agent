@@ -1,3 +1,12 @@
+## 2026-11-20 — Add real SQLite production-lock contention coverage
+
+- Added an integration section to `test/production-operation-lock.test.js` using two independent SQLite connections to one temporary database.
+- The test races two owners for the same lock and asserts exactly one wins; it also checks that a non-owner cannot renew or release the lease, that the active owner can renew, and that an expired lease can be taken over while the former owner can no longer renew.
+- Commit: `7940c5410c7caa3c3c82de47bcf628abec5adc80` on `feat/video-concept-approval`.
+- GitHub re-fetch confirms PR #2 head matches the commit. GitHub reports zero workflow runs on that head; the test has not been executed, so no pass is claimed.
+- Live comparison shows PR #2 is 402 commits ahead and 1 behind its current PR #1 base branch (merge base remains `9438d3d6...`). The one behind commit is PR #1's CI branch-filter change; preserve the stacked PR relationship and review the overlapping CI workflow before attempting synchronization.
+- Next: obtain a real GitHub Actions run, verify the SQLite integration test and complete PR #2 suite, then continue the deeper recovery audit. Do not merge.
+
 # AgentTube — Continuity Log
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
