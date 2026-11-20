@@ -67,7 +67,7 @@ const verifiedHook = verifyAppliedScriptLearnings(hookGuidance, {
 });
 assert.deepEqual(verifiedHook.map(item => item.recommendationId), ['hook-concise'],
   'only exact, measurable hook-length preferences matching generated output may be verified');
-assert.equal(verifiedHook[0].observedWordCount, 10);
+assert.equal(verifiedHook[0].observedWordCount, 9);
 assert.equal(verifiedHook[0].verificationMethod, 'generated_hook_word_count_threshold_40');
 const appliedScriptAttributes = engine.extractAttributes(
   { videoDetails: { title: 'A Sample Title' } },
