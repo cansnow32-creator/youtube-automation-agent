@@ -413,8 +413,8 @@ class PublishingSchedulingAgent {
       error.code = 'YOUTUBE_CHANNEL_MISMATCH';
       throw error;
     }
-    const expectedTitle = String(entry.metadata?.seo?.title || entry.title || '').trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
-    const actualTitle = String(video.snippet.title || '').trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
+    const expectedTitle = String(entry.metadata?.seo?.title || entry.title || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    const actualTitle = String(video.snippet.title || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
     if (!expectedTitle || actualTitle !== expectedTitle) {
       const error = new Error('The verified YouTube video title does not match this scheduled content');
       error.status = 409;
