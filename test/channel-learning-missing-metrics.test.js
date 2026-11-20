@@ -22,6 +22,26 @@ assert.equal(metrics.watchHours, null);
 assert.equal(metrics.engagementRate, null);
 assert.equal(metrics.performanceScore, 42);
 
+const periodAttributes = engine.extractAttributes({
+  videoDetails: { title: 'Windowed report' },
+  analytics: {
+    period: {
+      measurementWindow: '28d',
+      startDate: '2026-10-01',
+      endDate: '2026-10-28',
+      windowDays: 28,
+      precision: 'utc_calendar_days'
+    }
+  }
+}, {});
+assert.deepEqual(periodAttributes.measurementPeriod, {
+  measurementWindow: '28d',
+  startDate: '2026-10-01',
+  endDate: '2026-10-28',
+  windowDays: 28,
+  precision: 'utc_calendar_days'
+}, 'snapshots must retain the exact source date range and daily-bucket precision');
+
 const noOptionalMetrics = [
   { metrics: { impressions: 1200, ctr: null, retention: null } },
   { metrics: { impressions: 900, ctr: null, retention: null } }
