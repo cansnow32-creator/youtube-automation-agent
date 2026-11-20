@@ -2168,21 +2168,28 @@ class YouTubeAutomationAgent {
   }
 
   async refreshContentReview(productionId, reviewNotes) {
-    const bundle = await this.db.getProductionBundle(productionId);
-    if (!bundle) return null;
-    const profile = await this.db.getChannelProfile() || {};
-    const quality = await this.operator.runQualityChecks({
-      ...bundle,
-      scheduledPublishTime: bundle.scheduled_publish_time
-    }, profile);
-    const status = quality.passed ? 'needs_review' : 'needs_attention';
-    return this.db.saveContentReview(productionId, {
-      status,
-      editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
-      qualityChecks: quality.checks,
-      reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
-      reviewedAt: null
-    });
+    if (!this.scenes?.withProductionOperationLease) {
+      throw new Error('Scene operation lease is required to refresh content review safely');
+    }
+    return this.scenes.withProductionOperationLease(productionId, async assertLease => {
+      await assertLease();
+      const bundle = await this.db.getProductionBundle(productionId);
+      if (!bundle) return null;
+      const profile = await this.db.getChannelProfile() || {};
+      const quality = await this.operator.runQualityChecks({
+        ...bundle,
+        scheduledPublishTime: bundle.scheduled_publish_time
+      }, profile);
+      await assertLease();
+      const status = quality.passed ? 'needs_review' : 'needs_attention';
+      return this.db.saveContentReview(productionId, {
+        status,
+        editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
+        qualityChecks: quality.checks,
+        reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
+        reviewedAt: null
+      });
+    }, 'content review refresh');
   }
 
   async approveContent(productionId, input) {
