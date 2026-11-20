@@ -7,7 +7,50 @@ const { CineCodeRenderer } = require('../utils/cinecode-renderer');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { checkFFmpeg, runFFmpeg, getMediaDuration } = require('../utils/ffmpeg');
 
+async function testCineCodeLeaseLossCleansPublishedScene() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-lease-loss-'));
+  const imagePath = path.join(directory, 'source.png');
+  await sharp({ create: { width: 32, height: 32, channels: 3, background: '#345678' } }).png().toFile(imagePath);
+  const renderer = new CineCodeRenderer({
+    runFFmpeg: async args => {
+      await fs.writeFile(args.at(-1), Buffer.from('rendered-scene'));
+    },
+    logger: { info() {} }
+  });
+  let leaseChecks = 0;
+
+  try {
+    await assert.rejects(
+      renderer.renderScenes({
+        visualAssets: [imagePath],
+        totalDuration: 6,
+        outputDir: directory,
+        outputPrefix: 'lease-attempt',
+        resolution: '480p',
+        aspectRatio: '16:9',
+        assertLease: async () => {
+          leaseChecks += 1;
+          // The scene has been atomically published; loss must remove its output and manifest.
+          if (leaseChecks >= 11) {
+            throw Object.assign(new Error('generation lease lost during CineCode render'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    const files = await fs.readdir(directory);
+    assert.deepEqual(files.sort(), ['source.png'],
+      'CineCode must remove a just-published scene and any partial manifest after lease loss');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function run() {
+  await testCineCodeLeaseLossCleansPublishedScene();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-renderer-'));
   const imageOne = path.join(directory, 'one.png');
   const imageTwo = path.join(directory, 'two.png');
