@@ -37,6 +37,18 @@
 
 # AgentTube — Continuity Log
 
+## 2026-11-20 — Clean up stale visual and narration regeneration artifacts
+
+- Audited SceneRepairService.regenerateNarrationUnlocked() and regenerateUnlocked() for side effects after lease loss/provider failure.
+- Narration regeneration now uses UUID-scoped output names and removes partial audio plus Gemini PCM sidecars if the lease is lost or an error occurs before scene metadata is committed.
+- Visual regeneration tracks generated image/simulation outputs and removes them on pre-commit failure; visual generator filenames now include UUIDs.
+- Added test/scene-regeneration-lease-cleanup.test.js to simulate lease loss after a TTS file is produced; included it in npm test.
+- Commits on feat/video-concept-approval: bad06f3af3c0d21db406224b25fc1f865b9a6281, 77de4fad8751796d5c7efaa6a6eb34fc5b585c49, 86a2480fcad9a70eaba23aabc93f75b5375dd317, b938b5582ecfb72c1db30649d643c65918cde184, dcc5433c223a46df953196105a0fb408896d1fe1, 5e07fa496bdba00dac7c54b77e1dedd81b13f790.
+- Re-fetched changed source, test, and package script through GitHub. Static review only; tests/lint have not run.
+- GitHub reports zero PR-triggered runs for the current head. The workflow supports manual dispatch, but the connected GitHub toolset has no workflow-dispatch action; manual Actions UI run is still needed.
+- Next: add visual-generation lease-loss regression coverage and inspect provider partial-write paths. Do not merge.
+
+
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
 ## 2026-11-20 — Serialize short scene edits and uploaded asset replacement
