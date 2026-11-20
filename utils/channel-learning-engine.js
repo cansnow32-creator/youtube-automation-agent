@@ -288,7 +288,11 @@ class ChannelLearningEngine {
         ...this.buildOutcomeRecommendations(cohort, strategy)
       ].map(candidate => ({
         ...candidate,
-        evidence: { ...(candidate.evidence || {}), surface },
+        evidence: {
+          ...(candidate.evidence || {}),
+          surface,
+          freshness: this.buildEvidenceFreshness(cohort)
+        },
         proposedChange: { ...(candidate.proposedChange || {}), surface }
       }));
     });
@@ -300,6 +304,39 @@ class ChannelLearningEngine {
       }));
     }
     return saved;
+  }
+
+  buildEvidenceFreshness(snapshots = [], now = new Date()) {
+    const measured = snapshots.map(snapshot => {
+      const value = snapshot.measuredAt;
+      const timestamp = value ? new Date(value) : null;
+      return timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp : null;
+    });
+    const valid = measured.filter(Boolean).sort((a, b) => a - b);
+    const sampleCount = snapshots.length;
+    const oldestMeasuredAt = valid.length ? valid[0].toISOString() : null;
+    const latestMeasuredAt = valid.length ? valid[valid.length - 1].toISOString() : null;
+    const completeTimestamps = sampleCount >= 2 && valid.length === sampleCount;
+    const ageDays = oldestMeasuredAt
+      ? (now.getTime() - new Date(oldestMeasuredAt).getTime()) / 86400000
+      : null;
+    const status = !completeTimestamps || ageDays < 0
+      ? 'unknown'
+      : ageDays > 90
+        ? 'stale'
+        : 'fresh';
+    return {
+      status,
+      oldestMeasuredAt,
+      latestMeasuredAt,
+      sampleCount,
+      maxAgeDays: 90,
+      reason: status === 'fresh'
+        ? 'All cohort measurements have timestamps and the oldest is within 90 days.'
+        : status === 'stale'
+          ? 'At least one cohort measurement is older than the 90-day evidence window.'
+          : 'Evidence timestamps are missing, invalid, future-dated, or the cohort has fewer than two samples.'
+    };
   }
 
   preferredSnapshotPerVideo(snapshots, measurementWindow = '7d') {
