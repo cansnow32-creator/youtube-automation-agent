@@ -53,8 +53,10 @@ async function run() {
   assert.equal(insights.surfaceBreakdowns.long_form.titleLength.leader.name, 'concise');
   assert.equal(insights.surfaceBreakdowns.shorts.titleLength.leader.name, 'long');
 
+  const longForm = snapshots.filter(item => item.contentAttributes.surface === 'long_form');
   const smallGroups = [
-    ...snapshots.filter(item => item.contentAttributes.surface === 'long_form').slice(0, 4)
+    ...longForm.filter(item => item.contentAttributes.titleLength === 'concise').slice(0, 2),
+    ...longForm.filter(item => item.contentAttributes.titleLength === 'long').slice(0, 2)
   ];
   const smallSaved = [];
   const smallEngine = new ChannelLearningEngine({
