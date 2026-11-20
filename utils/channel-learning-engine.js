@@ -563,6 +563,55 @@ class ChannelLearningEngine {
     };
   }
 
+  buildLongitudinalInsights(snapshots = []) {
+    const windowDays = { '24h': 1, '7d': 7, '28d': 28 };
+    const additiveMetrics = ['views', 'watchHours', 'netSubscribers', 'estimatedRevenue'];
+    const windows = {};
+    for (const [window, days] of Object.entries(windowDays)) {
+      const byVideo = new Map();
+      for (const snapshot of snapshots) {
+        if (snapshot.simulated || snapshot.measurementWindow !== window || !snapshot.videoId) continue;
+        const current = byVideo.get(snapshot.videoId);
+        if (!current || new Date(snapshot.measuredAt || 0) > new Date(current.measuredAt || 0)) {
+          byVideo.set(snapshot.videoId, snapshot);
+        }
+      }
+      const cohort = [...byVideo.values()];
+      const metrics = {};
+      for (const key of additiveMetrics) {
+        const rates = cohort
+          .map(snapshot => this.optionalNumber(snapshot.metrics?.[key]))
+          .filter(value => value !== null)
+          .map(value => Number((value / days).toFixed(3)));
+        metrics[key] = {
+          medianPerDay: rates.length ? Number(this.median(rates).toFixed(3)) : null,
+          measuredVideos: rates.length
+        };
+      }
+      const rateMetrics = {};
+      for (const key of ['ctr', 'retention', 'engagementRate']) {
+        const values = cohort
+          .map(snapshot => this.optionalNumber(snapshot.metrics?.[key]))
+          .filter(value => value !== null);
+        rateMetrics[key] = {
+          median: values.length ? Number(this.median(values).toFixed(2)) : null,
+          measuredVideos: values.length
+        };
+      }
+      windows[window] = {
+        windowDays: days,
+        videoCount: cohort.length,
+        metrics,
+        rateMetrics
+      };
+    }
+    return {
+      windows,
+      interpretation: '24h, 7d, and 28d are nested cumulative publication-anchored windows, not disjoint periods. Additive totals are normalized to per-day averages for descriptive comparison; CTR, retention, and engagement rates are reported separately and are not subtracted or presented as period-over-period change.',
+      evidencePolicy: 'Only real snapshots are included. Each video contributes at most once per window; missing metric values remain unavailable and do not count as zero.'
+    };
+  }
+
   async getSummary() {
     const [snapshots, recommendations, retentionSnapshots, strategy, experiments] = await Promise.all([
       this.db.listPerformanceSnapshots({ reliableOnly: true }),
@@ -587,6 +636,7 @@ class ChannelLearningEngine {
       measuredVideos: preferred.length,
       snapshotCount: snapshots.length,
       baseline: this.calculateBaseline(preferred),
+      longitudinalInsights: this.buildLongitudinalInsights(snapshots),
       windows: snapshots.reduce((counts, snapshot) => {
         counts[snapshot.measurementWindow] = (counts[snapshot.measurementWindow] || 0) + 1;
         return counts;
