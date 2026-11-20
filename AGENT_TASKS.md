@@ -9,6 +9,8 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - [ ] in_progress — Complete PR #2 audit. Live diff and check-runs inspected; static review covered job-scoped production lock, production resume lease, scene-repair lease/heartbeat, and rollback-safe output replacement. Database-backed multi-process concurrency and full runtime behavior remain unverified.
 - [ ] blocked — Run CI for PR #2 head `96ac8f7c27be5009c981576650dd93c365cd160e`: GitHub reports zero check-runs. Connector-authored commits did not trigger Actions. PR #1 base-branch workflow filter has now been broadened to include stacked PRs, but a run still needs to be triggered/observed through GitHub Actions.
 - [x] done — Fix CI integrity issue: stop rewriting the committed lockfile before `npm ci`; generate the npm audit remediation candidate separately. Commit `96ac8f7c27be5009c981576650dd93c365cd160e` on PR #2 branch.
+- [x] done — Broaden PR #1 base workflow's `pull_request` branch filter so stacked PR #2 is eligible for CI; commit `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81` on PR #1 branch.
+- [x] done — Tighten a weak SQL assertion in the lease-renewal regression test to require the literal `?` placeholder; commit `5c346c23f75aa240c083371a8de42decdd80fed2` on PR #2 branch.
 - [ ] todo — Fix any additional verified application failures with focused regression tests; do not merge.
 - [x] done — Review PR #1 / PR #2 dependency: PR #2 intentionally targets PR #1's branch. Keep the stacked relationship; do not retarget without a full dependency review.
 - [ ] todo — Add database-backed SQLite lock/concurrency regression coverage; current lock tests mock database calls.
