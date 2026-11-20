@@ -76,33 +76,39 @@ async function run() {
   const originalGroqKey = process.env.GROQ_API_KEY;
   const originalOllamaModel = process.env.OLLAMA_MODEL;
   const originalOllamaUrl = process.env.OLLAMA_BASE_URL;
+  const originalRemoteReview = process.env.QUALITY_ALLOW_REMOTE_REVIEW;
   try {
-    process.env.GEMINI_API_KEY = 'test-gemini-key';
-    process.env.GROQ_API_KEY = 'test-groq-key';
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.QUALITY_ALLOW_REMOTE_REVIEW;
     process.env.OLLAMA_MODEL = 'qwen3.5:4b';
     process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434/';
     global.fetch = async url => {
       assert.equal(url, 'http://127.0.0.1:11434/api/tags');
       return { ok: true, json: async () => ({ models: [{ name: 'qwen3.5:4b' }] }) };
     };
-    const quality = new ProductionReadinessService({}, { credentials: { gemini: { apiKey: 'saved-gemini-key' } } });
+    const quality = new ProductionReadinessService({}, { credentials: {} });
     const qualityResult = await quality.probeQualityPipeline();
     assert.equal(qualityResult.details.ollamaModel, 'qwen3.5:4b');
-    assert.equal(qualityResult.details.geminiConfigured, true);
-    assert.equal(qualityResult.details.groqConfigured, true);
+    assert.equal(qualityResult.details.localReviewEnabled, true);
+    assert.equal(qualityResult.details.remoteReviewEnabled, false);
+    assert.equal(qualityResult.details.geminiConfigured, false);
+    assert.equal(qualityResult.details.groqConfigured, false);
 
     global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3:latest' }] }) });
     await assert.rejects(quality.probeQualityPipeline(), /Ollama model qwen3.5:4b is not installed/);
 
-    delete process.env.GROQ_API_KEY;
-    await assert.rejects(quality.probeQualityPipeline(), /Groq reviewer is not configured/);
+    process.env.QUALITY_ALLOW_REMOTE_REVIEW = 'true';
+    global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'qwen3.5:4b' }] }) });
+    await assert.rejects(quality.probeQualityPipeline(), /Gemini reviewer is not configured/);
   } finally {
     global.fetch = originalFetch;
     for (const [key, value] of Object.entries({
       GEMINI_API_KEY: originalGeminiKey,
       GROQ_API_KEY: originalGroqKey,
       OLLAMA_MODEL: originalOllamaModel,
-      OLLAMA_BASE_URL: originalOllamaUrl
+      OLLAMA_BASE_URL: originalOllamaUrl,
+      QUALITY_ALLOW_REMOTE_REVIEW: originalRemoteReview
     })) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
