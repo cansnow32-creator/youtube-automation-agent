@@ -353,3 +353,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Validation: GitHub API confirms PR #3 open/draft/unmerged and zero check-runs on the current head. Connector-authored commits did not trigger the workflow, so validation remains pending.
 - GitHub connector plugin is already installed and enabled in ChatGPT; Dot access itself still depends on plan/rollout and must be checked by the user.
 - Next: user checks chatgpt.com/dots; if available, create Dot, connect GitHub, and run the read-only smoke test in DOT_SETUP.md. Separately trigger the continuity workflow from GitHub Actions UI. Then continue P0 PR #2 audit.
+
+
+## 2026-11-20 — PR #2 scene edit lease cleanup and regression test
+
+- Removed unused `withProductionEditLock()` from `utils/scene-repair-service.js`; it silently ran without DB lock support and is superseded by the heartbeat-backed lease wrapper.
+- Added `test/scene-edit-lease.test.js` to cover lease assertion failure before update/reorder DB writes, fail-closed missing lock support, and lock contention. Added it to the `npm test` chain.
+- Commits: `79348283424180f5113b95e75860007983291307`, `ea647cb6f5165d6644ef1cd04e0adfe4f0a39d71`, `e1d02341c8830d2124647ab165314e65fea1fb43`.
+- Static JavaScript syntax checks passed for service and new test; `package.json` parses and includes the test. Runtime tests/lint not run. GitHub reports no workflow run for the previously checked head; recheck current head.
