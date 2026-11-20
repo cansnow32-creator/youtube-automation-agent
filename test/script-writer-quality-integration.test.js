@@ -42,6 +42,29 @@ async function run() {
     targetAudience: 'general audience', keywords: [], researchSources: []
   }, { tone: 'informative', pacing: 'steady' }), /missing its introduction or conclusion/);
 
+  let persistedReview = null;
+  agent.db.saveScriptQualityReview = async review => {
+    persistedReview = review;
+    return { id: 'quality_review_test_1' };
+  };
+  const blockedError = Object.assign(new Error('Quality review did not pass'), {
+    code: 'QUALITY_REVIEW_REQUIRED',
+    draft: '{"title":"Rejected draft","sections":[]}',
+    qualityReport: { status: 'human_review_required', score: 61, attempts: [] }
+  });
+  agent.qualityPipeline.generateAndReview = async () => { throw blockedError; };
+  await assert.rejects(agent.generateScriptWithAI({
+    topic: 'Rejected topic', contentType: 'Explainer', angle: 'Evidence first',
+    targetAudience: 'general audience', keywords: [], researchSources: []
+  }, { tone: 'informative', pacing: 'steady' }), error => {
+    assert.equal(error.qualityReviewId, 'quality_review_test_1');
+    assert.equal(error.code, 'QUALITY_REVIEW_REQUIRED');
+    return true;
+  });
+  assert.equal(persistedReview.topic, 'Rejected topic');
+  assert.equal(persistedReview.draft, blockedError.draft);
+  assert.equal(persistedReview.qualityReport.score, 61);
+
   process.stdout.write('Script writer quality integration tests passed\\n');
 }
 
