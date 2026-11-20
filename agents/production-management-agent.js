@@ -1592,4 +1592,4 @@ class ProductionManagementAgent {
   }
 }
 
-module.exports = { ProductionManagementAgent };
+module.exports = { ProductionManagementAgent, getVideoAttemptSidecarPaths };
