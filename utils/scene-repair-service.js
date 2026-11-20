@@ -288,11 +288,12 @@ class SceneRepairService {
   }
 
   async updateScene(productionId, sceneId, input = {}) {
-    return this.withProductionEditLock(productionId, () => this.updateSceneUnlocked(productionId, sceneId, input));
+    return this.withProductionOperationLease(productionId, assertLease => this.updateSceneUnlocked(productionId, sceneId, input, assertLease), 'scene update');
   }
 
-  async updateSceneUnlocked(productionId, sceneId, input = {}) {
-    const bundle = await this.getEditableBundle(productionId);
+  async updateSceneUnlocked(productionId, sceneId, input = {}, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
     if (scene.locked && input.locked !== false) throw this.error('Unlock this scene before editing it', 409);
@@ -309,6 +310,7 @@ class SceneRepairService {
     const scriptChanged = scriptText !== scene.scriptText;
     const promptChanged = prompt !== scene.prompt;
     const durationChanged = duration !== scene.duration;
+    await assertLease();
     const next = await this.db.updateProductionScene(productionId, sceneId, {
       label, scriptText, prompt, duration, provenanceSourceIds,
       locked: input.locked === undefined ? scene.locked : input.locked === true,
@@ -317,17 +319,21 @@ class SceneRepairService {
       revision: scriptChanged || promptChanged || durationChanged ? scene.revision + 1 : scene.revision
     });
 
+    await assertLease();
     if (scriptChanged && input.factualChange !== false) {
-      await this.markSceneClaimForReview(bundle, next, verifiedSourceIds);
+      await this.markSceneClaimForReview(bundle, next, verifiedSourceIds, assertLease);
     }
+    await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId, action: 'edit', before: scene, after: next,
       costEvidence: { billed: false }
     });
+    await assertLease();
     return next;
   }
 
-  async markSceneClaimForReview(bundle, scene, verifiedSourceIds) {
+  async markSceneClaimForReview(bundle, scene, verifiedSourceIds, assertLease = async () => {}) {
+    await assertLease();
     const provenance = bundle.provenance || { sources: [], claims: [], containsSyntheticMedia: false };
     const id = `scene_claim_${scene.id}_r${scene.revision}`;
     const sourceIds = scene.provenanceSourceIds.filter(sourceId => verifiedSourceIds.has(sourceId));
@@ -339,6 +345,7 @@ class SceneRepairService {
       status: sourceIds.length ? 'supported' : 'pending',
       notes: `Narration changed in ${scene.label}; review before approval.`
     }];
+    await assertLease();
     await new ProvenanceService(this.db).review(bundle.id, {
       sources: provenance.sources || [], claims,
       containsSyntheticMedia: provenance.containsSyntheticMedia
@@ -346,18 +353,22 @@ class SceneRepairService {
   }
 
   async reorder(productionId, orderedIds) {
-    return this.withProductionEditLock(productionId, () => this.reorderUnlocked(productionId, orderedIds));
+    return this.withProductionOperationLease(productionId, assertLease => this.reorderUnlocked(productionId, orderedIds, assertLease), 'scene reorder');
   }
 
-  async reorderUnlocked(productionId, orderedIds) {
-    const bundle = await this.getEditableBundle(productionId);
+  async reorderUnlocked(productionId, orderedIds, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.getEditableBundle(productionId, assertLease);
     if (bundle.scenes.some(scene => scene.locked)) throw this.error('Unlock every scene before changing timeline order', 409);
     const before = bundle.scenes;
+    await assertLease();
     const after = await this.db.reorderProductionScenes(productionId, this.array(orderedIds));
+    await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId: after[0].id, action: 'reorder', before: { order: before.map(scene => scene.id) },
       after: { order: after.map(scene => scene.id) }, costEvidence: { billed: false }
     });
+    await assertLease();
     return after;
   }
 
