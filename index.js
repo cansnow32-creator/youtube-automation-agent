@@ -708,6 +708,36 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/media-generation/tasks/:taskId/resolve-no-task', protect, async (req, res) => {
+      try {
+        const mediaGeneration = this.agents.production?.aiVideoGenerator?.mediaGeneration;
+        if (!mediaGeneration) {
+          return res.status(503).json({ success: false, error: 'Media generation service is not initialized' });
+        }
+        const task = await mediaGeneration.resolveAmbiguousSubmissionAsAbsent(
+          req.params.taskId,
+          req.body?.confirmedNoRemoteTask
+        );
+        return res.json({
+          success: true,
+          task: {
+            id: task.id,
+            jobId: task.job_id,
+            productionId: task.production_id,
+            sceneIndex: task.scene_index,
+            provider: task.provider,
+            model: task.model,
+            status: task.status,
+            externalTaskId: task.external_task_id,
+            updatedAt: task.updated_at,
+            error: task.error
+          }
+        });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.get('/api/script-quality-reviews', protect, async (req, res) => {
       try {
         const status = ['pending', 'human_approved', 'rejected', 'revision_requested', 'all'].includes(req.query.status)
