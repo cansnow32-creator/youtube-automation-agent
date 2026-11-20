@@ -15,6 +15,16 @@ Default branch: master
 
 Latest known PR #2 head at continuity setup: e47c569dc6e8bd4b4617d094a7b93dfcc25c9bcb. This SHA may become stale; always fetch the live PR head.
 
+
+## PR #3 — Agent Continuity
+
+- Branch: `feat/agent-continuity`.
+- Latest verified head at 2026-11-20: `1904d1fccc3d808628fedf80910b5db7daa12c04` (refresh live before relying on it).
+- PR #3 is open, draft, and unmerged.
+- It adds the continuity handoff files, Dot setup guidance, and deterministic read-only workflow validation.
+- No check runs are associated with this head yet; the workflow has not been verified. Do not claim it passed.
+- This system supports manual new-chat handoff via the phrase **"AgentTube – devam et"**. It does not automatically open a new ChatGPT chat or run an autonomous coding model.
+
 ## PR #2 known work and validation limits
 
 - Local Ollama-first concept proposal/revision; no silent Gemini/Groq fallback.
