@@ -709,7 +709,7 @@ class SceneRepairService {
     }
 
     await assertLease();
-    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint);
+    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint, assertLease);
     await assertLease();
     const allIntentionalSilence = scenes.every(scene => scene.narrationStatus === 'intentional_silence');
     let finalReady = false;
@@ -818,7 +818,7 @@ class SceneRepairService {
     });
   }
 
-  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint) {
+  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint, assertLease = async () => {}) {
     const hasSceneAudio = scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current');
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
     if (!hasSceneAudio && allCurrentWithoutSegments) return fallbackAudioPath;
@@ -854,6 +854,8 @@ class SceneRepairService {
       const duration = await this.getMediaDuration(tempPath);
       if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
       await runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
+      // The FFmpeg render may outlive the lease; verify ownership immediately before publishing the shared cache file.
+      await assertLease();
       await replaceFileWithRollback(tempPath, outputPath);
       return outputPath;
     } catch (error) {
