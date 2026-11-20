@@ -21,6 +21,15 @@ async function run() {
     return [simulatedPath];
   };
 
+  try {
+    const result = await generator.generateVisualAssets('test scene', 'test', 1);
+    assert.deepEqual(result, [simulatedPath]);
+    await assert.rejects(fs.access(partialPath), { code: 'ENOENT' });
+  } finally {
+    await fs.unlink(partialPath).catch(() => {});
+    await fs.unlink(simulatedPath).catch(() => {});
+  }
+
   let leasePartialPath = null;
   let fallbackCalled = false;
   generator.generateImage = async (_prompt, imagePath) => {
@@ -50,15 +59,7 @@ async function run() {
     if (leasePartialPath) await fs.unlink(leasePartialPath).catch(() => {});
   }
 
-  try {
-    const result = await generator.generateVisualAssets('test scene', 'test', 1);
-    assert.deepEqual(result, [simulatedPath]);
-    await assert.rejects(fs.access(partialPath), { code: 'ENOENT' });
-    console.log('Partial visual artifact cleanup test passed');
-  } finally {
-    await fs.unlink(partialPath).catch(() => {});
-    await fs.unlink(simulatedPath).catch(() => {});
-  }
+  console.log('Visual generation artifact cleanup tests passed');
 }
 
 run().catch(error => {
