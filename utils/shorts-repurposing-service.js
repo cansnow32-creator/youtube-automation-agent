@@ -169,6 +169,12 @@ class ShortsRepurposingService {
 
   async render(productionId, clipId, options = {}) {
     const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    if (typeof this.db.updateShortClipForRender !== 'function') {
+      const error = new Error('Database compare-and-set support is required for safe Shorts rendering');
+      error.status = 503;
+      error.code = 'SHORTS_RENDER_CAS_UNAVAILABLE';
+      throw error;
+    }
     await assertLease();
     const bundle = await this.requireSource(productionId);
     const clip = await this.requireClip(productionId, clipId);
@@ -220,16 +226,23 @@ class ShortsRepurposingService {
       await assertLease();
       await fs.rename(temporaryOutputPath, outputPath);
       await assertLease();
-      return await this.db.updateShortClip(clip.id, {
-        status: 'rendered', outputPath, captionsPath, error: null, renderAttemptId: attemptId,
+      const saved = await this.db.updateShortClipForRender(clip.id, attemptId, {
+        status: 'rendered', outputPath, captionsPath, error: null,
         renderedAt: new Date().toISOString(),
         renderMetadata: { duration: media.duration, width: media.width, height: media.height, hasAudio: media.hasAudio === true }
       });
+      if (!saved) {
+        const error = new Error('This Short render attempt is no longer current; its result was discarded');
+        error.status = 409;
+        error.code = 'SHORTS_RENDER_ATTEMPT_SUPERSEDED';
+        throw error;
+      }
+      return saved;
     } catch (error) {
       await Promise.all(ownedPaths.map(file => fs.rm(file, { force: true }).catch(() => {})));
-      if (error?.code === 'GENERATION_JOB_LEASE_LOST' || error?.code === 'PRODUCTION_OPERATION_LOCK_LOST') throw error;
+      if (['GENERATION_JOB_LEASE_LOST', 'PRODUCTION_OPERATION_LOCK_LOST', 'SCENE_EDIT_LEASE_LOST', 'SCENE_EDIT_LEASE_UNVERIFIED', 'SHORTS_RENDER_ATTEMPT_SUPERSEDED'].includes(error?.code)) throw error;
       await assertLease();
-      await this.db.updateShortClip(clip.id, { status: 'failed', error: error.message, renderAttemptId: attemptId });
+      await this.db.updateShortClipForRender(clip.id, attemptId, { status: 'failed', error: error.message });
       throw error;
     }
   }
