@@ -11,30 +11,26 @@ function makeService(samples) {
   return { service, updates };
 }
 
-function experiment({ controlCtr = 8, variantCtr = 10, controlRetention = 40, variantRetention = 38,
-  controlImpressions = 5000, variantImpressions = 5000 } = {}) {
-  const makeArm = (id, ctr, retention, impressions, isControl) => ({
+function experiment({ controlCtr = 8, variantCtr = 10, controlImpressions = 5000, variantImpressions = 5000 } = {}) {
+  const makeArm = (id, ctr, impressions, isControl) => ({
     id, index: isControl ? 0 : 1, label: isControl ? 'Control' : 'Variant B', isControl,
-    result: {
-      impressions, clicks: Math.round(impressions * ctr / 100), ctr,
-      averageViewPercentage: retention
-    }
+    result: { impressions, clicks: Math.round(impressions * ctr / 100), ctr }
   });
   return {
     id: 'experiment-1',
     minImpressions: 1000,
     guardrails: { maximumRetentionDropPoints: 5, maximumTrafficSourceShiftPoints: 20 },
     arms: [
-      makeArm('control', controlCtr, controlRetention, controlImpressions, true),
-      makeArm('variant', variantCtr, variantRetention, variantImpressions, false)
+      makeArm('control', controlCtr, controlImpressions, true),
+      makeArm('variant', variantCtr, variantImpressions, false)
     ]
   };
 }
 
 function samplesFor(test) {
   return test.arms.flatMap(arm => [
-    { armId: arm.id, trafficSources: [{ source: 'browse', percentage: 60 }] },
-    { armId: arm.id, trafficSources: [{ source: 'browse', percentage: 60 }] }
+    { armId: arm.id, metrics: { impressions: arm.result.impressions, ctr: arm.result.ctr, clicks: arm.result.clicks }, trafficSources: [{ source: 'browse', percentage: 60 }] },
+    { armId: arm.id, metrics: { impressions: arm.result.impressions, ctr: arm.result.ctr, clicks: arm.result.clicks }, trafficSources: [{ source: 'browse', percentage: 60 }] }
   ]);
 }
 
@@ -43,35 +39,29 @@ async function run() {
     const test = experiment({ variantImpressions: 999 });
     const { service } = makeService(samplesFor(test));
     const result = await service.evaluate(test);
-    assert.equal(result.winnerArmId, null, 'an arm below minimum qualified impressions cannot win');
-    assert.match(result.reason, /every arm must reach/i);
+    assert.equal(result.winnerArmId, null, 'sequential observations cannot establish a winner');
+    assert.equal(result.comparisonMethod, 'sequential_same_video_observational');
+    assert.equal(result.exposureAttribution, 'unavailable_from_youtube_analytics');
+    assert.equal(result.eligibleArms, 1);
+    assert.match(result.reason, /does not attribute impressions and clicks/i);
   }
 
   {
     const test = experiment({ controlCtr: 8, variantCtr: 8.1 });
     const { service } = makeService(samplesFor(test));
     const result = await service.evaluate(test);
-    assert.equal(result.winnerArmId, null, 'a small CTR difference must not be called a winner');
-    assert.match(result.reason, /95% evidence threshold/i);
-  }
-
-  {
-    const test = experiment({ controlRetention: 45, variantRetention: 35 });
-    const { service } = makeService(samplesFor(test));
-    const result = await service.evaluate(test);
-    assert.equal(result.winnerArmId, null, 'a retention guardrail regression blocks winner selection');
+    assert.equal(result.winnerArmId, null, 'even a small difference must remain observational');
+    assert.equal(result.confidence, 'unverified');
     assert.equal(result.guardrails.passed, false);
-    assert.match(result.reason, /guardrail/i);
+    assert.equal(result.arms.find(arm => arm.armId === 'variant').observedCtr, 8.1);
   }
 
   {
-    const test = experiment();
+    const test = experiment({ controlCtr: 8, variantCtr: 15 });
     const { service } = makeService(samplesFor(test));
     const result = await service.evaluate(test);
-    assert.equal(result.winnerArmId, 'variant');
-    assert.equal(result.guardrails.passed, true);
-    assert.ok(result.zScore >= 1.96, 'winner must clear the 95% evidence threshold');
-    assert.equal(result.confidence, 'high');
+    assert.equal(result.winnerArmId, null, 'a large sequential CTR difference is not causal A/B evidence');
+    assert.match(result.reason, /cannot establish an A\/B winner or causal lift/i);
   }
 
   {
@@ -86,7 +76,7 @@ async function run() {
       () => service.adoptWinner(test.id, { confirmed: false }),
       error => error.code === 'EXPERIMENT_CONFIRMATION_REQUIRED'
     );
-    assert.equal(applied, false, 'winner adoption must not change live packaging without explicit confirmation');
+    assert.equal(applied, false, 'winner adoption must require explicit confirmation');
   }
 
   {
