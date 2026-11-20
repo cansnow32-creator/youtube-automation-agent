@@ -296,6 +296,7 @@ class SceneRepairService {
     const promptChanged = prompt !== scene.prompt;
     const durationChanged = duration !== scene.duration;
     await assertLease();
+    await assertLease();
     const next = await this.db.updateProductionScene(productionId, sceneId, {
       label, scriptText, prompt, duration, provenanceSourceIds,
       locked: input.locked === undefined ? scene.locked : input.locked === true,
@@ -628,11 +629,17 @@ class SceneRepairService {
   }
 
   async replaceAsset(productionId, sceneId, file = {}) {
-    return this.withProductionEditLock(productionId, () => this.replaceAssetUnlocked(productionId, sceneId, file));
+    return this.withProductionOperationLease(
+      productionId,
+      assertLease => this.replaceAssetUnlocked(productionId, sceneId, file, assertLease),
+      'asset replacement'
+    );
   }
 
-  async replaceAssetUnlocked(productionId, sceneId, file = {}) {
+  async replaceAssetUnlocked(productionId, sceneId, file = {}, assertLease = async () => {}) {
+    await assertLease();
     const bundle = await this.getEditableBundle(productionId);
+    await assertLease();
     const scene = bundle.scenes.find(item => item.id === sceneId);
     if (!scene) throw this.error('Scene not found', 404);
     if (scene.locked) throw this.error('Unlock this scene before replacing its asset', 409);
@@ -649,8 +656,10 @@ class SceneRepairService {
     }
     const directory = path.join(this.dataRoot, 'scene-assets', productionId);
     const outputPath = path.join(directory, `${scene.id}_r${scene.revision + 1}${extension}`);
+    await assertLease();
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(outputPath, file.buffer);
+    await assertLease();
     try {
       if (assetType === 'video') {
         if (!await this.mediaGeneration?.isValidVideo?.(outputPath)) throw new Error('Video is not a valid, decodable MP4-compatible asset');
@@ -672,6 +681,7 @@ class SceneRepairService {
       status: 'needs_rebuild', revision: scene.revision + 1,
       estimatedCost: {}, actualCost: { billed: false }
     });
+    await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId, action: 'replace_asset', before: scene, after: next,
       costEvidence: { billed: false }
@@ -716,6 +726,11 @@ class SceneRepairService {
     return removed;
   }
   async rebuild(productionId) {
+    if (typeof this.db.acquireProductionOperationLock !== 'function' ||
+        typeof this.db.renewProductionOperationLock !== 'function' ||
+        typeof this.db.releaseProductionOperationLock !== 'function') {
+      throw this.error('Database acquire, renew, and release operation-lock support is required for scene rebuilds', 503, 'SCENE_REBUILD_LOCK_UNAVAILABLE');
+    }
     if (this.activeRebuilds.has(productionId)) {
       throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
     }
@@ -730,26 +745,22 @@ class SceneRepairService {
       if (leaseFailure) throw leaseFailure;
     };
     try {
-      if (typeof this.db.acquireProductionOperationLock === 'function') {
-        databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
-        if (!databaseLockAcquired) {
-          throw this.error('Another application process is rebuilding this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
-        }
-        if (typeof this.db.renewProductionOperationLock === 'function') {
-          leaseHeartbeat = setInterval(() => {
-            renewalInFlight = renewalInFlight.then(async () => {
-              if (!databaseLockAcquired || leaseFailure) return;
-              const renewed = await this.db.renewProductionOperationLock(productionId, lockOwner);
-              if (!renewed) {
-                leaseFailure = this.error('Scene rebuild lease was lost; this attempt cannot commit its output', 409, 'SCENE_REBUILD_LEASE_LOST');
-              }
-            }).catch(error => {
-              leaseFailure = this.error(`Scene rebuild lease could not be verified: ${error.message}`, 503, 'SCENE_REBUILD_LEASE_UNVERIFIED');
-            });
-          }, 60 * 1000);
-          leaseHeartbeat.unref?.();
-        }
+      databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
+      if (!databaseLockAcquired) {
+        throw this.error('Another application process is rebuilding this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
       }
+      leaseHeartbeat = setInterval(() => {
+        renewalInFlight = renewalInFlight.then(async () => {
+          if (!databaseLockAcquired || leaseFailure) return;
+          const renewed = await this.db.renewProductionOperationLock(productionId, lockOwner);
+          if (!renewed) {
+            leaseFailure = this.error('Scene rebuild lease was lost; this attempt cannot commit its output', 409, 'SCENE_REBUILD_LEASE_LOST');
+          }
+        }).catch(error => {
+          leaseFailure = this.error(`Scene rebuild lease could not be verified: ${error.message}`, 503, 'SCENE_REBUILD_LEASE_UNVERIFIED');
+        });
+      }, 60 * 1000);
+      leaseHeartbeat.unref?.();
       await assertLease();
       if (databaseLockAcquired) await this.cleanupStaleRepairTemps(productionId);
       return await this.rebuildUnlocked(productionId, assertLease);
