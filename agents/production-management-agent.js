@@ -360,7 +360,7 @@ class ProductionManagementAgent {
       await assertLease();
       if (workflow.stages.visuals.status !== 'completed') {
         await runProductionStage(workflow, 'visuals', async () => {
-          const assets = await this.generateVideoContent(productionData);
+          const assets = await this.generateVideoContent(productionData, assertLease);
           const realAssets = Array.isArray(assets)
             ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
             : [];
@@ -371,7 +371,7 @@ class ProductionManagementAgent {
       await assertLease();
       if (workflow.stages.narration.status !== 'completed') {
         await runProductionStage(workflow, 'narration', async () => {
-          const audioPath = await this.generateAudioNarration(productionData);
+          const audioPath = await this.generateAudioNarration(productionData, assertLease);
           if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
             throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
           }
@@ -381,8 +381,8 @@ class ProductionManagementAgent {
       await assertLease();
       if (workflow.stages.editing.status !== 'completed') {
         await runProductionStage(workflow, 'editing', async () => {
-          await this.generateCaptions(productionData);
-          await this.assembleVideo(productionData);
+          await this.generateCaptions(productionData, assertLease);
+          await this.assembleVideo(productionData, assertLease);
           const finalVideo = productionData.assets.finalVideo;
           if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
             throw new Error(finalVideo?.blockedReason || 'Editing stage did not produce a real MP4 video file');
