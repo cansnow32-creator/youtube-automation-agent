@@ -254,6 +254,7 @@ class MediaGenerationService {
           previousTaskHistory = Array.isArray(task?.providerData?.previousTasks)
             ? task.providerData.previousTasks
             : [];
+          remoteTaskId = null;
           await assertLease();
         }
 
@@ -322,6 +323,9 @@ class MediaGenerationService {
       return { task, outputPath, reused: false };
     } catch (error) {
       await fs.unlink(downloadPath).catch(() => {});
+      if (['MEDIA_TASK_SUBMISSION_IN_PROGRESS', 'MEDIA_TASK_SUBMISSION_CLAIM_UNAVAILABLE'].includes(error.code)) {
+        throw error;
+      }
       try {
         await assertLease();
       } catch (leaseError) {
