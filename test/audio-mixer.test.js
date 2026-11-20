@@ -178,14 +178,14 @@ async function testProductionIntegration(directory) {
       requestedVideoPath,
       requestedVideoPath + '.assembly.json',
       requestedVideoPath + '.assembly.json.tmp',
-      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4'),
-      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual_rendering.mp4'),
-      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4.render.json'),
-      requestedVideoPath.replace(/\\.mp4$/i, '_hybrid_visual.mp4.render.json.tmp'),
-      requestedVideoPath.replace(/\\.mp4$/i, '_finalizing.mp4'),
-      requestedVideoPath.replace(/\\.mp4$/i, '_visual.mp4')
+      requestedVideoPath.replace(/\.mp4$/i, '_hybrid_visual.mp4'),
+      requestedVideoPath.replace(/\.mp4$/i, '_hybrid_visual_rendering.mp4'),
+      requestedVideoPath.replace(/\.mp4$/i, '_hybrid_visual.mp4.render.json'),
+      requestedVideoPath.replace(/\.mp4$/i, '_hybrid_visual.mp4.render.json.tmp'),
+      requestedVideoPath.replace(/\.mp4$/i, '_finalizing.mp4'),
+      requestedVideoPath.replace(/\.mp4$/i, '_visual.mp4')
     ].map(file => fs.rm(file, { force: true })));
-    await fs.rm(requestedVideoPath.replace(/\\.mp4$/i, '_slides'), { force: true, recursive: true });
+    await fs.rm(requestedVideoPath.replace(/\.mp4$/i, '_slides'), { force: true, recursive: true });
   }
 }
 async function testMusicMixCache(directory) {
