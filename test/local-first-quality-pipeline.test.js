@@ -25,14 +25,23 @@ async function run() {
   for (const [label, malformed] of [
     ['invalid score', { score: 101, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }],
     ['missing explicit approval', { score: 90, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }],
-    ['missing blockers', { score: 90, approved: true, revision_instructions: [], platform_metadata: completeMetadata }],
-    ['incomplete platform metadata', { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: { youtube: {}, instagram_reels: {}, tiktok: {} } }]
+    ['missing blockers', { score: 90, approved: true, revision_instructions: [], platform_metadata: completeMetadata }]
   ]) {
     const strict = new LocalFirstQualityPipeline({}, { enabled: true });
     strict.requestOllama = async () => JSON.stringify(malformed);
     let rejectedResponse = false;
     try { await strict.requestOllamaReview('Review this draft'); } catch (_) { rejectedResponse = true; }
     if (!rejectedResponse) throw new Error(`Malformed Ollama review must fail closed: ${label}`);
+  }
+
+  const metadataBlocked = new LocalFirstQualityPipeline({}, { enabled: true });
+  metadataBlocked.requestOllama = async () => JSON.stringify({
+    score: 95, approved: true, blockers: [], revision_instructions: [],
+    platform_metadata: { youtube: {}, instagram_reels: {}, tiktok: {} }
+  });
+  const metadataReview = await metadataBlocked.requestOllamaReview('Review metadata');
+  if (metadataReview.approved !== false || metadataReview.blockers.length !== 8) {
+    throw new Error('Incomplete platform metadata must convert reviewer approval into a blocking result');
   }
 
   let savedSEO = null;
