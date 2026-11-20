@@ -67,6 +67,7 @@ async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
     previousAssets.captions?.path,
     previousAssets.finalVideo?.path,
     previousAssets.finalVideo?.cleanPath,
+    ...(previousAssets.finalVideo?.provider?.scenes || []).map(scene => scene.path),
     previousAssets.backgroundMusic?.path
   ];
 
@@ -86,6 +87,16 @@ async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
   }
   if (current.finalVideo?.cleanPath && current.finalVideo.cleanPath !== previousAssets.finalVideo?.cleanPath) {
     pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.cleanPath));
+  }
+  for (const scene of current.finalVideo?.provider?.scenes || []) {
+    if (scene.path && scene.reused !== true) {
+      pathsToRemove.push(
+        scene.path,
+        scene.path + '.rendering.mp4',
+        scene.path + '.render.json',
+        scene.path + '.render.json.tmp'
+      );
+    }
   }
   if (current.backgroundMusic?.path && current.backgroundMusic.path !== previousAssets.backgroundMusic?.path) {
     pathsToRemove.push(
@@ -1207,7 +1218,7 @@ class ProductionManagementAgent {
       if (producedPath && typeof producedPath === 'string') generatedPaths.push(...getVideoAttemptSidecarPaths(producedPath));
       const providerScenes = this.aiVideoGenerator.lastVideoResult?.scenes || [];
       for (const scene of providerScenes) {
-        if (scene.path) {
+        if (scene.path && scene.reused !== true) {
           generatedPaths.push(
             scene.path,
             scene.path + '.rendering.mp4',
