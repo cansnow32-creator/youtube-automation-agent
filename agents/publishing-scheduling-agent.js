@@ -327,7 +327,29 @@ class PublishingSchedulingAgent {
     scheduleEntry.youtubeId = videoId;
     scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     scheduleEntry.error = null;
-    await this.db.updateScheduleEntry(scheduleEntry);
+    if (typeof this.db.recordScheduleEntryUploadResult !== 'function') {
+      const error = new Error('Atomic persistence of the accepted YouTube video ID is required; do not retry this upload');
+      error.status = 503;
+      error.code = 'YOUTUBE_UPLOAD_ID_PERSISTENCE_UNAVAILABLE';
+      throw error;
+    }
+    const persistedUpload = await this.db.recordScheduleEntryUploadResult(
+      scheduleEntry.id,
+      videoId,
+      scheduleEntry.metadata || {}
+    );
+    if (!persistedUpload) {
+      const latest = await this.db.getScheduleEntry?.(scheduleEntry.id);
+      if (latest?.youtubeId !== videoId) {
+        const error = new Error('YouTube accepted the video, but its ID could not be atomically recorded. Reconcile this upload before any retry.');
+        error.status = 409;
+        error.code = 'YOUTUBE_UPLOAD_ID_PERSISTENCE_CONFLICT';
+        throw error;
+      }
+      Object.assign(scheduleEntry, latest);
+    } else {
+      Object.assign(scheduleEntry, persistedUpload);
+    }
     
     // Upload the thumbnail without turning a successful video upload into a retryable video failure.
     // Persist the result so a failed thumbnail is visible and can be repaired separately.
