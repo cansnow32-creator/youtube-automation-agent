@@ -197,7 +197,7 @@ class ChannelLearningEngine {
       unique.set(recommendationId, {
         recommendationId,
         category: String(item.category || 'unknown').slice(0, 40),
-        target: String(item.proposedChange?.target || 'future_scripts').slice(0, 40),
+        target: String(item.target || item.proposedChange?.target || 'future_scripts').slice(0, 40),
         status: verifiedIds.has(recommendationId) ? 'verified_applied' : 'provided_to_generation_not_verified_as_applied'
       });
     }
