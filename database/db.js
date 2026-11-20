@@ -2411,6 +2411,25 @@ class Database {
     return row ? this.deserializeScheduleEntry(row) : null;
   }
 
+  async recordScheduleEntryUploadResult(id, videoId, metadata = {}) {
+    if (!id || !videoId) return null;
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule
+       SET status = 'uploaded', youtube_id = ?, youtube_url = ?, error_message = NULL, metadata = ?
+       WHERE id = ? AND status = 'uploading' AND youtube_id IS NULL`,
+      [videoId, youtubeUrl, JSON.stringify(metadata || {}), id]
+    );
+    if (result.changes === 1) return this.getScheduleEntry(id);
+
+    // Idempotent success if a concurrent caller already persisted this exact ID.
+    const latest = await this.getScheduleEntry(id);
+    if (latest?.youtubeId === videoId && ['uploaded', 'published', 'reconciliation_required'].includes(latest.status)) {
+      return latest;
+    }
+    return null;
+  }
+
   async getScheduleEntry(id) {
     const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
     return row ? this.deserializeScheduleEntry(row) : null;
