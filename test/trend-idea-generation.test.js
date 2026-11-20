@@ -40,6 +40,14 @@ async function run() {
   assert.equal(angleGate.ideas.length, 2,
     'ideas with different titles but the same editorial angle should be deduplicated');
   assert.equal(angleGate.rejected.duplicate, 1);
+  const savedAngleGate = filterTrendIdeasForApproval([
+    { topic: 'A fresh title for editing beginners', angle: 'Build a repeatable editing workflow from raw clips', pillar: 'editing', sourceTopic: 'AI editing', score: 70, scoreBreakdown: { channelFit: 65, trendEvidenceCount: 2 } }
+  ], [
+    { topic: 'The existing editing workflow guide', angle: 'Build a repeatable editing workflow from raw clips', pillar: 'editing' }
+  ]);
+  assert.equal(savedAngleGate.ideas.length, 0,
+    'new titles must be rejected when their editorial angle already exists in saved ideas');
+  assert.equal(savedAngleGate.rejected.duplicate, 1);
 
   const profileFreeGate = filterTrendIdeasForApproval([
     { topic: 'A useful general editing explainer', sourceTopic: 'Editing', score: 55,
