@@ -344,6 +344,92 @@ class MediaGenerationService {
     }
   }
 
+  async reconcileTaskSubmission(taskId, externalTaskId, options = {}) {
+    const remoteId = String(externalTaskId || '').trim();
+    if (!remoteId || remoteId.length > 512) {
+      const error = new Error('A valid external provider task ID is required');
+      error.code = 'INVALID_EXTERNAL_TASK_ID';
+      error.status = 400;
+      throw error;
+    }
+    if (typeof this.db?.getMediaGenerationTaskById !== 'function') {
+      const error = new Error('Media task reconciliation requires database task lookup support');
+      error.code = 'MEDIA_TASK_RECONCILIATION_UNAVAILABLE';
+      error.status = 503;
+      throw error;
+    }
+
+    const task = await this.db.getMediaGenerationTaskById(taskId);
+    if (!task) {
+      const error = new Error(`Media generation task not found: ${taskId}`);
+      error.code = 'MEDIA_TASK_NOT_FOUND';
+      error.status = 404;
+      throw error;
+    }
+    if (!['submitting', 'submission_unknown', 'reconciliation_required'].includes(task.status)) {
+      const error = new Error(`Media task ${taskId} is not awaiting remote-task reconciliation`);
+      error.code = 'MEDIA_TASK_NOT_RECONCILABLE';
+      error.status = 409;
+      throw error;
+    }
+    if (task.external_task_id && task.external_task_id !== remoteId) {
+      const error = new Error('This task already references a different external provider task ID');
+      error.code = 'MEDIA_TASK_REMOTE_ID_CONFLICT';
+      error.status = 409;
+      throw error;
+    }
+
+    const provider = this.registry.get(task.provider);
+    if (!provider || typeof provider.getTask !== 'function') {
+      const error = new Error(`Provider ${task.provider} cannot query remote task status`);
+      error.code = 'MEDIA_PROVIDER_STATUS_UNAVAILABLE';
+      error.status = 422;
+      throw error;
+    }
+
+    const providerTaskType = options.providerTaskType;
+    if (providerTaskType !== undefined &&
+        !['text2video', 'image2video'].includes(providerTaskType)) {
+      const error = new Error('Provider task type must be text2video or image2video');
+      error.code = 'INVALID_PROVIDER_TASK_TYPE';
+      error.status = 400;
+      throw error;
+    }
+    const context = { ...(task.providerData || {}) };
+    if (providerTaskType) context.taskType = providerTaskType;
+
+    const remote = await provider.getTask(remoteId, context);
+    if (remote?.externalTaskId && remote.externalTaskId !== remoteId) {
+      const error = new Error('Provider returned a different task ID during reconciliation');
+      error.code = 'MEDIA_TASK_REMOTE_ID_MISMATCH';
+      error.status = 409;
+      throw error;
+    }
+    if (!['queued', 'running', 'succeeded', 'failed', 'cancelled'].includes(remote?.status)) {
+      const error = new Error('Provider returned an unsupported remote task status during reconciliation');
+      error.code = 'MEDIA_TASK_REMOTE_STATUS_UNKNOWN';
+      error.status = 422;
+      throw error;
+    }
+
+    const status = remote.status === 'succeeded' ? 'download_pending' : remote.status;
+    const previousTasks = Array.isArray(task.providerData?.previousTasks)
+      ? task.providerData.previousTasks
+      : [];
+    return this.db.updateMediaGenerationTask(taskId, {
+      externalTaskId: remoteId,
+      status,
+      outputPath: null,
+      providerData: {
+        ...this.providerData(remote),
+        ...(previousTasks.length ? { previousTasks } : {}),
+        ...(providerTaskType ? { taskType: providerTaskType } : {})
+      },
+      error: remote.error || null,
+      completedAt: ['failed', 'cancelled'].includes(status) ? new Date().toISOString() : null
+    });
+  }
+
   async cancelRemoteTaskOnLeaseLoss(provider, taskId) {
     if (!taskId) return;
     if (!provider?.capabilities?.cancellation || typeof provider.cancelTask !== 'function') {
