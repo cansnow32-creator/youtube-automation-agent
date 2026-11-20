@@ -123,9 +123,13 @@ class MediaGenerationService {
       ? await this.db.findMediaGenerationTask(jobId, scene.index, provider.id)
       : null;
 
-    if (task?.status === 'succeeded' && task.output_path && await this.isValidVideo(task.output_path)) {
-      this.logger.info(`Reusing ${provider.id} scene ${scene.index} from ${task.external_task_id}`);
-      return { task, outputPath: task.output_path, reused: true };
+    if (task?.status === 'succeeded' && task.output_path) {
+      const reusableOutput = await this.isValidVideo(task.output_path);
+      await assertLease();
+      if (reusableOutput) {
+        this.logger.info(`Reusing ${provider.id} scene ${scene.index} from ${task.external_task_id}`);
+        return { task, outputPath: task.output_path, reused: true };
+      }
     }
 
     if (!task) {
