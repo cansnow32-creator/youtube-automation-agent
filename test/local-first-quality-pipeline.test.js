@@ -67,11 +67,18 @@ async function run() {
     return { gemini: reviewer(), groq: reviewer() };
   };
   let rejected = false;
+  let blockedError = null;
   try { await blocked.generateAndReview('Write a script'); } catch (error) {
+    blockedError = error;
     rejected = /human review/i.test(error.message);
   }
   if (!rejected || blocked.lastReport.status !== 'human_review_required') {
     throw new Error('A draft below 80 was not held for human review');
+  }
+  if (blockedError?.code !== 'QUALITY_REVIEW_REQUIRED' ||
+      blockedError?.draft !== '{"title":"Below threshold"}' ||
+      blockedError?.qualityReport?.status !== 'human_review_required') {
+    throw new Error('A rejected draft and its quality report were not attached for durable review');
   }
 
   const localOnly = new LocalFirstQualityPipeline({}, { enabled: true });
