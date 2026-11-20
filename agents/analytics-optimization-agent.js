@@ -274,8 +274,10 @@ class AnalyticsOptimizationAgent {
     
     const rows = response.data.rows || [];
     const numeric = value => value === null || value === undefined || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
-    const totalViews = rows.reduce((sum, row) => sum + (numeric(row[1]) ?? 0), 0);
-    const totalImpressions = rows.reduce((sum, row) => sum + (numeric(row[2]) ?? 0), 0);
+    const viewValues = rows.map(row => numeric(row[1])).filter(value => value !== null);
+    const impressionValues = rows.map(row => numeric(row[2])).filter(value => value !== null);
+    const totalViews = viewValues.length ? viewValues.reduce((sum, value) => sum + value, 0) : null;
+    const totalImpressions = impressionValues.length ? impressionValues.reduce((sum, value) => sum + value, 0) : null;
     const ctrRows = rows.map(row => ({ impressions: numeric(row[2]), ctr: numeric(row[3]) }))
       .filter(row => row.impressions !== null && row.impressions > 0 && row.ctr !== null);
     const ctrImpressions = ctrRows.reduce((sum, row) => sum + row.impressions, 0);
@@ -284,11 +286,11 @@ class AnalyticsOptimizationAgent {
       : null;
 
     return {
-      totalViews: rows.length ? totalViews : null,
-      totalImpressions: rows.length ? totalImpressions : null,
+      totalViews,
+      totalImpressions,
       averageCTR: weightedCTR,
       ctrAvailable: weightedCTR !== null,
-      available: rows.length > 0,
+      available: viewValues.length > 0 || impressionValues.length > 0,
       dailyData: rows
     };
   }
