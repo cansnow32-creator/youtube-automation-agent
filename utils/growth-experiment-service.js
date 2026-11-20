@@ -448,7 +448,8 @@ class GrowthExperimentService {
         averageViewPercentage: Number(report.analytics?.watchTime?.averageViewPercentage || 0),
         engagementRate: Number(report.analytics?.engagement?.engagementRate || 0),
         netSubscribers: Number(report.analytics?.outcomes?.netSubscribers || 0),
-        estimatedRevenue: Number(report.analytics?.outcomes?.estimatedRevenue || 0)
+        estimatedRevenue: Number(report.analytics?.outcomes?.estimatedRevenue || 0),
+        measurementPeriod: report.analytics?.period || null
       },
       trafficSources: report.analytics?.trafficSources?.sources || [],
       measurementPeriod: report.analytics?.period || null
