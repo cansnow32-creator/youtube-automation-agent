@@ -6,10 +6,15 @@ function assertScriptQualityGate(script, options = {}) {
   const minimumScore = Number(report?.minimumScore || 80);
   const score = Number(report?.score);
   const reviewers = Array.isArray(report?.reviewers) ? report.reviewers : [];
-  const valid = report?.status === 'approved' &&
+  const automatedApproval = report?.status === 'approved' &&
     Number.isFinite(score) && score >= minimumScore &&
     reviewers.includes('ollama') &&
     Array.isArray(report.attempts) && report.attempts.length > 0;
+  const humanApproval = Boolean(
+    script?.metadata?.humanApproval?.reviewId &&
+    script?.metadata?.humanApproval?.decidedAt
+  );
+  const valid = automatedApproval || humanApproval;
 
   if (!valid) {
     const error = new Error(
@@ -23,10 +28,11 @@ function assertScriptQualityGate(script, options = {}) {
 
   return {
     enabled: true,
-    status: report.status,
-    score,
+    status: automatedApproval ? report.status : 'human_approved',
+    score: Number.isFinite(score) ? score : null,
     minimumScore,
-    reviewers
+    reviewers,
+    approvalSource: automatedApproval ? 'ollama' : 'human'
   };
 }
 
