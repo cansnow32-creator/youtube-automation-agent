@@ -1,0 +1,36 @@
+# AgentTube — Task Queue
+
+Refresh GitHub state and inspect code before selecting work. Update task statuses and evidence as work progresses.
+
+Status values: todo, in_progress, blocked, done, needs_user.
+
+## P0 — Validate and stabilize current production work
+
+- [ ] todo — Audit PR #2 current head: fetch live diff/check-runs; inspect job creation lock, resume lock, lease renewal, lease-loss guards, and rollback-safe output replacement.
+- [ ] todo — Run CI for PR #2: execute npm ci, lint and tests in a cloud environment if available; record exact SHA and outputs. If unavailable, say so.
+- [ ] todo — Fix verified failures with focused regression tests; do not merge.
+- [ ] todo — Review PR #1 / PR #2 dependency. PR #2 currently targets PR #1's branch. Preserve stacked PRs or retarget only after reviewing dependencies.
+
+## P1 — Establish continuity and cloud execution
+
+- [ ] in_progress — Continuity handoff files on this branch.
+- [ ] todo — Dot availability and GitHub connection: user must confirm chatgpt.com/dots availability and complete GitHub app authorization. Never request a PAT.
+- [ ] todo — Cloud execution path: evaluate Dot cloud computer or Codex cloud environment. GitHub Actions is deterministic CI, not an autonomous coding agent.
+- [ ] todo — New-chat resume smoke test: user says "Devam et"; assistant/dot reads these files and live GitHub state, then resumes the top task.
+
+## P2 — Dashboard information architecture
+
+- [ ] todo — Inspect dashboard UI; preserve existing views and API behavior while grouping navigation.
+- [ ] todo — Implement navigation in a separate PR: Overview, Video Production, Video & Animation Studio, Scene Editing, Review & Publishing, Analytics, System & Settings. Do not enable auto-publishing.
+
+## P3 — Video DNA / Animation Studio (separate scope)
+
+- [ ] todo — Write technical design for reference-video ingest, frame/time sampling, motion/style analysis, scene timeline, overlays, preview and export.
+- [ ] todo — Define honest capability tiers: style analysis and 2D camera motion vs true pose extraction, 3D reconstruction and editable character animation.
+- [ ] todo — Implement only after design review, with rights-aware input handling and tests; no surprise paid providers.
+
+## Parked / requires user approval
+
+- [ ] needs_user — Paid model/API usage: no Gemini/Groq or other paid API fallback without explicit approval.
+- [ ] needs_user — Merge any PR: explicit user approval required.
+- [ ] needs_user — Enable automatic YouTube publishing: remains disabled unless explicitly authorized.
