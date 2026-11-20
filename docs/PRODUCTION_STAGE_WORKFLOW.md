@@ -18,9 +18,9 @@ visible after a restart.
 
 Each stage moves through `pending`, `in_progress`, and then either
 `completed` or `failed`. A stage cannot start while another stage is active,
-and a later stage cannot start until its predecessor is completed. A failed
-stage is retained in the workflow record with a bounded error message; it is
-not silently marked complete.
+and a later stage cannot start until its predecessor is completed. A failed stage is retained in the workflow record with a bounded error
+message. On resume, an interrupted or failed stage is retried while completed
+stages are preserved. Each new attempt increments its attempt counter.
 
 The workflow is execution tracking, not a publishing approval. A completed
 editing stage does not publish a video or enable automatic publishing. Existing
@@ -37,3 +37,8 @@ The workflow is stored under the production's serialized timeline:
 
 The stage helper is in `utils/production-stage-workflow.js`; its behavior is
 covered by `test/production-stage-workflow.test.js` and included in `npm test`.
+
+
+## Resuming production
+
+`ProductionManagementAgent.resumeProduction(productionId)` reloads the production bundle and its saved stage state. It revalidates the approved concept, preserves completed stages, and retries the first failed or interrupted stage. The production strategy, script, thumbnail, and SEO snapshot are saved alongside the production record so the job can be reconstructed after a restart. Resuming production does not approve or publish a video.
