@@ -977,6 +977,46 @@ class Database {
     return production.id;
   }
 
+  async withIsolatedTransaction(callback) {
+    if (!this.dbPath) throw new Error('A persistent database path is required for atomic scene operations');
+    const connection = new sqlite3.Database(this.dbPath);
+    connection.configure('busyTimeout', 5000);
+    const run = (sql, params = []) => new Promise((resolve, reject) => {
+      connection.run(sql, params, function(error) {
+        if (error) reject(error);
+        else resolve({ lastID: this.lastID, changes: this.changes });
+      });
+    });
+    const all = (sql, params = []) => new Promise((resolve, reject) => {
+      connection.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows || []));
+    });
+    try {
+      await run('BEGIN IMMEDIATE');
+      const result = await callback({ run, all });
+      await run('COMMIT');
+      return result;
+    } catch (error) {
+      await run('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      await new Promise(resolve => connection.close(() => resolve()));
+    }
+  }
+
+  async assertLeaseInTransaction(tx, lease, productionId) {
+    if (!lease) return;
+    if (lease.productionId !== productionId || !lease.owner) {
+      throw Object.assign(new Error('Production operation lease context is invalid'), { code: 'SCENE_EDIT_LEASE_INVALID', status: 409 });
+    }
+    const rows = await tx.all(
+      'SELECT owner FROM production_operation_locks WHERE production_id = ? AND owner = ? AND expires_at > ?',
+      [productionId, lease.owner, Date.now()]
+    );
+    if (!rows.length) {
+      throw Object.assign(new Error('Production operation lease was lost before the atomic scene operation'), { code: 'SCENE_EDIT_LEASE_LOST', status: 409 });
+    }
+  }
+
   leaseGuard(lease, productionId) {
     if (!lease) return { sql: '', params: [] };
     if (lease.productionId !== productionId || !lease.owner) {
@@ -1468,36 +1508,37 @@ class Database {
   }
 
   async replaceProductionScenes(productionId, scenes = [], lease = null) {
-    const guard = this.leaseGuard(lease, productionId);
-    const deleted = await this.executeQuery(`DELETE FROM production_scenes WHERE production_id = ?${guard.sql}`, [productionId, ...guard.params]);
-    await this.requireLeaseWrite(deleted, lease);
-    for (const [position, scene] of scenes.entries()) {
-      const id = scene.id || this.generateId('scene');
-      await this.executeQuery(
-        `INSERT INTO production_scenes (
-          id, production_id, position, label, script_text, prompt, duration,
-          asset_type, asset_origin, asset_path, audio_path,
-          narration_provider, narration_model, narration_task_id, narration_error,
-          narration_generated_at, narration_cost, provider, model,
-          external_task_id, status, narration_status, revision, locked,
-          rights_confirmed, provenance_source_ids, contains_synthetic_media,
-          estimated_cost, actual_cost
-        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE 1 = 1${guard.sql}`,
-        [
-          id, productionId, position, scene.label, scene.scriptText || '', scene.prompt || '', scene.duration,
-          scene.assetType || 'missing', scene.assetOrigin || 'generated', scene.assetPath || null,
-          scene.audioPath || null, scene.narrationProvider || null, scene.narrationModel || null,
-          scene.narrationTaskId || null, scene.narrationError || null, scene.narrationGeneratedAt || null,
-          JSON.stringify(scene.narrationCost || {}), scene.provider || null, scene.model || null, scene.externalTaskId || null,
-          scene.status || 'ready', scene.narrationStatus || 'current', scene.revision || 1,
-          scene.locked ? 1 : 0, scene.rightsConfirmed ? 1 : 0,
-          JSON.stringify(scene.provenanceSourceIds || []), scene.containsSyntheticMedia ? 1 : 0,
-          JSON.stringify(scene.estimatedCost || {}), JSON.stringify(scene.actualCost || {}), ...guard.params
-        ]
-      );
-      // Each insert is independently fenced so an expired worker cannot keep writing after takeover.
-    }
-    return this.listProductionScenes(productionId);
+    return this.withIsolatedTransaction(async tx => {
+      await this.assertLeaseInTransaction(tx, lease, productionId);
+      await tx.run('DELETE FROM production_scenes WHERE production_id = ?', [productionId]);
+      for (const [position, scene] of scenes.entries()) {
+        const id = scene.id || this.generateId('scene');
+        await tx.run(
+          `INSERT INTO production_scenes (
+            id, production_id, position, label, script_text, prompt, duration,
+            asset_type, asset_origin, asset_path, audio_path,
+            narration_provider, narration_model, narration_task_id, narration_error,
+            narration_generated_at, narration_cost, provider, model,
+            external_task_id, status, narration_status, revision, locked,
+            rights_confirmed, provenance_source_ids, contains_synthetic_media,
+            estimated_cost, actual_cost
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id, productionId, position, scene.label, scene.scriptText || '', scene.prompt || '', scene.duration,
+            scene.assetType || 'missing', scene.assetOrigin || 'generated', scene.assetPath || null,
+            scene.audioPath || null, scene.narrationProvider || null, scene.narrationModel || null,
+            scene.narrationTaskId || null, scene.narrationError || null, scene.narrationGeneratedAt || null,
+            JSON.stringify(scene.narrationCost || {}), scene.provider || null, scene.model || null, scene.externalTaskId || null,
+            scene.status || 'ready', scene.narrationStatus || 'current', scene.revision || 1,
+            scene.locked ? 1 : 0, scene.rightsConfirmed ? 1 : 0,
+            JSON.stringify(scene.provenanceSourceIds || []), scene.containsSyntheticMedia ? 1 : 0,
+            JSON.stringify(scene.estimatedCost || {}), JSON.stringify(scene.actualCost || {})
+          ]
+        );
+      }
+      const rows = await tx.all('SELECT * FROM production_scenes WHERE production_id = ? ORDER BY position, created_at', [productionId]);
+      return rows.map(row => this.parseProductionScene(row));
+    });
   }
 
   async listProductionScenes(productionId) {
@@ -1549,25 +1590,26 @@ class Database {
   }
 
   async reorderProductionScenes(productionId, orderedIds = [], lease = null) {
-    const guard = this.leaseGuard(lease, productionId);
-    const scenes = await this.listProductionScenes(productionId);
-    if (orderedIds.length !== scenes.length || new Set(orderedIds).size !== scenes.length ||
-      scenes.some(scene => !orderedIds.includes(scene.id))) {
-      throw new Error('Scene order must contain every scene exactly once');
-    }
-    // Move through temporary negative positions to preserve the unique constraint.
-    for (const scene of scenes) {
-      const moved = await this.executeQuery(`UPDATE production_scenes SET position = ? WHERE id = ?${guard.sql}`, [-(scene.position + 1), scene.id, ...guard.params]);
-      await this.requireLeaseWrite(moved, lease);
-    }
-    for (const [position, sceneId] of orderedIds.entries()) {
-      const moved = await this.executeQuery(
-        `UPDATE production_scenes SET position = ?, status = 'needs_rebuild', updated_at = datetime('now') WHERE id = ?${guard.sql}`,
-        [position, sceneId, ...guard.params]
-      );
-      await this.requireLeaseWrite(moved, lease);
-    }
-    return this.listProductionScenes(productionId);
+    return this.withIsolatedTransaction(async tx => {
+      await this.assertLeaseInTransaction(tx, lease, productionId);
+      const rows = await tx.all('SELECT * FROM production_scenes WHERE production_id = ? ORDER BY position, created_at', [productionId]);
+      const scenes = rows.map(row => this.parseProductionScene(row));
+      if (orderedIds.length !== scenes.length || new Set(orderedIds).size !== scenes.length ||
+          scenes.some(scene => !orderedIds.includes(scene.id))) {
+        throw new Error('Scene order must contain every scene exactly once');
+      }
+      // A single IMMEDIATE transaction prevents lease takeover and partial ordering.
+      for (const scene of scenes) {
+        await tx.run('UPDATE production_scenes SET position = ? WHERE production_id = ? AND id = ?',
+          [-(scene.position + 1), productionId, scene.id]);
+      }
+      for (const [position, sceneId] of orderedIds.entries()) {
+        await tx.run(`UPDATE production_scenes SET position = ?, status = 'needs_rebuild', updated_at = datetime('now')
+          WHERE production_id = ? AND id = ?`, [position, productionId, sceneId]);
+      }
+      const updated = await tx.all('SELECT * FROM production_scenes WHERE production_id = ? ORDER BY position, created_at', [productionId]);
+      return updated.map(row => this.parseProductionScene(row));
+    });
   }
 
   async saveProductionSceneRevision(input = {}, lease = null) {
