@@ -186,6 +186,7 @@ class ContentStrategyAgent {
         const { rankTemplatesForNiche } = require('../utils/viral-template-analyzer');
         competitorData.push({
           channelId,
+          analyzedAt: new Date().toISOString(),
           topPerformingTopics: analysis.topTopics,
           topPerformingTemplates: rankTemplatesForNiche(analysis.topTemplates, channelStrategy),
           averageViews: analysis.avgViews,
@@ -427,7 +428,15 @@ class ContentStrategyAgent {
     }));
     // Use only niche-ranked competitor format evidence as creative guidance;
     // these patterns are not treated as proof of audience demand or guaranteed performance.
+    const competitorMaxAgeHours = Math.max(1, Number(process.env.COMPETITOR_DATA_MAX_AGE_HOURS) || 168);
+    const competitorFreshnessCutoff = Date.now() - competitorMaxAgeHours * 60 * 60 * 1000;
     const competitorTemplateGuidance = (this.competitorData || [])
+      .filter(competitor => {
+        const analyzedAt = Date.parse(competitor.analyzedAt);
+        return Number.isFinite(analyzedAt) &&
+          analyzedAt >= competitorFreshnessCutoff &&
+          analyzedAt <= Date.now() + 5 * 60 * 1000;
+      })
       .flatMap(competitor => (competitor.topPerformingTemplates || []).map(template => ({
         ...template,
         competitorChannelId: competitor.channelId || null
