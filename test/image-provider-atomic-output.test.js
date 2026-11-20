@@ -65,9 +65,37 @@ async function testAllFailedProviderAttemptsAreRemoved() {
   }
 }
 
+async function testLateProviderResultIsDiscardedAfterLeaseLoss() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'agenttube-image-lease-loss-'));
+  const outputPath = path.join(directory, 'scene.png');
+  const validImage = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: { r: 90, g: 40, b: 10 } }
+  }).png().toBuffer();
+  const generator = createGenerator();
+  generator.generateOpenAIImage = async (_prompt, attemptPath) => {
+    await fs.writeFile(attemptPath, validImage);
+  };
+  let checks = 0;
+  try {
+    await assert.rejects(
+      generator.generateImage('test prompt', outputPath, async () => {
+        checks += 1;
+        if (checks === 3) {
+          throw Object.assign(new Error('generation lease lost'), { code: 'GENERATION_JOB_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.deepEqual(await fs.readdir(directory), [], 'late provider output must not be published or left behind');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function run() {
   await testPartialProviderOutputIsNotPublished();
   await testAllFailedProviderAttemptsAreRemoved();
+  await testLateProviderResultIsDiscardedAfterLeaseLoss();
   console.log('Image provider atomic-output tests passed');
 }
 
