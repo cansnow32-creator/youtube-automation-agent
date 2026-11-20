@@ -44,6 +44,28 @@ async function run() {
       'competitor discovery should inspect the channel highest-view videos, not only newest uploads');
     assert.equal(competitorVideos[0].id, 'top-video-1');
 
+    const originalCompetitorChannels = process.env.COMPETITOR_CHANNELS;
+    try {
+      process.env.COMPETITOR_CHANNELS = 'UC-good,UC-empty,UC-failed';
+      competitorAgent.getChannelVideos = async channelId => {
+        if (channelId === 'UC-empty') return [];
+        if (channelId === 'UC-failed') throw new Error('simulated competitor outage');
+        return [{
+          id: 'usable-competitor-video',
+          snippet: { title: '7 AI Editing Tips for Beginners', description: 'A practical tutorial' },
+          statistics: { viewCount: '120000' }
+        }];
+      };
+      const resilientCompetitors = await competitorAgent.analyzeCompetitors();
+      assert.deepEqual(resilientCompetitors.map(item => item.channelId), ['UC-good'],
+        'empty or failed competitor channels must be skipped without discarding usable channel analysis');
+      assert.ok(resilientCompetitors[0].topPerformingTemplates.length > 0,
+        'usable competitor template evidence should remain available when another channel fails');
+    } finally {
+      if (originalCompetitorChannels === undefined) delete process.env.COMPETITOR_CHANNELS;
+      else process.env.COMPETITOR_CHANNELS = originalCompetitorChannels;
+    }
+
     const { analyzeVideoTemplates } = require('../utils/viral-template-analyzer');
     const templateAnalysis = analyzeVideoTemplates([
       { id: 'template-list', snippet: { title: '7 Ways to Improve Your Workflow', description: 'A practical workflow' }, statistics: { viewCount: '90000' } },
