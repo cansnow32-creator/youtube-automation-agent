@@ -370,9 +370,27 @@ class PublishingSchedulingAgent {
       await this.db.updateScheduleEntry(scheduleEntry);
     }
     
-    // Upload captions
+    // Captions are a post-upload asset. Their failure must never turn a successful
+    // video upload into a retryable video publish.
     if (metadata.captions && metadata.captions.path) {
-      await this.uploadCaptions(videoId, metadata.captions.path);
+      try {
+        await this.uploadCaptions(videoId, metadata.captions.path);
+        scheduleEntry.metadata.captionUpload = {
+          status: 'uploaded',
+          completedAt: new Date().toISOString(),
+          retryRequired: false
+        };
+      } catch (error) {
+        scheduleEntry.metadata.captionUpload = {
+          status: 'failed',
+          failedAt: new Date().toISOString(),
+          errorCode: error.code || null,
+          errorMessage: String(error.message || 'Caption upload failed').slice(0, 300),
+          retryRequired: true
+        };
+        this.logger.warn(`Video ${videoId} was uploaded, but captions failed. Repair captions separately; do not retry the video upload.`);
+      }
+      await this.db.updateScheduleEntry(scheduleEntry);
     }
     
     return videoUpload.data;
@@ -649,6 +667,64 @@ class PublishingSchedulingAgent {
     return { videoId, uploaded: true };
   }
 
+  async retryCaptionUpload(contentId) {
+    const entry = this.db.getLatestScheduleEntry
+      ? await this.db.getLatestScheduleEntry(contentId)
+      : this.publishQueue.find(item => item.productionId === contentId || item.id === contentId);
+    if (!entry) {
+      const error = new Error(`Scheduled content not found: ${contentId}`);
+      error.status = 404;
+      throw error;
+    }
+    if (!entry.youtubeId) {
+      const error = new Error('The video has not been uploaded to YouTube; caption repair is not available yet');
+      error.status = 409;
+      throw error;
+    }
+    if (entry.metadata?.captionUpload?.status !== 'failed' || entry.metadata.captionUpload.retryRequired !== true) {
+      const error = new Error('A recorded caption upload failure is required before retrying this asset');
+      error.status = 409;
+      throw error;
+    }
+    const captionsPath = entry.metadata?.captions?.path;
+    if (!captionsPath) {
+      const error = new Error('No generated caption file is attached to this video');
+      error.status = 409;
+      throw error;
+    }
+    if (!this.youtube) {
+      const error = new Error('YouTube API is not initialized');
+      error.status = 503;
+      throw error;
+    }
+
+    entry.metadata = entry.metadata || {};
+    try {
+      await this.uploadCaptions(entry.youtubeId, captionsPath);
+      entry.metadata.captionUpload = {
+        status: 'uploaded',
+        completedAt: new Date().toISOString(),
+        retryRequired: false
+      };
+      await this.db.updateScheduleEntry(entry);
+      const queued = this.publishQueue.find(item => item.id === entry.id);
+      if (queued) Object.assign(queued, entry);
+      return entry;
+    } catch (error) {
+      entry.metadata.captionUpload = {
+        status: 'failed',
+        failedAt: new Date().toISOString(),
+        errorCode: error.code || null,
+        errorMessage: String(error.message || 'Caption upload failed').slice(0, 300),
+        retryRequired: true
+      };
+      await this.db.updateScheduleEntry(entry);
+      error.status = error.status || 502;
+      error.code = 'CAPTION_RETRY_FAILED';
+      throw error;
+    }
+  }
+
   async retryThumbnailUpload(contentId) {
     const entry = this.db.getLatestScheduleEntry
       ? await this.db.getLatestScheduleEntry(contentId)
@@ -759,28 +835,21 @@ class PublishingSchedulingAgent {
   }
 
   async uploadCaptions(videoId, captionsPath) {
-    try {
-      const captionsContent = await fs.readFile(captionsPath, 'utf8');
-      
-      await this.youtube.captions.insert({
-        part: 'snippet',
-        requestBody: {
-          snippet: {
-            videoId: videoId,
-            language: 'en',
-            name: 'English Captions',
-            isDraft: false
-          }
-        },
-        media: {
-          body: captionsContent
+    const captionsContent = await fs.readFile(captionsPath, 'utf8');
+    await this.youtube.captions.insert({
+      part: 'snippet',
+      requestBody: {
+        snippet: {
+          videoId,
+          language: 'en',
+          name: 'English Captions',
+          isDraft: false
         }
-      });
-      
-      this.logger.info(`Captions uploaded for video: ${videoId}`);
-    } catch (error) {
-      this.logger.error(`Failed to upload captions: ${error.message}`);
-    }
+      },
+      media: { body: captionsContent }
+    });
+    this.logger.info(`Captions uploaded for video: ${videoId}`);
+    return { videoId, uploaded: true };
   }
 
   async processPublishQueue() {
