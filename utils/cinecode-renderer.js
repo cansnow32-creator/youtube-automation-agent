@@ -1,9 +1,20 @@
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const createReadStream = require('fs').createReadStream;
 const sharp = require('sharp');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
+
+async function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 function dimensions(resolution = '720p', aspectRatio = '16:9') {
   const height = resolution === '1080p' ? 1080 : resolution === '480p' ? 480 : 720;
@@ -81,7 +92,8 @@ class CineCodeRenderer {
       const imageFingerprint = {
         path: path.resolve(imagePath),
         size: imageStats.size,
-        mtimeMs: imageStats.mtimeMs
+        mtimeMs: imageStats.mtimeMs,
+        sha256: await hashFile(imagePath)
       };
       const renderFingerprint = crypto.createHash('sha256').update(JSON.stringify({
         image: imageFingerprint,
