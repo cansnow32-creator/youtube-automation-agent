@@ -61,3 +61,7 @@ A scheduled row with an invalid `publish_time` is moved to `failed` with an expl
 ## Schedule creation idempotency
 
 Schedule creation is idempotent per production ID. SQLite performs the existence check and insert in one conditional write statement; concurrent callers reuse the winning schedule row. The regression test uses two independent SQLite connections and verifies that only one row is persisted for the production.
+
+## Recorded YouTube ID takes precedence
+
+If a schedule row contains a YouTube video ID, every publish attempt verifies that existing remote video before checking local narration/assets or considering a new upload. This allows recovery even if local assets later become unavailable. Schedules with a recorded YouTube ID cannot be rescheduled or deleted, and content approval cannot reset their state; reconcile the existing upload first. Regression coverage lives in `test/publishing-recorded-upload.test.js`.
