@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const {
   runFFmpeg,
   getMediaInfo,
@@ -14,6 +15,16 @@ const LICENSE_TYPES = new Set([
   'cc_by_sa',
   'commercial_license'
 ]);
+
+async function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = require('node:fs').createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 function cleanText(value, maxLength = 500) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -80,6 +91,38 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     ? `[0:a:0]volume=1.0[narration];[1:a:0]${musicFilters}[music];[narration][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[mixed]`
     : `[1:a:0]${musicFilters},alimiter=limit=0.95[mixed]`;
   const temporaryPath = `${outputPath}.mixing.mp4`;
+  const manifestPath = `${outputPath}.mix.json`;
+  const [videoHash, musicHash] = await Promise.all([hashFile(videoPath), hashFile(musicPath)]);
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
+    videoHash, musicHash, volume, fadeIn, fadeOut, loop: music.loop !== false,
+    filterVersion: 1, videoHasAudio: Boolean(videoInfo.hasAudio)
+  })).digest('hex');
+  try {
+    const [manifest, cachedStats] = await Promise.all([
+      fileSystem.readFile(manifestPath, 'utf8').then(JSON.parse),
+      fileSystem.stat(outputPath)
+    ]);
+    if (manifest.fingerprint === fingerprint && cachedStats.isFile() && cachedStats.size > 0) {
+      const cachedInfo = await readVideoInfo(outputPath);
+      const tolerance = Math.max(1, videoInfo.duration * 0.03);
+      if (cachedInfo.hasAudio && Number.isFinite(cachedInfo.duration) &&
+          Math.abs(cachedInfo.duration - videoInfo.duration) <= tolerance) {
+        await run(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+        return {
+          ...manifest.result,
+          status: 'mixed',
+          path: outputPath,
+          sourcePath: musicPath,
+          sourceFileSize: musicStats.size,
+          duration: cachedInfo.duration,
+          fileSize: cachedStats.size,
+          cached: true
+        };
+      }
+    }
+  } catch (_cacheError) {
+    // Missing, stale, or invalid cache: perform a fresh mix.
+  }
   await fileSystem.rm(temporaryPath, { force: true });
 
   try {
@@ -115,7 +158,7 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
 
     await fileSystem.rm(outputPath, { force: true });
     await fileSystem.rename(temporaryPath, outputPath);
-    return {
+    const result = {
       status: 'mixed',
       path: outputPath,
       sourcePath: musicPath,
@@ -137,6 +180,11 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
       rightsConfirmed: true,
       mixedAt: new Date().toISOString()
     };
+    const manifestTempPath = `${manifestPath}.tmp`;
+    await fileSystem.writeFile(manifestTempPath, JSON.stringify({ version: 1, fingerprint, result }, null, 2));
+    await fileSystem.rm(manifestPath, { force: true });
+    await fileSystem.rename(manifestTempPath, manifestPath);
+    return result;
   } catch (error) {
     await fileSystem.rm(temporaryPath, { force: true }).catch(() => {});
     throw error;
