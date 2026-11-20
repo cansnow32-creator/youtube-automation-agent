@@ -665,6 +665,7 @@ class YouTubeAutomationAgent {
             productionId: entry.productionId,
             title: entry.title,
             publishTime: entry.publishTime,
+            uploadStartedAt: entry.uploadStartedAt || null,
             status: entry.status,
             youtubeId: entry.youtubeId || null,
             error: entry.error || null,
