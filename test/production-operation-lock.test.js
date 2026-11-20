@@ -154,9 +154,20 @@ async function run() {
     global.clearInterval = originalClearInterval;
   }
 
+  const resumeMissingRenewal = Object.create(ProductionManagementAgent.prototype);
+  resumeMissingRenewal.db = {
+    acquireProductionOperationLock: async () => true,
+    releaseProductionOperationLock: async () => true
+  };
+  await assert.rejects(
+    resumeMissingRenewal.resumeProduction('p-resume-no-renew'),
+    error => error.code === 'PRODUCTION_OPERATION_LOCK_UNAVAILABLE' && error.status === 503
+  );
+
   const resumeBlocked = Object.create(ProductionManagementAgent.prototype);
   resumeBlocked.db = {
     acquireProductionOperationLock: async () => false,
+    renewProductionOperationLock: async () => true,
     releaseProductionOperationLock: async () => { throw new Error('must not release another resume lock'); }
   };
   await assert.rejects(
@@ -196,9 +207,20 @@ async function run() {
     global.clearInterval = resumeClearInterval;
   }
 
+  const jobMissingRenewal = Object.create(ProductionManagementAgent.prototype);
+  jobMissingRenewal.db = {
+    acquireProductionOperationLock: async () => true,
+    releaseProductionOperationLock: async () => true
+  };
+  await assert.rejects(
+    jobMissingRenewal.processContent({ jobId: 'job-no-renew' }),
+    error => error.code === 'PRODUCTION_JOB_LOCK_UNAVAILABLE' && error.status === 503
+  );
+
   const jobBlocked = Object.create(ProductionManagementAgent.prototype);
   jobBlocked.db = {
     acquireProductionOperationLock: async () => false,
+    renewProductionOperationLock: async () => true,
     releaseProductionOperationLock: async () => { throw new Error('must not release another job lock'); }
   };
   await assert.rejects(
