@@ -185,6 +185,8 @@ async function run() {
         'competitor template guidance should include the ranked pattern metadata');
       assert.ok(body.messages[0].content.indexOf('numbered_list') < body.messages[0].content.indexOf('question'),
         'template guidance should be globally sorted by niche ranking across competitor channels');
+      assert.doesNotMatch(body.messages[0].content, /unranked_noise/,
+        'incomplete competitor records must not be presented as ranked evidence');
       return {
         ok: true,
         json: async () => ({
@@ -252,6 +254,14 @@ async function run() {
         rankingScore: 86,
         rankingBasis: 'niche_fit_and_performance',
         evidence: [{ title: '7 AI video editing steps for beginners' }]
+      }]
+    }, {
+      channelId: 'UC-incomplete',
+      topPerformingTemplates: [{
+        patternId: 'unranked_noise',
+        format: 'story',
+        sampleCount: 4,
+        evidence: [{ title: 'Incomplete ranking metadata' }]
       }]
     }];
     const result = await strategy.generateTrendIdeasFromSnapshot({ snapshot });
