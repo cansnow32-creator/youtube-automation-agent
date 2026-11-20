@@ -21,11 +21,11 @@ async function run() {
       conclusion: { recap: ['Summary'], finalThought: 'The end' }
     };
     const production = {
-      id: 'reuse-test',
+      id: 'reuse-test-' + crypto.randomUUID(),
       script,
       strategy: { approvedVideoConcept: { audioDirection: {} } },
       assets: { script: { ttsPath }, audio: null, captions: null },
-      timeline: {},
+      timeline: { artifactAttemptId: 'attempt_a' },
       estimatedDuration: 20
     };
     agent.aiVideoGenerator = {
@@ -45,8 +45,9 @@ async function run() {
     assert.equal(ttsCalls, 1);
     assert.equal(production.assets.audio.sourceHash, crypto.createHash('sha256')
       .update(JSON.stringify({ ttsText: 'Narration text', audioDirection: {} })).digest('hex'));
+    production.timeline.artifactAttemptId = 'attempt_b';
     await agent.generateAudioNarration(production);
-    assert.equal(ttsCalls, 1, 'valid narration should be reused on retry');
+    assert.equal(ttsCalls, 1, 'valid narration should be reused across a new production attempt');
 
     await fs.unlink(audio);
     await agent.generateAudioNarration(production);
@@ -56,10 +57,12 @@ async function run() {
       captionCalls++;
       return '1\n00:00:00,000 --> 00:00:02,000\nCaption text\n';
     };
+    production.timeline.artifactAttemptId = 'attempt_c';
     const captions = await agent.generateCaptions(production);
     assert.equal(captionCalls, 1);
+    production.timeline.artifactAttemptId = 'attempt_d';
     await agent.generateCaptions(production);
-    assert.equal(captionCalls, 1, 'valid captions should be reused on retry');
+    assert.equal(captionCalls, 1, 'valid captions should be reused across a new production attempt');
 
     production.script.hook.text = 'Changed hook';
     await agent.generateCaptions(production);
@@ -70,6 +73,17 @@ async function run() {
     assert.equal(captionCalls, 3, 'corrupted captions must be regenerated');
     console.log('Production media artifact reuse tests passed.');
   } finally {
+    const audioPath = path.join(__dirname, '..', 'data', 'audio');
+    const captionPath = path.join(__dirname, '..', 'data', 'captions');
+    const productionFiles = [
+      production.assets.audio?.path,
+      production.assets.captions?.path
+    ].filter(Boolean);
+    await Promise.all(productionFiles.flatMap(file => [
+      fs.rm(file, { force: true }),
+      fs.rm(file + '.pcm', { force: true }),
+      fs.rm(file + '.info', { force: true })
+    ]));
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
