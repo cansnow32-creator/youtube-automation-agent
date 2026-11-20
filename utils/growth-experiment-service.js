@@ -384,40 +384,6 @@ class GrowthExperimentService {
     return Number.isFinite(number) ? number : null;
   }
 
-  calculateArmResult(start = {}, end = {}) {
-    const impressions = Math.max(0, Number(end.impressions || 0) - Number(start.impressions || 0));
-    const clicks = Math.max(0, Number(end.clicks || 0) - Number(start.clicks || 0));
-    const views = Math.max(0, Number(end.views || 0) - Number(start.views || 0));
-    const intervalAverage = key => {
-      if (!views) return Number(end[key] || 0);
-      const weighted = (Number(end[key] || 0) * Number(end.views || 0))
-        - (Number(start[key] || 0) * Number(start.views || 0));
-      return Number(Math.max(0, weighted / views).toFixed(3));
-    };
-    return {
-      impressions,
-      clicks: Number(clicks.toFixed(3)),
-      ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(3)) : 0,
-      views,
-      watchMinutes: Math.max(0, Number(end.watchMinutes || 0) - Number(start.watchMinutes || 0)),
-      netSubscribers: Number(end.netSubscribers || 0) - Number(start.netSubscribers || 0),
-      estimatedRevenue: Number((Number(end.estimatedRevenue || 0) - Number(start.estimatedRevenue || 0)).toFixed(3)),
-      averageViewPercentage: intervalAverage('averageViewPercentage'),
-      engagementRate: intervalAverage('engagementRate')
-    };
-  }
-
-  twoProportionZ(first, second) {
-    const n1 = Number(first.impressions || 0);
-    const n2 = Number(second.impressions || 0);
-    if (!n1 || !n2) return 0;
-    const p1 = Number(first.clicks || 0) / n1;
-    const p2 = Number(second.clicks || 0) / n2;
-    const pooled = (Number(first.clicks || 0) + Number(second.clicks || 0)) / (n1 + n2);
-    const standardError = Math.sqrt(pooled * (1 - pooled) * ((1 / n1) + (1 / n2)));
-    return standardError > 0 ? Math.abs(p1 - p2) / standardError : 0;
-  }
-
   trafficSourceShift(start = [], end = []) {
     const toMap = sources => new Map((sources || []).map(source => [source.source, Number(source.percentage || 0)]));
     const a = toMap(start);
