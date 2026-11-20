@@ -44,7 +44,37 @@ async function run() {
   assert.equal(released, true, 'owned DB lease is released after work');
   assert.equal(owned.activeRebuilds.has('p3'), false);
 
-  process.stdout.write('Production operation lock tests passed\\n');
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  let heartbeat;
+  global.setInterval = callback => {
+    heartbeat = callback;
+    return { unref() {} };
+  };
+  global.clearInterval = () => {};
+  try {
+    const lostLeaseDb = {
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => false,
+      releaseProductionOperationLock: async () => {}
+    };
+    const lostLease = new SceneRepairService(lostLeaseDb, {}, { dataRoot: '/tmp' });
+    lostLease.rebuildUnlocked = async (_id, assertLease) => {
+      heartbeat();
+      await assertLease();
+      return 'must-not-commit';
+    };
+    await assert.rejects(
+      lostLease.rebuild('p4'),
+      error => error.code === 'SCENE_REBUILD_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(lostLease.activeRebuilds.has('p4'), false, 'local lock is cleared after lease loss');
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+
+    process.stdout.write('Production operation lock tests passed\\n');
 }
 
 run().catch(error => {
