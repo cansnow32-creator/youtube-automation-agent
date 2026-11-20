@@ -41,7 +41,7 @@ Content-Type: application/json
 { "confirmedAbsent": true }
 ```
 
-This explicit operator decision records an audit entry in schedule metadata and changes the unresolved entry to `failed`. A known-failed entry can then be retried through the normal manual publishing flow. The application does not automatically infer absence and does not automatically retry an unresolved upload.
+This explicit operator decision records an audit entry in schedule metadata and changes the unresolved entry to `failed`. The database records the upload attempt start time and enforces a **10-minute minimum grace period** before accepting an absence decision, even if the row is still marked `uploading`. If the grace period has not elapsed, the API returns `UPLOAD_GRACE_PERIOD_ACTIVE`; wait, re-check YouTube Studio, and try again. A known-failed entry can then be retried through the normal manual publishing flow. The application does not automatically infer absence and does not automatically retry an unresolved upload.
 
 ## Access and safety
 
