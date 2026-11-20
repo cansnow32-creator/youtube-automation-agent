@@ -193,6 +193,13 @@ class MediaGenerationService {
     let remote;
     let remoteSubmissionAttempted = false;
     let remoteTaskId = task?.external_task_id || null;
+    let previousTaskHistory = Array.isArray(task.providerData?.previousTasks)
+      ? [...task.providerData.previousTasks]
+      : [];
+    const providerDataForTask = remote => ({
+      ...this.providerData(remote),
+      ...(previousTaskHistory.length ? { previousTasks: previousTaskHistory } : {})
+    });
     const downloadPath = `${outputPath}.${crypto.randomUUID()}.part.mp4`;
     let outputPublished = false;
     try {
@@ -211,21 +218,19 @@ class MediaGenerationService {
         // remote ID, a crash at any point around provider.createTask() becomes
         // an explicit ambiguous outcome. A retry will reconcile, never resubmit.
         if (!taskCreatedThisInvocation) {
-          const previousTasks = Array.isArray(task.providerData?.previousTasks)
-            ? task.providerData.previousTasks.slice(-9)
-            : [];
           if (task.external_task_id) {
-            previousTasks.push({
+            previousTaskHistory.push({
               externalTaskId: task.external_task_id,
               status: task.status,
               outputPath: task.output_path || null,
               completedAt: task.completed_at || null
             });
+            previousTaskHistory = previousTaskHistory.slice(-10);
           }
           task = await this.updateTask(task, {
             status: 'submitting',
             externalTaskId: null,
-            providerData: { previousTasks },
+            providerData: previousTaskHistory.length ? { previousTasks: previousTaskHistory } : {},
             outputPath: null,
             error: null,
             completedAt: null
@@ -249,7 +254,7 @@ class MediaGenerationService {
         status: remote.status === 'succeeded' ? 'downloading' : remote.status,
         model: remote.model || task.model,
         externalTaskId: remoteTaskId,
-        providerData: this.providerData(remote),
+        providerData: providerDataForTask(remote),
         error: remote.error || null
       });
       await assertLease();
@@ -270,7 +275,7 @@ class MediaGenerationService {
         await assertLease();
         task = await this.updateTask(task, {
           status: remote.status === 'succeeded' ? 'downloading' : remote.status,
-          providerData: this.providerData(remote),
+          providerData: providerDataForTask(remote),
           error: remote.error || null
         });
         await assertLease();
@@ -292,7 +297,7 @@ class MediaGenerationService {
       await assertLease();
       task = await this.updateTask(task, {
         status: 'succeeded', outputPath, completedAt: new Date().toISOString(),
-        providerData: this.providerData(remote), error: null
+        providerData: providerDataForTask(remote), error: null
       });
       await assertLease();
       return { task, outputPath, reused: false };
