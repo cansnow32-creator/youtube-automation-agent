@@ -488,6 +488,13 @@ class PublishingSchedulingAgent {
       'Operator confirmed that no matching YouTube upload exists; a manual retry is now permitted'
     );
     if (!resolved) {
+      const latest = await this.db.getScheduleEntry(scheduleId);
+      if (latest && ['uploading', 'reconciliation_required'].includes(latest.status) && !latest.youtubeId) {
+        const error = new Error('The upload attempt must be at least 10 minutes old before confirming that no video was created. Check YouTube Studio again after the grace period.');
+        error.status = 409;
+        error.code = 'UPLOAD_GRACE_PERIOD_ACTIVE';
+        throw error;
+      }
       const error = new Error('The publish entry changed during reconciliation; reload before retrying');
       error.status = 409;
       error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
