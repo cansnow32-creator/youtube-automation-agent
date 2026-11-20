@@ -227,7 +227,296 @@ async function testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersisten
   }
 }
 
+function makeStatefulMediaTaskDb(initialTask = null) {
+  let row = initialTask ? {
+    ...initialTask,
+    providerData: { ...(initialTask.providerData || {}) }
+  } : null;
+  return {
+    get row() { return row; },
+    async findMediaGenerationTask() {
+      return row ? { ...row, providerData: { ...(row.providerData || {}) } } : null;
+    },
+    async createMediaGenerationTask(input) {
+      if (!row) {
+        row = {
+          id: 'media-stateful-task',
+          job_id: input.jobId,
+          production_id: input.productionId,
+          scene_index: input.sceneIndex,
+          provider: input.provider,
+          model: input.model,
+          status: input.status || 'submitting',
+          external_task_id: null,
+          providerData: {},
+          output_path: null,
+          error: null,
+          completed_at: null
+        };
+      }
+      return { ...row, providerData: { ...(row.providerData || {}) } };
+    },
+    async updateMediaGenerationTask(_id, changes) {
+      row = { ...row };
+      if (changes.model !== undefined) row.model = changes.model;
+      if (changes.externalTaskId !== undefined) row.external_task_id = changes.externalTaskId;
+      if (changes.status !== undefined) row.status = changes.status;
+      if (changes.providerData !== undefined) row.providerData = { ...(changes.providerData || {}) };
+      if (changes.outputPath !== undefined) row.output_path = changes.outputPath;
+      if (changes.error !== undefined) row.error = changes.error;
+      if (changes.completedAt !== undefined) row.completed_at = changes.completedAt;
+      return { ...row, providerData: { ...(row.providerData || {}) } };
+    }
+  };
+}
+
+async function testAmbiguousProviderSubmissionIsNotAutomaticallyRetried() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-unknown-'));
+  const db = makeStatefulMediaTaskDb();
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  let createCalls = 0;
+  const provider = {
+    id: 'non-cancellable-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      // The request may have reached the provider even though the client timed out.
+      throw Object.assign(new Error('socket closed while awaiting provider response'), { code: 'ECONNRESET' });
+    }
+  };
+
+  try {
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-unknown-submission',
+        productionId: 'production-unknown-submission',
+        scene: { index: 0, prompt: 'ambiguous submission' },
+        provider,
+        outputPath: path.join(directory, 'scene.mp4'),
+        request: { prompt: 'ambiguous submission' }
+      }),
+      /socket closed/
+    );
+    assert.equal(db.row.status, 'submission_unknown');
+    assert.equal(db.row.external_task_id, null);
+
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-unknown-submission',
+        productionId: 'production-unknown-submission',
+        scene: { index: 0, prompt: 'ambiguous submission' },
+        provider,
+        outputPath: path.join(directory, 'scene-retry.mp4'),
+        request: { prompt: 'ambiguous submission' }
+      }),
+      error => error.code === 'MEDIA_TASK_SUBMISSION_UNKNOWN' && error.status === 409
+    );
+    assert.equal(createCalls, 1, 'an ambiguous provider request must not be submitted twice');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function testLeaseLossAfterNonCancellableSubmissionBlocksRetry() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-lease-'));
+  const db = makeStatefulMediaTaskDb();
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  let createCalls = 0;
+  const provider = {
+    id: 'non-cancellable-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      return { status: 'queued', model: 'test-model', externalTaskId: 'remote-accepted-but-not-persisted' };
+    }
+  };
+  let checks = 0;
+
+  try {
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-lease-unknown',
+        productionId: 'production-lease-unknown',
+        scene: { index: 0, prompt: 'accepted remotely' },
+        provider,
+        outputPath: path.join(directory, 'scene.mp4'),
+        request: { prompt: 'accepted remotely' },
+        assertLease: async () => {
+          checks++;
+          if (checks >= 4) {
+            throw Object.assign(new Error('generation lease lost after provider accepted request'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(db.row.status, 'submitting');
+    assert.equal(db.row.external_task_id, null);
+
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-lease-unknown',
+        productionId: 'production-lease-unknown',
+        scene: { index: 0, prompt: 'accepted remotely' },
+        provider,
+        outputPath: path.join(directory, 'scene-retry.mp4'),
+        request: { prompt: 'accepted remotely' }
+      }),
+      error => error.code === 'MEDIA_TASK_SUBMISSION_UNKNOWN'
+    );
+    assert.equal(createCalls, 1, 'a stale worker cannot cause a duplicate remote task on retry');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-history-'));
+  const outputPath = path.join(directory, 'new-scene.mp4');
+  const db = makeStatefulMediaTaskDb({
+    id: 'media-terminal-task',
+    job_id: 'job-terminal-retry',
+    production_id: 'production-terminal-retry',
+    scene_index: 0,
+    provider: 'test-provider',
+    model: 'old-model',
+    status: 'failed',
+    external_task_id: 'old-terminal-remote-id',
+    providerData: { outputUrl: 'https://provider.invalid/old.mp4', model: 'old-model' },
+    output_path: 'old-output.mp4',
+    error: 'previous remote task failed',
+    completed_at: new Date().toISOString()
+  });
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.isValidVideo = async () => true;
+  let createCalls = 0;
+  const provider = {
+    id: 'test-provider',
+    model: 'new-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      assert.equal(db.row.status, 'submitting', 'submission intent must be persisted before the remote API call');
+      assert.equal(db.row.external_task_id, null, 'old terminal ID must be cleared before a new submission');
+      assert.equal(db.row.output_path, null);
+      return {
+        status: 'succeeded',
+        model: 'new-model',
+        externalTaskId: 'new-remote-id',
+        outputUrl: 'https://provider.invalid/new.mp4'
+      };
+    },
+    downloadResult: async (_remote, destination) => {
+      await fs.writeFile(destination, Buffer.alloc(1200, 7));
+    }
+  };
+
+  try {
+    const result = await service.generateClip({
+      jobId: 'job-terminal-retry',
+      productionId: 'production-terminal-retry',
+      scene: { index: 0, prompt: 'new attempt' },
+      provider,
+      outputPath,
+      request: { prompt: 'new attempt' }
+    });
+    assert.equal(result.outputPath, outputPath);
+    assert.equal(createCalls, 1);
+    assert.equal(db.row.status, 'succeeded');
+    assert.equal(db.row.external_task_id, 'new-remote-id');
+    assert.equal(db.row.output_path, outputPath);
+    assert.equal(db.row.providerData.previousTasks[0].externalTaskId, 'old-terminal-remote-id',
+      'the previous terminal task ID remains available for audit');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-remote-reconcile-'));
+  const db = makeStatefulMediaTaskDb({
+    id: 'media-running-task',
+    job_id: 'job-existing-remote',
+    production_id: 'production-existing-remote',
+    scene_index: 0,
+    provider: 'test-provider',
+    model: 'test-model',
+    status: 'running',
+    external_task_id: 'existing-remote-task',
+    providerData: { model: 'test-model' },
+    output_path: null,
+    error: null
+  });
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.isValidVideo = async () => true;
+  let getCalls = 0;
+  let createCalls = 0;
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    getTask: async id => {
+      assert.equal(id, 'existing-remote-task');
+      getCalls++;
+      if (getCalls === 1) throw new Error('temporary provider status outage');
+      return {
+        status: 'succeeded',
+        model: 'test-model',
+        externalTaskId: id,
+        outputUrl: 'https://provider.invalid/completed.mp4'
+      };
+    },
+    createTask: async () => {
+      createCalls++;
+      throw new Error('must not create a replacement task');
+    },
+    downloadResult: async (_remote, destination) => {
+      await fs.writeFile(destination, Buffer.alloc(1200, 8));
+    }
+  };
+
+  try {
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-existing-remote',
+        productionId: 'production-existing-remote',
+        scene: { index: 0, prompt: 'reconcile' },
+        provider,
+        outputPath: path.join(directory, 'first-attempt.mp4'),
+        request: { prompt: 'reconcile' }
+      }),
+      /temporary provider status outage/
+    );
+    assert.equal(db.row.status, 'reconciliation_required');
+    assert.equal(db.row.external_task_id, 'existing-remote-task');
+
+    const result = await service.generateClip({
+      jobId: 'job-existing-remote',
+      productionId: 'production-existing-remote',
+      scene: { index: 0, prompt: 'reconcile' },
+      provider,
+      outputPath: path.join(directory, 'resumed-attempt.mp4'),
+      request: { prompt: 'reconcile' }
+    });
+    assert.equal(result.task.external_task_id, 'existing-remote-task');
+    assert.equal(db.row.status, 'succeeded');
+    assert.equal(getCalls, 2);
+    assert.equal(createCalls, 0, 'a recoverable remote task must be polled, not duplicated');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
+  await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
+  await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
+  await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
+  await testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting();
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
   await testPartialAttemptCleanupPreservesReusedClips();
   await testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence();
