@@ -194,17 +194,65 @@ class ChannelLearningEngine {
         Array.isArray(snapshot.contentAttributes?.appliedLearnings) &&
         this.optionalNumber(snapshot.metrics?.impressions) >= 1000;
     });
+
+    // A production and its published YouTube video are aliases for one outcome.
+    // Union the aliases so records that alternate between productionId-only,
+    // videoId-only, or both cannot inflate the independent-production count.
+    const parents = new Map();
+    const find = value => {
+      if (!parents.has(value)) parents.set(value, value);
+      const parent = parents.get(value);
+      if (parent !== value) parents.set(value, find(parent));
+      return parents.get(value);
+    };
+    const union = (left, right) => {
+      const a = find(left);
+      const b = find(right);
+      if (a !== b) parents.set(b, a);
+    };
+    const identityForSnapshot = new Map();
+    for (const snapshot of mature) {
+      const productionId = String(snapshot.productionId || '').trim();
+      const videoId = String(snapshot.videoId || '').trim();
+      const aliases = [
+        productionId ? `production:${productionId}` : null,
+        videoId ? `video:${videoId}` : null
+      ].filter(Boolean);
+      if (!aliases.length) continue;
+      aliases.forEach(alias => find(alias));
+      for (const alias of aliases.slice(1)) union(aliases[0], alias);
+      identityForSnapshot.set(snapshot, aliases[0]);
+    }
+
+    // Surface is part of the identity boundary. If records for the same
+    // production/video disagree (or one is unknown), exclude that identity
+    // rather than counting it once in each surface cohort.
+    const surfacesByProduction = new Map();
+    for (const snapshot of mature) {
+      const alias = identityForSnapshot.get(snapshot);
+      if (!alias) continue;
+      const root = find(alias);
+      if (!surfacesByProduction.has(root)) surfacesByProduction.set(root, new Set());
+      surfacesByProduction.get(root).add(this.snapshotSurface(snapshot));
+    }
+    const ambiguousProductions = new Set([...surfacesByProduction.entries()]
+      .filter(([, surfaces]) => surfaces.size !== 1 || surfaces.has('unknown'))
+      .map(([identity]) => identity));
+
     const grouped = new Map();
     for (const snapshot of mature) {
-      const productionId = snapshot.productionId || snapshot.videoId;
-      if (!productionId) continue;
+      const alias = identityForSnapshot.get(snapshot);
+      if (!alias) continue;
+      const productionId = find(alias);
+      if (ambiguousProductions.has(productionId)) continue;
       const surface = this.snapshotSurface(snapshot);
       if (surface === 'unknown') continue;
       for (const learning of snapshot.contentAttributes.appliedLearnings) {
         if (!learning?.recommendationId) continue;
-        const key = `${learning.recommendationId}:${surface}`;
+        const recommendationId = String(learning.recommendationId);
+        const key = JSON.stringify([recommendationId, surface]);
         if (!grouped.has(key)) grouped.set(key, {
-          recommendationId: String(learning.recommendationId),
+          recommendationId,
           category: learning.category || 'unknown',
           surface,
           productions: new Map()
