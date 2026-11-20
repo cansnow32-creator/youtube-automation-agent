@@ -362,3 +362,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added regression coverage for a thumbnail fallback write followed by lease loss; `production-attempt-artifact-cleanup.test.js` is already wired into `npm test`.
 - Commits: `535d37bd5c68368e925c5669e01516d75b85fac2`, `9c04a8cb43c59ac85ac032102f3f4e9bbe763750`, `e0370bf71252b9f938c2b426048a2595b2b6ac60`, `2eee7d4091d50cdc66125bbe439bd06de78f1b24`.
 - Static JavaScript syntax and package/test wiring checks passed. Runtime tests/lint were not executed. PR #2 remains open/draft; no merge or base changes.
+
+
+## Latest final-video cleanup audit — 2026-11-20
+
+- Found a cleanup bug in `getVideoAttemptSidecarPaths()`: the helper returned its array before the CineCode scene loop, making the loop unreachable; the loop also referenced `paths` without declaring it. As a result, stale scene render MP4s and render manifests could be left behind during production attempt cleanup.
+- Fixed the helper to build one array containing the main video/sidecars and up to 20 CineCode scene files, `.rendering.mp4` files, render manifests, and manifest temp files, then return it.
+- Added `testVideoAttemptCleanupIncludesCineCodeSceneArtifacts()` to `test/production-attempt-artifact-cleanup.test.js` and verified that test file is already included in `npm test`.
+- Added a fresh `assertLease()` immediately before the final ready-state database update in `processContentUnlocked()`.
+- Static syntax checks passed for the production agent and regression test; `package.json` parsed and test wiring was confirmed. Runtime tests and lint were not run. PR #2 latest head: `7f30f11537b78ed1d9943e18bf46fde53c215fcb`; no Actions run found for that head; PR remains draft/open/unmerged.
