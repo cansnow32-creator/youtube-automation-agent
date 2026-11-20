@@ -384,7 +384,8 @@ class AnalyticsOptimizationAgent {
         percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
       })),
       topSource: sources.length > 0 ? sources[0][0] : 'unknown',
-      organicPercentage: this.calculateOrganicPercentage(sources)
+      organicPercentage: this.calculateOrganicPercentage(sources),
+      available: sources.length > 0
     };
   }
 
@@ -407,7 +408,8 @@ class AnalyticsOptimizationAgent {
         views: Number(row[1]) || 0,
         percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
       })),
-      mobilePercentage: this.calculateMobilePercentage(devices)
+      mobilePercentage: this.calculateMobilePercentage(devices),
+      available: devices.length > 0
     };
   }
 
@@ -425,10 +427,10 @@ class AnalyticsOptimizationAgent {
       query('estimatedRevenue,monetizedPlaybacks,playbackBasedCpm', true)
     ]);
     const subscribers = subscriberResult.status === 'fulfilled'
-      ? subscriberResult.value.data.rows?.[0] || [0, 0]
+      ? subscriberResult.value.data.rows?.[0] || null
       : null;
     const revenue = revenueResult.status === 'fulfilled'
-      ? revenueResult.value.data.rows?.[0] || [0, 0, 0]
+      ? revenueResult.value.data.rows?.[0] || null
       : null;
     if (!subscribers) this.logger.warn(`Subscriber outcomes unavailable for ${videoId}: ${subscriberResult.reason?.message || 'unknown error'}`);
     if (!revenue) this.logger.info(`Revenue outcomes unavailable for ${videoId}; monetization data will remain unavailable`);
