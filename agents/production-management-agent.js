@@ -290,10 +290,12 @@ class ProductionManagementAgent {
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
+        await assertLease();
         await this.db.updateProductionData(productionData);
         throw new Error(productionData.timeline.lastProductionError);
       }
       productionData.status = 'ready';
+      await assertLease();
       await this.db.updateProductionData(productionData);
       return productionData;
     }
@@ -350,7 +352,7 @@ class ProductionManagementAgent {
       else this.pipeline.push(productionData);
       return productionData;
     } catch (error) {
-      if (leaseFailure || ['PRODUCTION_RESUME_LEASE_LOST', 'PRODUCTION_RESUME_LEASE_UNVERIFIED'].includes(error.code)) throw (leaseFailure || error);
+      await assertLease();
       productionData.status = 'failed';
       productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
       await this.db.updateProductionData(productionData);
