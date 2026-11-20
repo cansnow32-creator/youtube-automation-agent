@@ -178,6 +178,10 @@ class ContentStrategyAgent {
       
       try {
         const videos = await this.getChannelVideos(channelId);
+        if (!Array.isArray(videos) || videos.length === 0) {
+          this.logger.warn(`Skipping competitor ${channelId}: no usable videos were returned`);
+          continue;
+        }
         const analysis = this.analyzeVideoPerformance(videos);
         const { rankTemplatesForNiche } = require('../utils/viral-template-analyzer');
         competitorData.push({
