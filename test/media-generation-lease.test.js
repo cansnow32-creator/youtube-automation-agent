@@ -4,7 +4,91 @@ const os = require('os');
 const path = require('path');
 const { MediaGenerationService } = require('../utils/media-generation-service');
 
+async function testAttemptScopedClipOutputsAndLeaseLossCleanup() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-attempt-'));
+  const db = {};
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    describe: () => ({ model: 'test-model' }),
+    normalizeRequest: request => ({ ...request, duration: 4 })
+  };
+  service.settings = async () => ({
+    provider: 'test-provider',
+    order: ['test-provider'],
+    mode: 'hybrid',
+    clipDuration: 4,
+    maxGeneratedSeconds: 8,
+    generateAudio: false,
+    resolution: '720p',
+    aspectRatio: '16:9'
+  });
+  service.registry = { select: () => provider };
+  service.buildScenePlan = () => [
+    { index: 0, duration: 4, prompt: 'Scene one' },
+    { index: 1, duration: 4, prompt: 'Scene two' }
+  ];
+  const createdPaths = [];
+  service.generateClip = async ({ outputPath, scene, assertLease }) => {
+    assert.equal(typeof assertLease, 'function');
+    await fs.writeFile(outputPath, Buffer.alloc(1200, scene.index + 1));
+    createdPaths.push(outputPath);
+    return {
+      outputPath,
+      reused: false,
+      task: { model: 'test-model', external_task_id: 'task-' + scene.index }
+    };
+  };
+
+  try {
+    const first = await service.generateClips({
+      jobId: 'job-1',
+      productionId: 'production-1',
+      script: {},
+      outputDir: directory,
+      attemptId: 'attempt-a'
+    });
+    assert.equal(first.clips.length, 2);
+    assert.ok(first.clips.every(clip => clip.path.includes('production-1_attempt-a_test-provider_')));
+    assert.notEqual(first.clips[0].path, first.clips[1].path);
+
+    await fs.rm(first.clips[0].path, { force: true });
+    await fs.rm(first.clips[1].path, { force: true });
+    createdPaths.length = 0;
+
+    let leaseChecks = 0;
+    await assert.rejects(
+      service.generateClips({
+        jobId: 'job-1',
+        productionId: 'production-1',
+        script: {},
+        outputDir: directory,
+        attemptId: 'attempt-b',
+        assertLease: async () => {
+          leaseChecks += 1;
+          // The first clip has been produced; fail before the second can start.
+          if (leaseChecks >= 5) {
+            throw Object.assign(new Error('generation lease lost during provider clip set'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(createdPaths.length, 1);
+    assert.equal(await fs.access(createdPaths[0]).then(() => true, () => false), false,
+      'partial clip sets from an abandoned attempt are removed');
+    assert.deepEqual(await fs.readdir(directory), []);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
+  await testAttemptScopedClipOutputsAndLeaseLossCleanup();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-fence-'));
   const outputPath = path.join(directory, 'scene.mp4');
   const updates = [];
