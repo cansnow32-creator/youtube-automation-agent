@@ -1040,8 +1040,9 @@ class ProductionManagementAgent {
       return finalVideoPath;
     } catch (error) {
       this.logger.error('AI video assembly failed:', error);
-      // Fallback to simulation
-      return await this.simulateVideoAssembly(productionData);
+      // Preserve the actual failure reason in the blocked artifact so the
+      // editing-stage retry and operator diagnostics explain what failed.
+      return await this.simulateVideoAssembly(productionData, error.message || String(error));
     }
   }
 
