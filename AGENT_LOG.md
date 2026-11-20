@@ -413,3 +413,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Wired lease callbacks through CineCode, hybrid timeline and mux, slideshow, background music mixing, validation decode, and Gemini TTS encoding. Added cleanup of background-mix outputs/manifests on post-publish lease loss.
 - Added real FFmpeg cancellation and audio mixer lease-propagation/post-publish cleanup regressions. Static syntax checks passed; runtime tests/lint not executed.
 - Commits: `028cf9a9fa55646c43d6ef6833d43d8d05dc9a56`, `e97f317a784dbc62937a24b16d0edcdfd6162bda`, `0a00d5511bd969560766b9a28244f19e6a3d40dd`, `5c5d80e901dde39e14fc43f155c80cdb901279bf`, `c50bbb5bf42cbb216d5c62a1e905bb49852ba193`, `7bfd7738f447ef30a4cde6b7a404abb25476bfb3`, `2d8b979362851db3d46352772f83f660330e46f5`, `6e397e3b90b4924c9909574da746f9841b27acca`, `38a5fdd8cc08a1c377fcf6ecd44402bc92a63c9f`, `d451ad7fad6cfce18af34cb2df8f102c2c5b1b00`, `b11ec6b07315385aebaf34519808982cd2180c68`.
+
+
+## 2026-11-20 — Fence final subtitle render and thumbnail fallback
+
+- Threaded the production lease guard into subtitle FFmpeg render and decode validation. Lease failures in caption cache validation now propagate rather than being swallowed as cache misses. Added lease checks around final media metadata and finalVideo metadata assignment.
+- Thumbnail fallback paths now include UUIDs and clean up the just-written output if lease ownership is lost after the write.
+- Added a thumbnail fallback lease-loss cleanup regression. Static syntax/package/test wiring checks passed; runtime tests/lint not executed.
+- Commits: `535d37bd5c68368e925c5669e01516d75b85fac2`, `9c04a8cb43c59ac85ac032102f3f4e9bbe763750`, `e0370bf71252b9f938c2b426048a2595b2b6ac60`, `2eee7d4091d50cdc66125bbe439bd06de78f1b24`.
