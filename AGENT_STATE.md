@@ -11,7 +11,7 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `6222a5cf7deb033f02634afc8b64e3e83a0a4971`; 0 check-runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0`; 0 workflow runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `07651ee8125a838d1209b4da564cee7a49dfd2dc` before this state refresh |
 
 PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `322cd1f0aff871dd09720c46dfdf20a3c71038ac`; compare against the live base branch before attempting synchronization. PR #2 remains open/draft/unmerged and GitHub reports zero workflow runs on its current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
@@ -73,3 +73,12 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 - Commits: `2bf343dce295143df441fc3f61b9f50c976dfbc1`, `8c82636fcf070631e16e427c56c82653735a25d2`, `683c3c45298df8216851464a700269eb8543fe70`, `b9ef6fd2229d8f89cb1f032072cc3a9347c930eb`.
 - Static review only; tests and lint have not been executed. PR #2 current head reports zero workflow runs. Cooperative checks are not atomic fencing and cannot prevent a race after a check or file writes internal to provider implementations.
 - Next: inspect remaining production side effects, especially `sceneRepair.initializeProduction()` and DB writes; then obtain CI execution. Do not merge.
+
+
+## Latest PR #2 scene-edit serialization — 2026-11-20
+
+- Live PR #2 head: `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0`, open/draft/unmerged. GitHub reports zero workflow runs on this head.
+- Static audit found updateScene(), reorder(), and replaceAsset() did not acquire the production-scoped operation lock shared with rebuild/resume operations. Added an owner-scoped lock wrapper around these short edit/upload operations; competing operations now fail with HTTP 409 / `SCENE_EDIT_IN_PROGRESS` rather than racing metadata or asset publication.
+- Added regression coverage for lock contention and owner-only release in `test/production-operation-lock.test.js`.
+- Commits: `37bdd45d359ca27a8d7f779c06f0e8c15962ce4e` (service), `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0` (test).
+- Static inspection only. Tests and lint were not executed. Narration regeneration, visual regeneration, and silence override remain to audit for long-running lease heartbeats and stale-worker side effects.
