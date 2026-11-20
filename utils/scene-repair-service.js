@@ -176,6 +176,7 @@ class SceneRepairService {
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
+    assertLease.lease = Object.freeze({ productionId, owner });
     try {
       acquired = await this.db.acquireProductionOperationLock(productionId, owner);
       if (!acquired) throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
@@ -206,7 +207,7 @@ class SceneRepairService {
     const scenes = buildInitialSceneManifest(bundle, bundle.assets?.finalVideo?.provider || {});
     await this.initializeAudioSegments(bundle, scenes, assertLease);
     await assertLease();
-    return this.db.replaceProductionScenes(bundle.id, scenes);
+    return this.db.replaceProductionScenes(bundle.id, scenes, assertLease.lease);
   }
 
   async initializeProduction(production, providerResult = {}, assertLease = async () => {}) {
@@ -214,7 +215,7 @@ class SceneRepairService {
     const scenes = buildInitialSceneManifest(production, providerResult);
     await this.initializeAudioSegments(production, scenes, assertLease);
     await assertLease();
-    const saved = await this.db.replaceProductionScenes(production.id, scenes);
+    const saved = await this.db.replaceProductionScenes(production.id, scenes, assertLease.lease);
     await assertLease();
     production.assets.sceneManifest = { count: saved.length, version: 1, updatedAt: new Date().toISOString() };
     return saved;
@@ -302,7 +303,7 @@ class SceneRepairService {
       narrationStatus: scriptChanged ? 'stale' : scene.narrationStatus,
       status: promptChanged ? 'visual_stale' : scriptChanged || durationChanged ? 'needs_rebuild' : scene.status,
       revision: scriptChanged || promptChanged || durationChanged ? scene.revision + 1 : scene.revision
-    });
+    }, assertLease.lease);
 
     await assertLease();
     if (scriptChanged && input.factualChange !== false) {
@@ -312,7 +313,7 @@ class SceneRepairService {
     await this.db.saveProductionSceneRevision({
       productionId, sceneId, action: 'edit', before: scene, after: next,
       costEvidence: { billed: false }
-    });
+    }, assertLease.lease);
     await assertLease();
     return next;
   }
@@ -347,12 +348,12 @@ class SceneRepairService {
     if (bundle.scenes.some(scene => scene.locked)) throw this.error('Unlock every scene before changing timeline order', 409);
     const before = bundle.scenes;
     await assertLease();
-    const after = await this.db.reorderProductionScenes(productionId, this.array(orderedIds));
+    const after = await this.db.reorderProductionScenes(productionId, this.array(orderedIds), assertLease.lease);
     await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId: after[0].id, action: 'reorder', before: { order: before.map(scene => scene.id) },
       after: { order: after.map(scene => scene.id) }, costEvidence: { billed: false }
-    });
+    }, assertLease.lease);
     await assertLease();
     return after;
   }
@@ -380,7 +381,7 @@ class SceneRepairService {
       await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'generating', narrationError: null
-      });
+      }, assertLease.lease);
       generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath, { assertLease });
       await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
@@ -406,7 +407,7 @@ class SceneRepairService {
         narrationCost: cost,
         status: scene.status === 'visual_stale' ? 'visual_stale' : 'needs_rebuild',
         revision: scene.revision + 1
-      });
+      }, assertLease.lease);
       scenePersisted = true;
       await assertLease();
       await this.updateProductionAudioState(bundle, {
@@ -416,7 +417,7 @@ class SceneRepairService {
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate_narration', before, after: next, costEvidence: cost
-      });
+      }, assertLease.lease);
       return next;
     } catch (error) {
       if (!scenePersisted) {
@@ -433,11 +434,11 @@ class SceneRepairService {
         narrationModel: evidence.model || scene.narrationModel, narrationTaskId: evidence.externalTaskId || null,
         narrationError: error.message, narrationGeneratedAt: evidence.generatedAt || new Date().toISOString(),
         narrationCost: evidence.cost || scene.narrationCost || {}
-      }).catch(() => {});
+      }, assertLease.lease).catch(() => {});
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate_narration', status: 'failed', before, after: {},
         costEvidence: evidence.cost || {}, error: error.message
-      }).catch(() => {});
+      }, assertLease.lease).catch(() => {});
       throw error;
     }
   }
@@ -489,12 +490,12 @@ class SceneRepairService {
         narrationCost: enabled ? { billed: false } : scene.narrationCost,
         status: scene.status === 'visual_stale' ? 'visual_stale' : 'needs_rebuild',
         revision: scene.revision + 1
-      });
+      }, assertLease.lease);
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId: scene.id, action: enabled ? 'confirm_intentional_silence' : 'require_narration',
         before, after: next, costEvidence: { billed: false }
-      });
+      }, assertLease.lease);
       updated.push(next);
     }
     return { enabled, reason: enabled ? reason : null, scenes: updated };
@@ -505,7 +506,7 @@ class SceneRepairService {
     await this.db.updateProductionData({
       id: bundle.id, status: bundle.status, assets, timeline: bundle.timeline,
       scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
-    });
+    }, assertLease.lease);
     bundle.assets = assets;
     return assets.audio;
   }
@@ -557,7 +558,7 @@ class SceneRepairService {
     let scenePersisted = false;
     try {
       await assertLease();
-      await this.db.updateProductionScene(productionId, sceneId, { status: 'generating' });
+      await this.db.updateProductionScene(productionId, sceneId, { status: 'generating' }, assertLease.lease);
       if (estimate.paid) {
         const provider = this.mediaGeneration.registry.get(estimate.provider);
         const settings = await this.mediaGeneration.settings();
@@ -616,24 +617,24 @@ class SceneRepairService {
         ...visual, ...narration, status: 'needs_rebuild', revision: scene.revision + 1,
         estimatedCost: estimate,
         actualCost: { generatedSeconds: estimate.generatedSeconds, provider: estimate.provider, amount: null, currency: null, invoiceRequired: estimate.paid }
-      });
+      }, assertLease.lease);
       scenePersisted = true;
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', before, after: next,
         costEvidence: next.actualCost
-      });
+      }, assertLease.lease);
       return { scene: next, estimate };
     } catch (error) {
       if (!scenePersisted) {
         for (const filePath of attemptFiles) await fs.unlink(filePath).catch(() => {});
       }
       await assertLease();
-      await this.db.updateProductionScene(productionId, sceneId, { status: 'failed' }).catch(() => {});
+      await this.db.updateProductionScene(productionId, sceneId, { status: 'failed' }, assertLease.lease).catch(() => {});
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', status: 'failed', before,
         after: {}, costEvidence: estimate, error: error.message
-      }).catch(() => {});
+      }, assertLease.lease).catch(() => {});
       throw error;
     }
   }
@@ -698,13 +699,13 @@ class SceneRepairService {
         externalTaskId: null, rightsConfirmed: true, containsSyntheticMedia: file.containsSyntheticMedia === true,
         status: 'needs_rebuild', revision: scene.revision + 1,
         estimatedCost: {}, actualCost: { billed: false }
-      });
+      }, assertLease.lease);
       scenePersisted = true;
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'replace_asset', before: scene, after: next,
         costEvidence: { billed: false }
-      });
+      }, assertLease.lease);
       return next;
     } catch (error) {
       if (!scenePersisted) {
@@ -942,21 +943,21 @@ class SceneRepairService {
     await this.db.updateProductionData({
       id: productionId, status: 'ready', assets, timeline,
       scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
-    });
+    }, assertLease.lease);
     for (const scene of scenes) {
       await assertLease();
-      await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
+      await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' }, assertLease.lease);
     }
     if (containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia) {
       await assertLease();
-      await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null });
+      await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null }, assertLease.lease);
     }
     await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId: scenes[0].id, action: 'rebuild', before: { finalVideo: previousPath },
       after: { finalVideo: finalPath, captions: captionsPath },
       costEvidence: { billed: false, reusedScenes: scenes.length }
-    });
+    }, assertLease.lease);
     await assertLease();
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
   }
