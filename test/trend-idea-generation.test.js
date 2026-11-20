@@ -18,6 +18,27 @@ async function run() {
   assert.deepEqual(keywordAgent.extractKeywords('İçerik üretimi ve yapay zekâ video araçları'), [
     'içerik', 'üretimi', 'yapay', 'zekâ', 'video', 'araçları'
   ], 'competitor niche keywords must preserve Turkish letters, including dotted capital İ');
+
+  const deduplicatedTopics = keywordAgent.mergeTrendData([
+    { videoId: 'duplicate-video', url: 'https://youtube.com/watch?v=duplicate-video', title: 'AI Editing Workflow', viewCount: 200000 },
+    { videoId: 'duplicate-video', url: 'https://youtube.com/watch?v=duplicate-video', title: 'AI Editing Workflow', viewCount: 200000 },
+    { videoId: 'unique-video', url: 'https://youtube.com/watch?v=unique-video', title: 'AI Editing Workflow', viewCount: 100000 }
+  ], [
+    { channelId: 'UC-one', topPerformingTopics: [
+      { topic: 'Editing', avgViews: 200000, evidence: [{ url: 'https://youtube.com/watch?v=competitor-one' }] },
+      { topic: ' editing ', avgViews: 200000, evidence: [{ url: 'https://youtube.com/watch?v=competitor-one' }] }
+    ] },
+    { channelId: 'UC-two', topPerformingTopics: [
+      { topic: 'EDITING', avgViews: 100000, evidence: [{ url: 'https://youtube.com/watch?v=competitor-two' }] }
+    ] }
+  ]);
+  const editingTopic = deduplicatedTopics.find(item => item.topic.toLowerCase() === 'editing');
+  assert.ok(editingTopic, 'case and whitespace variants should merge into one topic');
+  assert.equal(editingTopic.score, 3.3,
+    'duplicate trending videos and duplicate same-channel topic rows must not inflate score, while distinct videos and channels still contribute');
+  assert.deepEqual(editingTopic.sources.sort(), ['competitor', 'trending']);
+  assert.equal(editingTopic.evidence.length, 4,
+    'evidence URLs should remain unique across trending and competitor sources');
   const ideaIds = [];
   const snapshotIds = [];
   const originalFetch = global.fetch;
