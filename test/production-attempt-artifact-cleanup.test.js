@@ -221,6 +221,39 @@ async function testFinalVideoPartialOutputIsRemovedAfterLeaseLoss() {
   }
 }
 
+async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
+  const tempDir = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'agenttube-thumbnail-lease-'));
+  const sourcePath = path.join(tempDir, 'source.jpg');
+  const marker = 'thumbnail_lease_' + crypto.randomUUID();
+  const originalRandomUUID = crypto.randomUUID;
+  const agent = createAgent();
+  let assertions = 0;
+  const assertLease = async () => {
+    assertions += 1;
+    if (assertions >= 5) throw createLeaseLostError();
+  };
+  agent.aiVideoGenerator = {
+    async generateThumbnail() {
+      return { path: path.join(tempDir, 'simulated.info'), simulated: true };
+    }
+  };
+  const expectedOutput = path.join(__dirname, '..', 'data', 'assets', 'thumbnail_' + Date.now() + '_' + marker + '.jpg');
+
+  try {
+    await fs.writeFile(sourcePath, 'thumbnail-source');
+    crypto.randomUUID = () => marker;
+    await assert.rejects(
+      agent.processThumbnail({ path: sourcePath }, { title: 'Lease test' }, assertLease),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    await assert.rejects(fs.access(expectedOutput), { code: 'ENOENT' });
+  } finally {
+    crypto.randomUUID = originalRandomUUID;
+    await fs.rm(expectedOutput, { force: true });
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function testSimulationArtifactIsRemovedAfterLeaseLoss() {
   const id = 'simulation-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
@@ -253,6 +286,7 @@ async function run() {
   await testCaptionsUseAttemptScopedPathsAndPreserveEarlierAttempt();
   await testCaptionOutputIsRemovedAfterLeaseLoss();
   await testFinalVideoPartialOutputIsRemovedAfterLeaseLoss();
+  await testThumbnailFallbackOutputIsRemovedAfterLeaseLoss();
   await testSimulationArtifactIsRemovedAfterLeaseLoss();
   console.log('Production attempt-scoped media artifact tests passed');
 }
