@@ -72,6 +72,17 @@ async function main() {
     await dbA.executeQuery("UPDATE publish_schedule SET status = 'failed' WHERE id = ?", ['schedule-1']);
     const retry = await dbB.claimScheduleEntryForUpload('schedule-1');
     assert.equal(retry.status, 'uploading', 'a known failed pre-upload attempt can be retried');
+
+    const recorded = await dbA.recordScheduleEntryUploadResult('schedule-1', 'youtube-video-123', { source: 'test' });
+    assert.equal(recorded.status, 'uploaded');
+    assert.equal(recorded.youtubeId, 'youtube-video-123');
+    assert.equal(recorded.youtubeUrl, 'https://www.youtube.com/watch?v=youtube-video-123');
+    assert.deepEqual(recorded.metadata, { source: 'test' });
+    const idempotent = await dbB.recordScheduleEntryUploadResult('schedule-1', 'youtube-video-123', { source: 'test' });
+    assert.equal(idempotent.youtubeId, 'youtube-video-123',
+      'recording the same accepted YouTube ID twice must be idempotent');
+    const conflicting = await dbB.recordScheduleEntryUploadResult('schedule-1', 'different-video-id', {});
+    assert.equal(conflicting, null, 'a different video ID must never overwrite the accepted upload');
     process.stdout.write('Publish schedule upload claim CAS tests passed\\n');
   } finally {
     await Promise.all([close(dbA.db), close(dbB.db)]);
