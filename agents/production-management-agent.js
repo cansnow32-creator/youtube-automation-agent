@@ -7,7 +7,7 @@ const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
 const { mixBackgroundMusic } = require('../utils/audio-mixer');
 const { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent } = require('../utils/subtitle-renderer');
 const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
-const { createProductionWorkflow, runProductionStage } = require('../utils/production-stage-workflow');
+const { createProductionWorkflow, runProductionStage, prepareProductionWorkflowForResume } = require('../utils/production-stage-workflow');
 
 class ProductionManagementAgent {
   constructor(db, credentials, options = {}) {
@@ -96,7 +96,8 @@ class ProductionManagementAgent {
           audioGenerated: null,
           videoGenerated: null,
           captionsGenerated: null,
-          readyForUpload: null
+          readyForUpload: null,
+          jobId
         },
         scheduledPublishTime: this.calculatePublishTime(strategy),
         priority: this.calculatePriority(strategy),
@@ -112,6 +113,7 @@ class ProductionManagementAgent {
       
       // Save to database
       await this.db.saveProductionData(productionData);
+      await this.db.saveProductionSnapshot(productionData);
       
       // Persist stage transitions so interrupted or failed work is visible in the production record.
       await runProductionStage(
@@ -158,6 +160,74 @@ class ProductionManagementAgent {
       return productionData;
     } catch (error) {
       this.logger.error('Failed to process content:', error);
+      throw error;
+    }
+  }
+
+  async resumeProduction(productionId) {
+    const stored = await this.db.getProductionBundle(productionId);
+    if (!stored) throw new Error(`Production not found: ${productionId}`);
+    const approvedConcept = await requireApprovedVideoConcept(
+      this.db,
+      stored.strategy?.approvedVideoConceptId || stored.strategy?.approvedVideoConcept?.id
+    );
+    const productionData = {
+      id: stored.id,
+      strategy: {
+        ...(stored.strategy || {}),
+        approvedVideoConcept: approvedConcept.concept,
+        approvedVideoConceptId: approvedConcept.id
+      },
+      script: stored.script,
+      thumbnail: stored.thumbnail,
+      seo: stored.seo,
+      assets: stored.assets || {},
+      timeline: stored.timeline || {},
+      scheduledPublishTime: stored.scheduled_publish_time,
+      priority: stored.priority,
+      estimatedDuration: stored.estimated_duration,
+      jobId: stored.timeline?.jobId || null,
+      status: 'processing'
+    };
+    const workflow = productionData.timeline.productionWorkflow;
+    const nextStage = prepareProductionWorkflowForResume(workflow);
+    if (!nextStage) {
+      productionData.status = productionData.assets.finalVideo?.simulated ? 'simulated' : 'ready';
+      await this.db.updateProductionData(productionData);
+      return productionData;
+    }
+    const persistWorkflow = async () => this.db.updateProductionData(productionData);
+    try {
+      if (workflow.stages.visuals.status !== 'completed') {
+        await runProductionStage(workflow, 'visuals', () => this.generateVideoContent(productionData), persistWorkflow);
+      }
+      if (workflow.stages.narration.status !== 'completed') {
+        await runProductionStage(workflow, 'narration', () => this.generateAudioNarration(productionData), persistWorkflow);
+      }
+      if (workflow.stages.editing.status !== 'completed') {
+        await runProductionStage(workflow, 'editing', async () => {
+          await this.generateCaptions(productionData);
+          await this.assembleVideo(productionData);
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          return {
+            captionsGenerated: Boolean(productionData.assets.captions?.path),
+            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+            simulated: Boolean(productionData.assets.finalVideo?.simulated)
+          };
+        }, persistWorkflow);
+      }
+      const simulated = Boolean(productionData.assets.finalVideo?.simulated);
+      productionData.status = simulated ? 'simulated' : 'ready';
+      if (!simulated) productionData.timeline.readyForUpload = new Date().toISOString();
+      await this.db.updateProductionData(productionData);
+      const index = this.pipeline.findIndex(item => item.id === productionId);
+      if (index >= 0) this.pipeline[index] = productionData;
+      else this.pipeline.push(productionData);
+      return productionData;
+    } catch (error) {
+      productionData.status = 'failed';
+      productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
+      await this.db.updateProductionData(productionData);
       throw error;
     }
   }
