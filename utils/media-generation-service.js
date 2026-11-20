@@ -166,15 +166,20 @@ class MediaGenerationService {
       }
     }
 
-    const taskCreatedThisInvocation = !task;
+    let taskCreatedThisInvocation = !task;
     if (!task) {
       await assertLease();
-      task = this.db?.createMediaGenerationTask
-        ? await this.db.createMediaGenerationTask({
+      if (this.db?.createMediaGenerationTask) {
+        task = await this.db.createMediaGenerationTask({
           jobId, productionId, sceneIndex: scene.index, provider: provider.id, model: provider.model,
           status: 'submitting', request: this.safeRequest(request)
-        })
-        : { id: `media_${Date.now()}_${scene.index}`, status: 'submitting' };
+        });
+        // A concurrent claimant may have inserted the unique task row after our
+        // read. Only the caller that actually inserted it may submit the remote job.
+        taskCreatedThisInvocation = task.createdByThisInvocation !== false;
+      } else {
+        task = { id: `media_${Date.now()}_${scene.index}`, status: 'submitting' };
+      }
     }
 
     // A persisted submission without a remote ID is ambiguous: the process may
