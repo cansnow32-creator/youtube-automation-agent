@@ -131,3 +131,11 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - Replaced the check-then-insert schedule creation path with a single SQLite `INSERT ... SELECT ... WHERE NOT EXISTS` statement keyed by `production_id`. Concurrent callers now return the same existing durable schedule row instead of creating duplicate schedule entries.
 - Extended `test/publish-schedule-claim.test.js` to race two independent SQLite connections against the same production and assert one persisted row and one shared schedule ID. The test is already included in `npm test`.
 - Static syntax checks passed for DB and test files. Runtime tests/lint were not executed.
+
+## 2026-11-20 — Recorded upload protection across manual and scheduled paths
+
+- `publishContentOnce()` now verifies a durable YouTube video ID before local narration readiness checks, preventing missing local assets from blocking reconciliation and ensuring the existing video is never treated as a new upload candidate.
+- `rescheduleContent()` and `deleteScheduledContent()` reject any row with a recorded YouTube ID even if an earlier failure left its status as `failed`.
+- `approveContent()` refuses to reset approval/schedule state when the schedule already has a YouTube ID.
+- Added `test/publishing-recorded-upload.test.js` and wired it into `npm test`; covers existing-ID reconciliation before asset checks and reschedule/delete protection.
+- Static JavaScript syntax checks passed for publishing service, API and regression test; package JSON parsed. Runtime tests/lint were not executed.
