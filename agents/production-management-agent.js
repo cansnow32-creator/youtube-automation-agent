@@ -379,6 +379,7 @@ class ProductionManagementAgent {
       productionData.status = 'ready';
       productionData.timeline.readyForUpload = new Date().toISOString();
 
+      await assertLease();
       await this.db.updateProductionData(productionData);
 
       this.logger.info(`Content processing complete: ${productionId} (status: ${productionData.status})`);
