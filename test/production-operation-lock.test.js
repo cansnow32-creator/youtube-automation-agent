@@ -15,6 +15,10 @@ async function run() {
   assert.match(upsert.sql, /ON CONFLICT\(production_id\) DO UPDATE/);
   assert.match(upsert.sql, /expires_at <= \?/);
   assert.match(upsert.sql, /owner = \?/);
+  assert.equal(await database.renewProductionOperationLock('p1', 'owner-a', 5000), true);
+  assert.match(queries.at(-1).sql, /UPDATE production_operation_locks/);
+  assert.match(queries.at(-1).sql, /expires_at > \\?/);
+  assert.deepEqual(queries.at(-1).params.slice(1), ['p1', 'owner-a', queries.at(-1).params[3]]);
   await database.releaseProductionOperationLock('p1', 'owner-a');
   assert.match(queries.at(-1).sql, /WHERE production_id = \? AND owner = \?/);
 
