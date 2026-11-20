@@ -433,8 +433,10 @@ class SceneRepairService {
         const profile = await this.db.getChannelProfile?.() || {};
         const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1);
         const assetPath = assets[0];
-        if (!assetPath || !IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase()) || !await this.pathExists(assetPath)) {
-          throw this.error('No real replacement image was generated; configure an image provider or upload an asset', 422, 'SCENE_ASSET_UNAVAILABLE');
+        const generatedImageUsable = assetPath && IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase())
+          && await this.isUsableSceneAsset({ assetType: 'image', assetPath });
+        if (!generatedImageUsable) {
+          throw this.error('No valid replacement image was generated; configure an image provider or upload a usable asset', 422, 'SCENE_ASSET_UNAVAILABLE');
         }
         visual = { assetType: 'image', assetOrigin: 'generated', assetPath, provider: 'image-provider', model: null, externalTaskId: null, containsSyntheticMedia: true };
       }
@@ -499,7 +501,11 @@ class SceneRepairService {
       if (assetType === 'video') {
         if (!await this.mediaGeneration?.isValidVideo?.(outputPath)) throw new Error('Video is not a valid, decodable MP4-compatible asset');
       } else {
-        await sharp(outputPath).metadata();
+        const metadata = await sharp(outputPath, { failOn: 'error' }).metadata();
+        const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
+        if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
+          throw new Error('Image content does not match its file extension or is not a valid image');
+        }
       }
     } catch (error) {
       await fs.unlink(outputPath).catch(() => {});
@@ -780,12 +786,20 @@ class SceneRepairService {
       if (scene.assetType === 'image') {
         if (!IMAGE_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
         const metadata = await sharp(scene.assetPath, { failOn: 'error' }).metadata();
-        return Boolean(metadata.width && metadata.height && ['png', 'jpeg', 'webp'].includes(metadata.format));
+        const extension = path.extname(scene.assetPath).toLowerCase();
+        const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
+        return Boolean(metadata.width && metadata.height && metadata.format === expectedFormat);
       }
       if (scene.assetType === 'video') {
         if (!VIDEO_EXTENSIONS.has(path.extname(scene.assetPath).toLowerCase())) return false;
-        if (typeof this.mediaGeneration?.isValidVideo !== 'function') return false;
-        return Boolean(await this.mediaGeneration.isValidVideo(scene.assetPath));
+        if (typeof this.mediaGeneration?.isValidVideo === 'function') {
+          return Boolean(await this.mediaGeneration.isValidVideo(scene.assetPath));
+        }
+        if (typeof this.videoGenerator?.validateRenderedVideo === 'function') {
+          await this.videoGenerator.validateRenderedVideo(scene.assetPath);
+          return true;
+        }
+        return false;
       }
       return false;
     } catch (_error) {
