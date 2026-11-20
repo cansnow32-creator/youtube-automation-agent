@@ -1,3 +1,14 @@
+## 2026-11-20 — Isolate image-provider output and clean Gemini TTS sidecars
+
+- Continued PR #2 provider-internal side-effect audit.
+- OpenAI and Gemini image outputs now write to unique same-directory attempt paths. Sharp validates the image before the completed file is atomically renamed to the requested output path; failed attempt files are removed. OpenAI URL downloads use stream `pipeline()` with cleanup on failure.
+- Added `test/image-provider-atomic-output.test.js` covering partial OpenAI output followed by successful Gemini fallback and cleanup when every provider fails. Included in `npm test`.
+- Gemini TTS now deletes its `.pcm` sidecar in a `finally` block on both FFmpeg success and failure; it uses the injected FFmpeg runner. Added `test/gemini-tts-temp-cleanup.test.js` and included in `npm test`.
+- Commits on `feat/video-concept-approval`: `4eb6577e7a33a996049be43bbf53852a6e1b6f43` (image provider implementation), `f1ce5e961ebb86659d83bcfd09dab31d962f427c` (image provider tests), `9f932dd4cf950d9c62ae68c30f976346cd114e32` (image test script), `bb61213e5d2dd7427b5cf1f5c295fbfdf51e3863` (Gemini TTS cleanup), `d198c34ecf4be8805c7552f4dfa0e5ede4301484` (TTS tests), `d606a1ab5742c8128c3b7653342a0431df27425d` (TTS test script).
+- Re-fetched all changed files from GitHub and verified implementation anchors and both tests in `npm test`. Tests and lint were not executed; no pass is claimed.
+- Live PR #2 remains open/draft/unmerged at `d606a1ab5742c8128c3b7653342a0431df27425d`, stacked on PR #1; mergeable false, zero workflow runs. PR #1 head is `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; PR #3 head is `d475efde95e1e02511773d90397442102f4470eb`. All remain open/draft/unmerged. No PR was merged.
+- Next: continue production recovery/file-side-effect audit, then obtain a real CI run through an authorized workflow dispatch or GitHub Actions UI. No dispatch action is exposed by the connected GitHub tools. Do not merge.
+ 
 ## 2026-11-20 — Fence media clip generation against scene lease loss
 
 - Found that scene regeneration delegated to MediaGenerationService.generateClip(), which wrote directly to a shared output path and marked remote provider success before local download/validation completed. A stale worker could therefore publish an output or update media-task state after its scene lease had expired.
