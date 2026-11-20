@@ -993,6 +993,14 @@ class YouTubeAutomationAgent {
         return res.status(409).json({ success: false, code: 'APPROVED_CONCEPT_REQUIRED', error: 'This production has no approved concept linked to it. Create and approve a concept before retrying.' });
       }
       try {
+        if (
+          bundle.timeline?.productionWorkflow &&
+          ['failed', 'processing'].includes(bundle.status) &&
+          this.agents.production?.resumeProduction
+        ) {
+          const result = await this.agents.production.resumeProduction(req.params.productionId);
+          return res.json({ success: true, resumed: true, result });
+        }
         const job = await this.startGenerationJob({
           topic: bundle.strategy.topic || bundle.editorData.title || null,
           style: bundle.strategy.requestedStyle || bundle.strategy.contentType || null,
@@ -1000,7 +1008,7 @@ class YouTubeAutomationAgent {
           source: 'retry',
           approvedConceptId
         });
-        return res.status(202).json({ success: true, result: job });
+        return res.status(202).json({ success: true, resumed: false, result: job });
       } catch (error) {
         return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code || null });
       }
