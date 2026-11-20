@@ -92,3 +92,9 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 - Commits: `aada5058e501de82bcb3d71191d0591bc9e4e10d` (service) and `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b` (tests).
 - GitHub Actions still reports zero workflow runs on current PR #2 head. Tests/lint were not executed. Provider internals can still create orphan temporary output before the post-provider lease check; cooperative checks are not atomic filesystem fencing.
 - Next: inspect media-generation provider output cleanup and route-level review refresh side effects; then establish real CI. Preserve stacked PR relationship; do not merge.
+
+
+## Follow-up finding — route review refresh boundary
+
+- Further route inspection found scene mutation handlers call `refreshContentReview()` only after the SceneRepairService method has released its production operation lock. The quality-check read and `saveContentReview()` can therefore race with a subsequent scene edit and persist review data based on a stale bundle.
+- Next: move mutation plus review refresh into one production-scoped lease boundary (including update/reorder/replace/regenerate/narration/silence/rebuild routes), or otherwise fence review persistence against scene revision changes. Add a focused stale-review regression test before considering scene-edit serialization complete.
