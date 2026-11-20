@@ -29,6 +29,7 @@ const { GrowthExperimentService } = require('./utils/growth-experiment-service')
 const { AITextService } = require('./utils/ai-text-service');
 const { VideoConceptService } = require('./utils/video-concept-service');
 const { requireApprovedVideoConcept } = require('./utils/approved-video-concept-gate');
+const { getAppliedPackagingLearning } = require('./utils/packaging-learning');
 const { ReferenceVideoService } = require('./utils/reference-video-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
@@ -2566,6 +2567,13 @@ class YouTubeAutomationAgent {
     const thumbnailVariant = packagingExperiment?.thumbnailVariants?.[editorData.selectedThumbnailVariant];
     const titleVariant = packagingExperiment?.titleVariants?.[editorData.selectedTitleVariant];
     if (titleVariant && input.title === undefined) editorData.title = titleVariant.title;
+    const appliedPackagingLearning = getAppliedPackagingLearning(
+      packagingExperiment,
+      editorData.selectedTitleVariant,
+      editorData.selectedThumbnailVariant,
+      input.title !== undefined
+    );
+    editorData.appliedLearnings = appliedPackagingLearning ? [appliedPackagingLearning] : [];
     if (!editorData.factChecked || !editorData.rightsConfirmed) {
       const error = new Error('Confirm the factual review and media rights checks before approval');
       error.status = 409;
