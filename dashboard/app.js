@@ -100,6 +100,14 @@ async function refreshDashboard(silent = false) {
     ui.state = await api('/api/dashboard');
     const qualityQueue = await api('/api/script-quality-reviews?status=all&limit=50');
     ui.state.scriptQualityReviews = qualityQueue.reviews || [];
+    try {
+      const unresolved = await api('/api/publishing/unresolved');
+      ui.state.unresolvedPublishing = unresolved.entries || [];
+      ui.state.unresolvedPublishingError = null;
+    } catch (error) {
+      ui.state.unresolvedPublishing = [];
+      ui.state.unresolvedPublishingError = error.message;
+    }
     renderDashboard();
   } catch (error) {
     $('#system-label').textContent = 'Dashboard unavailable';
@@ -141,6 +149,7 @@ function renderDashboard() {
   renderPipeline(state.pipeline);
   renderScriptQualityReviews(state.scriptQualityReviews || []);
   renderCalendar(state.schedule);
+  renderUnresolvedPublishing(state.unresolvedPublishing || [], state.unresolvedPublishingError);
   renderIdeas(state.ideas);
   renderAnalytics(state.analytics, state.learning);
   renderGrowthExperiments(state.experiments || {});
@@ -332,6 +341,34 @@ function nextAction(item) {
 
 function renderCalendar(schedule) {
   renderSchedule(schedule, '#calendar-list');
+}
+
+function renderUnresolvedPublishing(entries = [], error = null) {
+  const container = $('#unresolved-publishing-list');
+  if (!container) return;
+  if (error) {
+    container.innerHTML = empty(`Could not load unresolved uploads: ${error}`);
+    return;
+  }
+  if (!entries.length) {
+    container.innerHTML = empty('No unresolved YouTube uploads. Uncertain uploads will appear here and remain blocked from automatic retry.');
+    return;
+  }
+  container.innerHTML = entries.map(entry => `
+    <article class="activity-item" data-publish-reconciliation="${escapeHTML(entry.id)}">
+      <div>
+        <strong>${escapeHTML(entry.title || entry.productionId || 'Untitled upload')}</strong>
+        <div class="meta-line">${statusChip(entry.status)} · ${escapeHTML(entry.productionId || entry.id)} · ${escapeHTML(formatDate(entry.publishTime))}</div>
+        <div class="meta-line">${escapeHTML(entry.error || 'YouTube upload outcome needs operator review.')}</div>
+      </div>
+      <label class="reconciliation-video-field">Existing YouTube video ID
+        <input type="text" data-reconcile-video-id maxlength="11" minlength="11" placeholder="11-character video ID" autocomplete="off">
+      </label>
+      <div class="reconciliation-actions">
+        <button class="button small" type="button" data-reconcile-upload>Verify & attach video</button>
+        <button class="button secondary small" type="button" data-resolve-no-upload>Confirm no upload</button>
+      </div>
+    </article>`).join('');
 }
 
 function renderIdeas(ideas) {
@@ -1454,6 +1491,65 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  if (event.target.closest('#unresolved-publishing-refresh')) {
+    try {
+      const data = await api('/api/publishing/unresolved');
+      ui.state.unresolvedPublishing = data.entries || [];
+      ui.state.unresolvedPublishingError = null;
+      renderUnresolvedPublishing(ui.state.unresolvedPublishing);
+    } catch (error) {
+      ui.state.unresolvedPublishingError = error.message;
+      renderUnresolvedPublishing([], error.message);
+    }
+    return;
+  }
+
+  const reconcileButton = event.target.closest('[data-reconcile-upload]');
+  if (reconcileButton) {
+    const card = reconcileButton.closest('[data-publish-reconciliation]');
+    const scheduleId = card?.dataset.publishReconciliation;
+    const videoId = card?.querySelector('[data-reconcile-video-id]')?.value.trim();
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) {
+      showToast('Enter the exact 11-character video ID from YouTube Studio.', 'error');
+      return;
+    }
+    if (!confirm('Verify this video against the authenticated YouTube channel and attach it to this schedule?')) return;
+    reconcileButton.disabled = true;
+    try {
+      await api('/api/publishing/' + encodeURIComponent(scheduleId) + '/reconcile', {
+        method: 'POST',
+        body: JSON.stringify({ videoId })
+      });
+      showToast('Existing YouTube upload verified and reconciled.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      reconcileButton.disabled = false;
+    }
+    return;
+  }
+
+  const absentButton = event.target.closest('[data-resolve-no-upload]');
+  if (absentButton) {
+    const card = absentButton.closest('[data-publish-reconciliation]');
+    const scheduleId = card?.dataset.publishReconciliation;
+    const confirmed = confirm('Only continue after checking the correct YouTube Studio channel, including private, unlisted, scheduled and draft videos. Confirm that NO matching upload exists and mark this schedule failed so a manual retry is allowed?');
+    if (!confirmed) return;
+    absentButton.disabled = true;
+    try {
+      await api('/api/publishing/' + encodeURIComponent(scheduleId) + '/resolve-no-upload', {
+        method: 'POST',
+        body: JSON.stringify({ confirmedAbsent: true })
+      });
+      showToast('No-upload decision recorded. Manual retry is now permitted.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      absentButton.disabled = false;
+    }
+    return;
+  }
+
   const conceptSelect = event.target.closest('[data-select-concept]');
   if (conceptSelect) {
     ui.currentConceptId = conceptSelect.dataset.selectConcept;
