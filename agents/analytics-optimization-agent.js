@@ -439,14 +439,14 @@ class AnalyticsOptimizationAgent {
         : null
     }));
     const top = canCalculateShares
-      ? [...sources].filter(item => item.known && item.views !== null).sort((left, right) => right.views - left.views)[0]
+      ? [...sources].sort((left, right) => right.views - left.views)[0]
       : null;
 
     return {
       sources,
       totalViews,
       totalsComplete,
-      topSource: top?.source || 'unknown',
+      topSource: top?.known ? top.source : 'unknown',
       organicPercentage: canCalculateShares ? this.calculateOrganicPercentage(rows) : null,
       available: totalsComplete && validViews.length > 0,
       dataQuality: {
@@ -939,14 +939,19 @@ class AnalyticsOptimizationAgent {
       'VIDEO_BROWSE', 'SHORTS', 'PLAYLIST', 'YT_CHANNEL', 'YT_OTHER_PAGE',
       'NOTIFICATION', 'SOUND_PAGE', 'END_SCREEN', 'SUBSCRIBER'
     ]);
+    const knownSources = new Set([
+      ...organicSources, 'EXT_URL', 'EXTERNAL', 'ADVERTISING', 'PROMOTED',
+      'LIVE_REDIRECT', 'ANNOTATION', 'CAMPAIGN_CARD', 'NO_LINK_EMBEDDED', 'NO_LINK_OTHER'
+    ]);
     const rows = Array.isArray(sources) ? sources : [];
     const numeric = value => value === null || value === undefined || value === ''
       ? null
       : Number.isFinite(Number(value)) ? Number(value) : null;
     if (!rows.length) return null;
     const values = rows.map(row => numeric(row?.[1]));
-    // A partial source report cannot produce a trustworthy share denominator.
-    if (values.some(value => value === null)) return null;
+    // Unknown buckets and partial rows make the organic/non-organic split unknowable.
+    if (values.some(value => value === null) ||
+      rows.some(row => !knownSources.has(String(row?.[0] || '').toUpperCase()))) return null;
     const totalViews = values.reduce((sum, value) => sum + value, 0);
     if (totalViews <= 0) return null;
     const organicViews = rows.reduce((sum, row, index) =>
