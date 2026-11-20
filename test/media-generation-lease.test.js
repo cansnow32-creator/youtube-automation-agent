@@ -518,6 +518,45 @@ async function testManualReconciliationVerifiesAndResumesRemoteTask() {
   }
 }
 
+async function testFreshSubmittingTaskCannotBeManuallyReconciledOrCleared() {
+  const row = {
+    id: 'media-fresh-submission',
+    status: 'submitting',
+    external_task_id: null,
+    updated_at: new Date().toISOString(),
+    providerData: {}
+  };
+  let providerQueries = 0;
+  let dbWrites = 0;
+  const db = {
+    async getMediaGenerationTaskById() { return { ...row }; },
+    async updateMediaGenerationTask() {
+      dbWrites++;
+      return { ...row };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.registry = {
+    get: () => ({
+      getTask: async () => {
+        providerQueries++;
+        return { status: 'running', externalTaskId: 'remote-task' };
+      }
+    })
+  };
+
+  await assert.rejects(
+    service.reconcileTaskSubmission(row.id, 'remote-task'),
+    error => error.code === 'MEDIA_TASK_SUBMISSION_STILL_ACTIVE'
+  );
+  await assert.rejects(
+    service.resolveAmbiguousSubmissionAsAbsent(row.id, true),
+    error => error.code === 'MEDIA_TASK_SUBMISSION_STILL_ACTIVE'
+  );
+  assert.equal(providerQueries, 0, 'fresh in-flight submissions must not be manually rebound');
+  assert.equal(dbWrites, 0, 'fresh in-flight submissions must not be manually cleared');
+}
+
 async function testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirmation() {
   let row = {
     id: 'media-confirmed-absent',
@@ -809,6 +848,7 @@ async function main() {
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
   await testManualReconciliationVerifiesAndResumesRemoteTask();
   await testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirmation();
+  await testFreshSubmittingTaskCannotBeManuallyReconciledOrCleared();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
