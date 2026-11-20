@@ -1008,6 +1008,34 @@ class Database {
     await this.executeQuery('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
   }
 
+  async acquireProductionOperationLock(productionId, owner, leaseMs = 2 * 60 * 60 * 1000) {
+    await this.executeQuery(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+      production_id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const now = Date.now();
+    const result = await this.executeQuery(
+      `INSERT INTO production_operation_locks (production_id, owner, expires_at, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(production_id) DO UPDATE SET
+         owner = excluded.owner,
+         expires_at = excluded.expires_at,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE production_operation_locks.expires_at <= ? OR production_operation_locks.owner = ?`,
+      [productionId, owner, now + leaseMs, now, owner]
+    );
+    return result.changes === 1;
+  }
+
+  async releaseProductionOperationLock(productionId, owner) {
+    await this.executeQuery(
+      'DELETE FROM production_operation_locks WHERE production_id = ? AND owner = ?',
+      [productionId, owner]
+    );
+  }
+
   async getProductionBundleByJobId(jobId) {
     if (!jobId) return null;
     const row = await this.getRow(
