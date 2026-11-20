@@ -408,6 +408,45 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
   }
 }
 
+async function testUnverifiedNewTaskOwnershipBlocksProviderSubmission() {
+  const service = new MediaGenerationService({}, {}, { logger: { info() {}, warn() {}, error() {} } });
+  let createCalls = 0;
+  service.db = {
+    findMediaGenerationTask: async () => null,
+    createMediaGenerationTask: async () => ({
+      id: 'media-without-claim-proof',
+      status: 'submitting',
+      external_task_id: null
+      // createdByThisInvocation intentionally omitted.
+    }),
+    updateMediaGenerationTask: async () => {
+      throw new Error('must not write or submit when ownership is unverified');
+    }
+  };
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      return { status: 'queued', externalTaskId: 'must-not-exist' };
+    }
+  };
+
+  await assert.rejects(
+    service.generateClip({
+      jobId: 'job-unverified-claim',
+      productionId: 'production-unverified-claim',
+      scene: { index: 0, prompt: 'missing ownership proof' },
+      provider,
+      outputPath: path.join(require('node:os').tmpdir(), 'unverified-claim.mp4'),
+      request: { prompt: 'missing ownership proof' }
+    }),
+    error => error.code === 'MEDIA_TASK_CLAIM_UNKNOWN' && error.status === 503
+  );
+  assert.equal(createCalls, 0, 'a missing DB ownership marker must block the provider request');
+}
+
 async function testNonOwningTaskClaimCannotSubmitRemoteProviderJob() {
   const service = new MediaGenerationService({}, {}, { logger: { info() {}, warn() {}, error() {} } });
   let createCalls = 0;
@@ -936,6 +975,7 @@ async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting
 
 async function main() {
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
+  await testUnverifiedNewTaskOwnershipBlocksProviderSubmission();
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
   await testManualReconciliationVerifiesAndResumesRemoteTask();
   await testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirmation();
