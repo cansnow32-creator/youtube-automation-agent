@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20 (live PR metadata refreshed after atomic operator-reconciliation guard)
+Last reconciled: 2026-11-20 (scene edit lease hardening)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
@@ -11,10 +11,10 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; mergeable false; 0 workflow runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`; mergeable false; 0 workflow runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; branch head changes with continuity-doc commits; latest refreshed head is recorded in GitHub PR metadata; mergeable false; 0 workflow runs |
 
-PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3 currently reports `mergeable: false`, and its head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3 currently reports `mergeable: false`, and its head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
@@ -277,3 +277,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Commits: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`, `cc53b532c2afa95f627e57d7aea58eda608f1a7b`.
 - Re-fetched source, DB, tests and reconciliation docs. JavaScript syntax and JSON parsing only; runtime tests/lint not executed. PR #2 current head `cc53b532...` has zero PR-triggered workflow runs. PR #1 head `dcec5c12...` remains open/draft/mergeable; PR #2 remains stacked and not mergeable; PR #3 head `aa30932...` is open/draft/mergeable. No PR merged or retargeted.
 - Next: get an actual full CI run on PR #2, then address runtime failures. Do not merge.
+
+
+## Latest PR #2 scene-edit lease hardening — 2026-11-20
+
+- Ordinary scene edits and timeline reordering previously used a lock without heartbeat or lease assertions. They now run under the heartbeat-backed production operation lease, like other long-running scene operations.
+- Lease assertions are threaded through editable-bundle loading, scene DB writes, provenance review, reorder persistence and revision-history writes. Missing DB lock acquire/release support fails closed with `SCENE_EDIT_LOCK_UNAVAILABLE`.
+- Commits: `9111b79aa624592b48322fe3a0dbf19392bace27`, `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`.
+- Static JS syntax and package JSON checks passed; scene repair tests are wired into npm test but runtime tests/lint have not run. Current PR #2 head `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`; no PR-triggered workflow run observed.
+- Next: obtain full CI and test lease-loss paths; do not merge.
