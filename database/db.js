@@ -2362,6 +2362,18 @@ class Database {
     return entry;
   }
 
+  async claimScheduleEntryForUpload(id) {
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule
+       SET status = 'uploading', error_message = NULL
+       WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL`,
+      [id]
+    );
+    if (result.changes !== 1) return null;
+    const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
+    return row ? this.deserializeScheduleEntry(row) : null;
+  }
+
   async updateScheduleEntry(entry) {
     await this.executeQuery(
       `UPDATE publish_schedule SET 
