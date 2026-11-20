@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { ScriptWriterAgent } = require('../agents/script-writer-agent');
+const { Database } = require('../database/db');
 
 async function run() {
   const agent = new ScriptWriterAgent({ saveScript: async () => 'script-id' }, {});
@@ -64,6 +65,46 @@ async function run() {
   assert.equal(persistedReview.topic, 'Rejected topic');
   assert.equal(persistedReview.draft, blockedError.draft);
   assert.equal(persistedReview.qualityReport.score, 61);
+
+  const database = new Database();
+  let inserted = null;
+  database.generateId = prefix => `${prefix}_fixed`;
+  database.executeQuery = async (sql, params) => { inserted = { sql, params }; };
+  database.getRow = async () => ({
+    id: 'quality_review_fixed',
+    status: 'pending',
+    topic: 'Persisted topic',
+    strategy: '{"topic":"Persisted topic"}',
+    draft: '{"title":"Persisted draft"}',
+    quality_report: '{"status":"human_review_required","score":55}'
+  });
+  const saved = await database.saveScriptQualityReview({
+    topic: 'Persisted topic',
+    strategy: { topic: 'Persisted topic' },
+    draft: '{"title":"Persisted draft"}',
+    qualityReport: { status: 'human_review_required', score: 55 }
+  });
+  assert.match(inserted.sql, /INSERT INTO script_quality_reviews/);
+  assert.equal(inserted.params[0], 'quality_review_fixed');
+  assert.equal(saved.id, 'quality_review_fixed');
+  assert.equal(saved.quality_report.score, 55);
+
+  let listQuery = null;
+  database.getAllRows = async (sql, params) => {
+    listQuery = { sql, params };
+    return [{
+      id: 'quality_review_fixed', status: 'revision_requested',
+      strategy: '{"topic":"Persisted topic"}', quality_report: '{"score":55}'
+    }];
+  };
+  const pendingReviews = await database.listScriptQualityReviews('pending', 25);
+  assert.match(listQuery.sql, /revision_requested/);
+  assert.deepEqual(listQuery.params, ['pending', 'pending', 'pending', 25]);
+  assert.equal(pendingReviews[0].quality_report.score, 55);
+
+  await database.decideScriptQualityReview('quality_review_fixed', 'human_approved', 'Reviewed manually');
+  assert.match(inserted.sql, /SET status = \?, decision_notes = \?/);
+  assert.deepEqual(inserted.params, ['human_approved', 'Reviewed manually', 'quality_review_fixed']);
 
   process.stdout.write('Script writer quality integration tests passed\\n');
 }
