@@ -394,6 +394,47 @@ async function run() {
     await fs.rm(sceneInitDir, { recursive: true, force: true });
   }
 
+  // Losing the production lease while splitting narration must stop scene
+  // manifest persistence after FFmpeg returns.
+  const sceneInitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-init-lease-'));
+  let sceneInitWrites = 0;
+  let segmentRuns = 0;
+  const sceneInit = new SceneRepairService({
+    replaceProductionScenes: async () => {
+      sceneInitWrites += 1;
+      return [];
+    }
+  }, {
+    isUsableAudioFile: async () => true
+  }, {
+    dataRoot: sceneInitDir,
+    runFFmpeg: async () => { segmentRuns += 1; }
+  });
+  let sceneInitLeaseChecks = 0;
+  try {
+    await assert.rejects(
+      sceneInit.initializeProduction({
+        id: 'lease-lost-scene-init',
+        script: { title: 'Lease test', hook: { text: 'Opening narration' } },
+        assets: {
+          audio: { path: '/tmp/narration.mp3', status: 'ready', provider: 'test' },
+          video: { visualAssets: [] }
+        },
+        estimatedDuration: 8
+      }, {}, async () => {
+        sceneInitLeaseChecks += 1;
+        if (sceneInitLeaseChecks === 4) {
+          throw Object.assign(new Error('production lease lost after narration split'), { code: 'PRODUCTION_RESUME_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'PRODUCTION_RESUME_LEASE_LOST'
+    );
+    assert.equal(segmentRuns, 1, 'the narration segment render completes before lease loss is observed');
+    assert.equal(sceneInitWrites, 0, 'scene manifest is not persisted after lease loss during audio splitting');
+  } finally {
+    await fs.rm(sceneInitDir, { recursive: true, force: true });
+  }
+
   process.stdout.write('Production operation lock tests passed\\n');
 }
 
