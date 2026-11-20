@@ -59,10 +59,11 @@ const snapshot = (id, recommendationId, category, delta, impressions = 1200, win
   videoId: `video-${id}`,
   productionId: `production-${id}`,
   measurementWindow: window,
+  measuredAt: new Date(Date.UTC(2026, 10, 20, 12, 0, 0) - (id.charCodeAt(0) * 60000)).toISOString(),
   simulated: false,
   metrics: { impressions },
   deltas: { ctr: delta, retention: delta, watchHoursPerThousandViews: delta },
-  contentAttributes: { appliedLearnings: [{ recommendationId, category }] }
+  contentAttributes: { surface: 'long_form', appliedLearnings: [{ recommendationId, category }] }
 });
 
 let feedback = engine.buildAppliedLearningFeedback([
@@ -98,5 +99,38 @@ feedback = engine.buildAppliedLearningFeedback([
   snapshot('b', 'format-1', 'format', null)
 ]);
 assert.equal(feedback[0].status, 'inconclusive', 'missing baseline deltas must not be treated as zero or negative');
+
+const mixedSurfaces = [
+  snapshot('a', 'surface-1', 'format', 8),
+  { ...snapshot('b', 'surface-1', 'format', 6), contentAttributes: { surface: 'shorts', appliedLearnings: [{ recommendationId: 'surface-1', category: 'format' }] } }
+];
+feedback = engine.buildAppliedLearningFeedback(mixedSurfaces);
+assert.equal(feedback.length, 2, 'feedback must remain separated by content surface');
+assert.deepEqual(feedback.map(item => item.surface).sort(), ['long_form', 'shorts']);
+assert.ok(feedback.every(item => item.measuredProductions === 1),
+  'one long-form and one Shorts production must not combine into a two-video signal');
+
+const duplicateProduction = [
+  snapshot('a', 'dedupe-1', 'format', 2),
+  { ...snapshot('z', 'dedupe-1', 'format', 10), videoId: 'video-a', productionId: 'production-a' },
+  { ...snapshot('b', 'dedupe-1', 'format', 6) }
+];
+feedback = engine.buildAppliedLearningFeedback(duplicateProduction);
+assert.equal(feedback[0].measuredProductions, 2, 'multiple snapshots for one production count once');
+assert.equal(feedback[0].medianBaselineDeltaPercent, 8,
+  'the latest snapshot for a production is used for feedback');
+
+const oldSnapshot = snapshot('c', 'old-1', 'format', 12);
+oldSnapshot.measuredAt = '2026-01-01T00:00:00.000Z';
+feedback = engine.buildAppliedLearningFeedback([oldSnapshot], { now: new Date('2026-11-20T12:00:00.000Z') });
+assert.equal(feedback[0].freshnessStatus, 'stale');
+assert.equal(feedback[0].status, 'insufficient_data',
+  'stale single-sample evidence cannot produce a positive signal');
+
+const missingIdentity = snapshot('d', 'no-id', 'format', 20);
+delete missingIdentity.videoId;
+delete missingIdentity.productionId;
+assert.deepEqual(engine.buildAppliedLearningFeedback([missingIdentity]), [],
+  'snapshots without a stable production identity cannot inflate independent sample counts');
 
 process.stdout.write('Applied learning attribution tests passed\\n');
