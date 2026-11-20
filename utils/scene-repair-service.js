@@ -571,6 +571,11 @@ class SceneRepairService {
     let databaseLockAcquired = false;
     let leaseHeartbeat = null;
     let renewalInFlight = Promise.resolve();
+    let leaseFailure = null;
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
     try {
       if (typeof this.db.acquireProductionOperationLock === 'function') {
         databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
@@ -580,18 +585,21 @@ class SceneRepairService {
         if (typeof this.db.renewProductionOperationLock === 'function') {
           leaseHeartbeat = setInterval(() => {
             renewalInFlight = renewalInFlight.then(async () => {
-              if (!databaseLockAcquired) return;
+              if (!databaseLockAcquired || leaseFailure) return;
               const renewed = await this.db.renewProductionOperationLock(productionId, lockOwner);
-              if (!renewed) this.logger.error(`Scene rebuild lease was lost for ${productionId}; lock ownership must be rechecked before another process starts`);
+              if (!renewed) {
+                leaseFailure = this.error('Scene rebuild lease was lost; this attempt cannot commit its output', 409, 'SCENE_REBUILD_LEASE_LOST');
+              }
             }).catch(error => {
-              this.logger.warn(`Could not renew scene rebuild lease for ${productionId}: ${error.message}`);
+              leaseFailure = this.error(`Scene rebuild lease could not be verified: ${error.message}`, 503, 'SCENE_REBUILD_LEASE_UNVERIFIED');
             });
           }, 60 * 1000);
           leaseHeartbeat.unref?.();
         }
       }
+      await assertLease();
       if (databaseLockAcquired) await this.cleanupStaleRepairTemps(productionId);
-      return await this.rebuildUnlocked(productionId);
+      return await this.rebuildUnlocked(productionId, assertLease);
     } finally {
       if (leaseHeartbeat) clearInterval(leaseHeartbeat);
       await renewalInFlight;
@@ -604,7 +612,8 @@ class SceneRepairService {
     }
   }
 
-  async rebuildUnlocked(productionId) {
+  async rebuildUnlocked(productionId, assertLease = async () => {}) {
+    await assertLease();
     const bundle = await this.getEditableBundle(productionId);
     const scenes = await this.db.listProductionScenes(productionId);
     if (!scenes.length) throw this.error('No scene manifest is available', 409);
@@ -633,6 +642,7 @@ class SceneRepairService {
     }
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
 
+    await assertLease();
     const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path);
     const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
     const attemptId = crypto.randomUUID();
@@ -663,6 +673,7 @@ class SceneRepairService {
           type: scene.assetType, path: scene.assetPath, duration: scene.duration
         })), visualTempPath);
         await validateVideo(visualTempPath);
+        await assertLease();
         await fs.unlink(visualPath).catch(() => {});
         await fs.rename(visualTempPath, visualPath);
       } catch (error) {
@@ -685,6 +696,7 @@ class SceneRepairService {
       try {
         await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
         await validateVideo(finalTempPath);
+        await assertLease();
         await fs.unlink(finalPath).catch(() => {});
         await fs.rename(finalTempPath, finalPath);
       } catch (error) {
@@ -697,6 +709,7 @@ class SceneRepairService {
     if (existingCaptions !== captions) {
       const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
       await fs.writeFile(captionsTempPath, captions);
+      await assertLease();
       await fs.unlink(captionsPath).catch(() => {});
       await fs.rename(captionsTempPath, captionsPath);
     }
@@ -727,11 +740,15 @@ class SceneRepairService {
       sceneManifest: { count: scenes.length, version: 1, updatedAt: new Date().toISOString() }
     };
     const timeline = { ...bundle.timeline, sceneRepairAt: new Date().toISOString(), captionsGenerated: new Date().toISOString(), readyForUpload: new Date().toISOString() };
+    await assertLease();
     await this.db.updateProductionData({
       id: productionId, status: 'ready', assets, timeline,
       scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
     });
-    for (const scene of scenes) await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
+    for (const scene of scenes) {
+      await assertLease();
+      await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
+    }
     if (containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia) {
       await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null });
     }
