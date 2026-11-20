@@ -119,7 +119,15 @@ class ChannelLearningEngine {
       ),
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
       source: strategy.planRationale ? 'autonomous_operator' : 'manual',
-      appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings)
+      appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings),
+      packagingChangeHistory: (Array.isArray(context.packagingChangeHistory) ? context.packagingChangeHistory : [])
+        .slice(-20)
+        .map(change => ({
+          source: String(change.source || 'unknown').slice(0, 60),
+          appliedAt: change.appliedAt || null,
+          previousTitle: String(change.previousTitle || '').slice(0, 100),
+          title: String(change.title || '').slice(0, 100)
+        }))
     };
   }
 
