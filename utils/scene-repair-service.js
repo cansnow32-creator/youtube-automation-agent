@@ -574,6 +574,7 @@ class SceneRepairService {
           jobId: `repair_${productionId}_${scene.id}_${scene.revision + 1}`,
           productionId, scene: { index: scene.position, prompt: scene.prompt }, provider, outputPath, request, assertLease
         });
+        if (result?.outputPath) attemptFiles.add(result.outputPath);
         await assertLease();
         visual = {
           assetType: 'video', assetOrigin: 'generated', assetPath: result.outputPath,
