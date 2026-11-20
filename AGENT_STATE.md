@@ -12,9 +12,9 @@ Default branch: master
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
 | [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; mergeable false; 0 workflow runs |
-| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `aa30932a42d7887f7e2b8fccb458db3d6c125e58`; mergeable true; 0 workflow runs |
+| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; branch head changes with continuity-doc commits; latest refreshed head is recorded in GitHub PR metadata; mergeable false; 0 workflow runs |
 
-PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3's head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-gate`. Its live head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; it remains open/draft/unmerged, GitHub reports `mergeable: false`, and the current-head workflow query returns zero runs. The base branch ref itself resolves to PR #1 head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; the PR metadata's reported base SHA remains `9438d3d6e9015684cc074f832188e05ecbf3ab51`, so do not attempt a blind rebase or retarget. PR #1 (head `dcec5c12...`) and PR #3 remain open/draft/unmerged and each has zero check-runs on its current head; PR #3 currently reports `mergeable: false`, and its head advances whenever these continuity files are updated. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
@@ -45,7 +45,7 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Branch: `feat/agent-continuity`, based on `master`.
 - Adds `AGENT_CONTINUITY.md`, `AGENT_STATE.md`, `AGENT_TASKS.md`, `AGENT_RULES.md`, `AGENT_LOG.md`, `DOT_SETUP.md`, and `.github/workflows/continuity-check.yml`.
 - Workflow is deterministic/read-only; it validates continuity files and guardrails. It is not an autonomous coding model.
-- Current PR #3 head has zero check-runs; workflow execution remains unverified.
+- Current PR #3 head has zero check-runs and GitHub currently reports `mergeable: false`; workflow execution remains unverified.
 - New-chat handoff is manual: user opens a new chat and says **"AgentTube – devam et"**. It does not automatically open a new ChatGPT chat or continue after the user closes the current one.
 
 ## Product and operating preferences
