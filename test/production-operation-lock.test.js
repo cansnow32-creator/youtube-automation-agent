@@ -431,6 +431,29 @@ async function run() {
     await fs.rm(ensureManifestDir, { recursive: true, force: true });
   }
 
+  // Scene metadata edits must share the production operation lock with rebuilds.
+  let editLockReleased = false;
+  let editCallbackRan = false;
+  const editLockedService = new SceneRepairService({
+    acquireProductionOperationLock: async () => false,
+    releaseProductionOperationLock: async () => { throw new Error('must not release another operation lock'); }
+  }, {}, { dataRoot: '/tmp' });
+  editLockedService.updateSceneUnlocked = async () => { editCallbackRan = true; };
+  await assert.rejects(
+    editLockedService.updateScene('edit-locked', 'scene-1', {}),
+    error => error.code === 'SCENE_EDIT_IN_PROGRESS' && error.status === 409
+  );
+  assert.equal(editCallbackRan, false, 'scene edit is not started when another production operation owns the lock');
+
+  const editOwnedService = new SceneRepairService({
+    acquireProductionOperationLock: async () => true,
+    releaseProductionOperationLock: async (_id, owner) => { editLockReleased = Boolean(owner); }
+  }, {}, { dataRoot: '/tmp' });
+  editOwnedService.updateSceneUnlocked = async () => { editCallbackRan = true; return 'updated'; };
+  assert.equal(await editOwnedService.updateScene('edit-owned', 'scene-1', {}), 'updated');
+  assert.equal(editCallbackRan, true, 'scene edit runs after acquiring the production lock');
+  assert.equal(editLockReleased, true, 'scene edit releases only its owned lock after completion');
+
   process.stdout.write('Production operation lock tests passed\\n');
 }
 
