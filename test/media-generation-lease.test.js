@@ -171,7 +171,7 @@ async function testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersisten
   const task = { id: 'media-cancel-task', status: 'submitting', providerData: {} };
   const db = {
     findMediaGenerationTask: async () => null,
-    createMediaGenerationTask: async () => ({ ...task }),
+    createMediaGenerationTask: async () => ({ ...task, createdByThisInvocation: true }),
     updateMediaGenerationTask: async (_id, changes) => {
       updates.push(changes);
       return { ...task, ...changes, external_task_id: changes.externalTaskId || task.external_task_id };
@@ -954,7 +954,7 @@ async function main() {
   const task = { id: 'media-task-1', status: 'submitting', providerData: {} };
   const db = {
     findMediaGenerationTask: async () => null,
-    createMediaGenerationTask: async () => ({ ...task }),
+    createMediaGenerationTask: async () => ({ ...task, createdByThisInvocation: true }),
     updateMediaGenerationTask: async (_id, changes) => {
       updates.push(changes);
       return { ...task, ...changes, external_task_id: changes.externalTaskId || task.external_task_id };
