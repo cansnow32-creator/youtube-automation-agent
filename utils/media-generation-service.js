@@ -430,6 +430,54 @@ class MediaGenerationService {
     });
   }
 
+  async resolveAmbiguousSubmissionAsAbsent(taskId, confirmedNoRemoteTask) {
+    if (confirmedNoRemoteTask !== true) {
+      const error = new Error('Explicit operator confirmation that no remote provider task exists is required');
+      error.code = 'REMOTE_TASK_ABSENCE_CONFIRMATION_REQUIRED';
+      error.status = 400;
+      throw error;
+    }
+    if (typeof this.db?.getMediaGenerationTaskById !== 'function') {
+      const error = new Error('Media task resolution requires database task lookup support');
+      error.code = 'MEDIA_TASK_RECONCILIATION_UNAVAILABLE';
+      error.status = 503;
+      throw error;
+    }
+    const task = await this.db.getMediaGenerationTaskById(taskId);
+    if (!task) {
+      const error = new Error(`Media generation task not found: ${taskId}`);
+      error.code = 'MEDIA_TASK_NOT_FOUND';
+      error.status = 404;
+      throw error;
+    }
+    if (!['submitting', 'submission_unknown', 'reconciliation_required'].includes(task.status) ||
+        task.external_task_id) {
+      const error = new Error('Only unresolved submissions without a remote task ID can be resolved as absent');
+      error.code = 'MEDIA_TASK_NOT_RESOLVABLE_AS_ABSENT';
+      error.status = 409;
+      throw error;
+    }
+
+    const now = new Date().toISOString();
+    const previousTasks = Array.isArray(task.providerData?.previousTasks)
+      ? task.providerData.previousTasks
+      : [];
+    return this.db.updateMediaGenerationTask(taskId, {
+      status: 'failed',
+      externalTaskId: null,
+      outputPath: null,
+      providerData: {
+        ...(previousTasks.length ? { previousTasks } : {}),
+        operatorResolution: {
+          action: 'confirmed_no_remote_task',
+          confirmedAt: now
+        }
+      },
+      error: 'Operator confirmed that no remote provider task exists; a new attempt may now be submitted',
+      completedAt: now
+    });
+  }
+
   async cancelRemoteTaskOnLeaseLoss(provider, taskId) {
     if (!taskId) return;
     if (!provider?.capabilities?.cancellation || typeof provider.cancelTask !== 'function') {
