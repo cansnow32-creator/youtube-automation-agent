@@ -89,11 +89,15 @@ async function run() {
   if (localOnly.allowRemoteReview !== false) throw new Error('Remote review must be opt-in');
 
   const order = [];
-  const ordered = new LocalFirstQualityPipeline({}, { enabled: true });
+  const ordered = new LocalFirstQualityPipeline({}, { enabled: true, allowRemoteReview: true });
+  ordered.requestOllama = async () => {
+    order.push('Ollama');
+    return JSON.stringify({ score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata });
+  };
   ordered.requestGemini = async () => { order.push('Gemini'); return { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }; };
   ordered.requestGroq = async () => { order.push('Groq'); return { score: 90, approved: true, blockers: [], revision_instructions: [], platform_metadata: completeMetadata }; };
   await ordered.reviewDraft('draft');
-  if (order.join(',') !== 'Gemini,Groq') throw new Error('Reviewers did not run in Gemini then Groq order');
+  if (order.join(',') !== 'Ollama,Gemini,Groq') throw new Error('Opt-in reviewers did not run in local-first order');
 
   console.log('Local-first quality pipeline tests passed');
 }
