@@ -13,7 +13,7 @@ Default branch: master
 | #1 | feat/local-first-quality-gate | Verify live | Local-first quality gate | Open draft; do not merge |
 | #2 | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft; do not merge |
 
-Latest known PR #2 head at continuity setup: e47c569dc6e8bd4b4617d094a7b93dfcc25c9bcb. This SHA may become stale; always fetch the live PR head.
+Live PR #2 head checked 2026-11-20: `96ac8f7c27be5009c981576650dd93c365cd160e`; base remains `feat/local-first-quality-gate`. PR #2 is open, draft, and unmerged. Current head has zero check-runs. Always refresh live state.
 
 
 ## PR #3 — Agent Continuity
@@ -24,6 +24,13 @@ Latest known PR #2 head at continuity setup: e47c569dc6e8bd4b4617d094a7b93dfcc25
 - It adds the continuity handoff files, Dot setup guidance, and deterministic read-only workflow validation.
 - No check runs are associated with this head yet; the workflow has not been verified. Do not claim it passed.
 - This system supports manual new-chat handoff via the phrase **"AgentTube – devam et"**. It does not automatically open a new ChatGPT chat or run an autonomous coding model.
+
+## PR #2 current audit notes (2026-11-20)
+
+- CI workflow commit `96ac8f7c27be5009c981576650dd93c365cd160e` now runs `npm ci` against the committed lockfile before generating a separate, reviewable dependency remediation candidate. It no longer silently rewrites the lockfile before tests.
+- Static review inspected job-scoped production locking in `ProductionManagementAgent.processContent`, production-scoped resume leases, scene-repair lease heartbeats, and temporary-output replacement with rollback.
+- Existing lock tests mock database calls; real SQLite multi-process contention and end-to-end production recovery have not been verified.
+- PR #2 current head has zero check-runs. No PR #2 application tests or lint have been run in this session.
 
 ## PR #2 known work and validation limits
 
