@@ -2,11 +2,11 @@ const VERIFIED_HOOK_LENGTHS = new Set(['concise', 'extended']);
 const WORDS_PER_MINUTE = 130;
 
 function normalizePreference(value) {
-  return String(value || '').trim().toLowerCase().replace(/[\\s-]+/g, '_');
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function countWords(value) {
-  return String(value || '').trim().split(/\\s+/).filter(Boolean).length;
+  return String(value || '').trim().split(/\s+/).filter(Boolean).length;
 }
 
 function collectSpokenText(value) {
@@ -22,7 +22,7 @@ function collectSpokenText(value) {
 
 function parseMinuteRange(value) {
   const normalized = String(value || '').toLowerCase().replace(/[–—]/g, '-');
-  const match = normalized.match(/^\\s*(\\d+(?:\\.\\d+)?)\\s*(?:-|to)\\s*(\\d+(?:\\.\\d+)?)\\s*(?:minutes?|mins?|m)\\s*$/);
+  const match = normalized.match(/^\s*(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m)\s*$/);
   if (!match) return null;
   const minimum = Number(match[1]);
   const maximum = Number(match[2]);
