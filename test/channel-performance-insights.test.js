@@ -90,6 +90,45 @@ async function run() {
       'cohorts below three independent videos are not declared winners');
     assert.equal(exploratory.dimensions.pillar.cohorts[0].confidence, 'exploratory');
 
+    // A 24h-only video must not be substituted into a 7d cohort.
+    const shortOnly = {
+      videoId: 'short-window-only',
+      measurementWindow: '24h',
+      measuredAt: '2026-11-20T12:00:00.000Z',
+      metrics: { views: 500000, performanceScore: 100, ctr: 99, retention: 99 },
+      contentAttributes: { pillar: 'viral', format: 'shorts', durationBucket: 'under_1m' },
+      simulated: false
+    };
+    assert.equal(learning.preferredSnapshotPerVideo([...realSnapshots, shortOnly], '7d')
+      .some(item => item.videoId === 'short-window-only'), false);
+    assert.equal(learning.buildPerformanceInsights([...realSnapshots, shortOnly], 3, '7d').independentVideoCount, 3,
+      'shorter-window data must not inflate the 7d cohort');
+
+    const dueEngine = new ChannelLearningEngine({
+      listPerformanceSnapshots: async () => []
+    });
+    const twentyNineDaysAgo = new Date(Date.now() - 29 * 86400000).toISOString();
+    assert.deepEqual(
+      await dueEngine.getDueMeasurementWindows({ youtube_id: 'mature-video', published_at: twentyNineDaysAgo }),
+      ['24h', '7d', '28d']
+    );
+    const tenDaysAgo = new Date(Date.now() - 10 * 86400000).toISOString();
+    assert.deepEqual(
+      await dueEngine.getDueMeasurementWindows({ youtube_id: 'ten-day-video', published_at: tenDaysAgo }),
+      ['24h', '7d']
+    );
+    const completed28d = dueEngine.measurementPeriod(twentyNineDaysAgo, '28d');
+    assert.ok(completed28d, 'a mature 28d period should be available');
+    assert.equal(
+      (new Date(completed28d.endDate) - new Date(completed28d.startDate)) / 86400000,
+      28
+    );
+    assert.equal(
+      dueEngine.measurementPeriod(tenDaysAgo, '28d'),
+      null,
+      'a partial 28d period must not be labeled as complete'
+    );
+
     assert.equal(learning.durationBucket('PT45S'), 'under_1m');
     assert.equal(learning.durationBucket('PT2M10S'), '1_to_3m');
     assert.equal(learning.durationBucket('PT6M'), '3_to_8m');
