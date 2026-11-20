@@ -58,7 +58,6 @@ async function run() {
       captionCalls++;
       return '1\\n00:00:00,000 --> 00:00:02,000\\nCaption text\\n';
     };
-    const validate = require('../utils/subtitle-renderer').validateSrtContent;
     const captions = await agent.generateCaptions(production);
     assert.equal(captionCalls, 1);
     await agent.generateCaptions(production);
@@ -71,8 +70,8 @@ async function run() {
 
     // Corrupted captions are not reused.
     await fs.writeFile(captions, 'not an SRT file');
-    await assert.rejects(async () => agent.generateCaptions(production), /SRT|caption|timestamp|format/i);
-    void validate;
+    await agent.generateCaptions(production);
+    assert.equal(captionCalls, 3, 'corrupted captions must be regenerated');
     console.log('Production media artifact reuse tests passed.');
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
