@@ -702,6 +702,15 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/script-quality-reviews/:reviewId/continue', protect, async (req, res) => {
+      try {
+        const result = await this.continueApprovedScriptReview(req.params.reviewId);
+        return res.status(202).json({ success: true, result, message: 'Production resumed using the saved human-approved script. Publishing remains disabled.' });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
     this.app.post('/api/script-quality-reviews/:reviewId/decision', protect, async (req, res) => {
       try {
         const decision = req.body?.decision;
@@ -1590,6 +1599,100 @@ class YouTubeAutomationAgent {
     return job;
   }
 
+  async continueApprovedScriptReview(reviewId) {
+    const review = await this.db.getScriptQualityReview(reviewId);
+    if (!review) {
+      const error = new Error('Script quality review not found');
+      error.status = 404;
+      throw error;
+    }
+    if (review.status !== 'human_approved') {
+      const error = new Error('Only a human-approved script draft can continue production');
+      error.status = 409;
+      throw error;
+    }
+    const jobId = review.job_id;
+    if (!jobId) {
+      const error = new Error('This review is not linked to a generation job');
+      error.status = 409;
+      throw error;
+    }
+    const job = await this.db.getGenerationJob(jobId);
+    if (!job || !['failed', 'interrupted'].includes(job.status) || job.stage !== 'script') {
+      const error = new Error('The linked job must be failed or interrupted at the script stage');
+      error.status = 409;
+      throw error;
+    }
+    if (this.activeJobs.has(jobId)) {
+      const error = new Error('This generation job is already running');
+      error.status = 409;
+      throw error;
+    }
+    const strategyCheckpoint = await this.db.getGenerationCheckpoint(jobId, 'strategy');
+    if (strategyCheckpoint?.status !== 'completed' || !strategyCheckpoint.artifact?.topic) {
+      const error = new Error('The strategy checkpoint is missing; refusing to continue with an unlinked draft');
+      error.status = 409;
+      throw error;
+    }
+    let parsed;
+    try {
+      parsed = this.agents.scriptWriter.parseAIJsonResponse(review.draft);
+    } catch (_error) {
+      const error = new Error('The saved draft is not valid JSON. Edit and re-review it before continuing.');
+      error.status = 422;
+      throw error;
+    }
+    const strategy = { ...strategyCheckpoint.artifact, ...(review.strategy || {}), jobId };
+    const writer = this.agents.scriptWriter;
+    const sections = writer.normalizeAISections(parsed.sections, strategy);
+    if (!parsed.title || String(parsed.title).trim().length > 100 || !parsed.hook ||
+        !sections.length || !parsed.introduction || !parsed.conclusion) {
+      const error = new Error('The approved draft is missing required title, hook, introduction, sections, or conclusion fields');
+      error.status = 422;
+      throw error;
+    }
+    const report = review.quality_report || {};
+    const latestAttempt = Array.isArray(report.attempts) ? report.attempts[report.attempts.length - 1] : null;
+    const script = {
+      title: String(parsed.title).trim(),
+      hook: writer.normalizeAIHook(parsed.hook),
+      introduction: writer.normalizeAIIntroduction(parsed.introduction),
+      mainContent: { sections, totalDuration: writer.calculateSectionsDuration(sections) },
+      conclusion: writer.normalizeAIConclusion(parsed.conclusion),
+      callToAction: writer.normalizeAICTA(parsed.cta, strategy),
+      duration: writer.estimateDuration({ sections }),
+      tone: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.tone || 'informative',
+      pacing: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.pacing || 'steady',
+      keywords: strategy.keywords || [],
+      claims: writer.normalizeAIClaims(parsed.claims, strategy.researchSources || []),
+      metadata: {
+        strategy,
+        generatedAt: new Date().toISOString(),
+        version: '1.0',
+        generationSource: 'human_approved_saved_draft',
+        qualityGate: { ...report, status: 'human_review_required' },
+        humanApproval: { reviewId: review.id, decidedAt: review.decided_at, notes: review.decision_notes || '' }
+      }
+    };
+    script.fullScript = writer.formatFullScript(script);
+    if (!script.fullScript || script.fullScript.length < 100) {
+      const error = new Error('The approved draft did not produce a usable full script');
+      error.status = 422;
+      throw error;
+    }
+    await this.db.saveScript(script);
+    await this.db.saveGenerationCheckpoint(jobId, 'script', {
+      status: 'completed',
+      artifact: script,
+      error: null,
+      completedAt: new Date().toISOString()
+    });
+    await this.db.updateGenerationJob(jobId, {
+      details: { approvedDraftReviewId: review.id, approvedDraftAcceptedAt: new Date().toISOString() }
+    });
+    return this.resumeGenerationJob(jobId, { forceHumanApproval: true });
+  }
+
   async resumeGenerationJob(jobId, options = {}) {
     if (this.setupRequired || !this.agents.strategy) {
       const error = new Error('Finish setup with npm run walkthrough before resuming content generation');
@@ -1620,11 +1723,17 @@ class YouTubeAutomationAgent {
         throw error;
       }
       if (review && review.status === 'human_approved') {
-        const error = new Error('The saved draft has human approval, but it has not yet been accepted as a generation checkpoint. It will not be silently replaced by a newly generated script.');
-        error.status = 409;
-        error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
-        error.qualityReviewId = review.id;
-        throw error;
+        const approvedCheckpoint = await this.db.getGenerationCheckpoint(job.id, 'script');
+        const accepted = job.details?.approvedDraftReviewId === review.id &&
+          approvedCheckpoint?.status === 'completed' &&
+          approvedCheckpoint.artifact?.metadata?.humanApproval?.reviewId === review.id;
+        if (!accepted) {
+          const error = new Error('The human-approved draft must be explicitly accepted as the script checkpoint before resuming.');
+          error.status = 409;
+          error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
+          error.qualityReviewId = review.id;
+          throw error;
+        }
       }
     }
     const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
@@ -1656,7 +1765,8 @@ class YouTubeAutomationAgent {
       topic: job.topic,
       style: job.style,
       length: job.length || 'medium',
-      strategyContext: job.details?.strategyContext || {}
+      strategyContext: job.details?.strategyContext || {},
+      forceHumanApproval: options.forceHumanApproval === true
     };
     const updated = await this.db.updateGenerationJob(job.id, {
       status: 'queued',
@@ -1709,7 +1819,8 @@ class YouTubeAutomationAgent {
       await this.db.updateGenerationJob(jobId, { status: 'running', progress: 2, error: null, completedAt: null });
       const result = await this.generateContent(input.topic, input.style, input.length, {
         jobId,
-        strategyContext: input.strategyContext
+        strategyContext: input.strategyContext,
+        forceHumanApproval: input.forceHumanApproval === true
       });
       await this.db.updateGenerationJob(jobId, {
         status: 'completed',
@@ -1766,7 +1877,7 @@ class YouTubeAutomationAgent {
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
     this.logger.info('Starting content generation pipeline...');
-    const { jobId = null, strategyContext: rawStrategyContext = {} } = options;
+    const { jobId = null, strategyContext: rawStrategyContext = {}, forceHumanApproval = false } = options;
     const strategyContext = rawStrategyContext || {};
     const approvedConcept = await requireApprovedVideoConcept(
       this.db,
@@ -1862,7 +1973,7 @@ class YouTubeAutomationAgent {
 
     // Step 6: Quality and approval gate
     return this.runGenerationStage(jobId, 'quality_review', 90, async () => {
-      const approvalRequired = await this.db.getSetting('approval_required') !== 'false';
+      const approvalRequired = forceHumanApproval || await this.db.getSetting('approval_required') !== 'false';
       const packagingExperiment = approvalRequired
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
         : null;
