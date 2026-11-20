@@ -91,6 +91,8 @@ async function run() {
   assert.equal(inserted.params[1], 'job_persisted_1');
   assert.equal(saved.id, 'quality_review_fixed');
   assert.equal(saved.quality_report.score, 55);
+  assert.equal(inserted.params.length, 6);
+  assert.match(inserted.sql, /job_id/);
 
   let listQuery = null;
   database.getAllRows = async (sql, params) => {
@@ -117,6 +119,15 @@ async function run() {
     'quality_review_fixed'
   ]);
   assert.equal(revised.id, 'quality_review_fixed');
+
+  let linkedQuery = null;
+  database.getRow = async (sql, params) => {
+    linkedQuery = { sql, params };
+    return null;
+  };
+  assert.equal(await database.getScriptQualityReviewByJobId('job_persisted_1'), null);
+  assert.match(linkedQuery.sql, /WHERE job_id = \?/);
+  assert.deepEqual(linkedQuery.params, ['job_persisted_1']);
 
   await database.decideScriptQualityReview('quality_review_fixed', 'human_approved', 'Reviewed manually');
   assert.match(inserted.sql, /SET status = \?, decision_notes = \?/);
