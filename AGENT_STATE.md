@@ -379,3 +379,10 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - On failure, removes only this attempt's MP4/temp/SRT files. If lease is lost, it rethrows without writing `status: failed`, avoiding a stale worker's post-loss DB mutation. Stores `renderAttemptId` when marking the clip rendering/rendered/failed for recovery visibility.
 - Added a regression that simulates lease loss after FFmpeg writes a partial output and verifies the attempt files are removed and the stale worker does not write failed status. The test is already wired into `npm test`.
 - Static syntax/package/test wiring checks passed; runtime tests/lint not run. Commits: `81290bfc53539307587e013af41e31b78ba50783`, `1061a6a9357b11f8de602e774f705b0e59627006`.
+## 2026-11-20 — Shorts render API lease integration
+
+- Confirmed the render call site in `index.js`: the route previously called `this.shorts.render()` without options, so the service's optional lease callback was never supplied by the application.
+- Added `renderShortClip()` to require `this.scenes.withProductionOperationLease()`, pass its `assertLease` callback into `ShortsRepurposingService.render()`, and fail closed with HTTP 503 if the lock service is unavailable. The route now delegates to this method. Existing operation-lock heartbeat, contention handling and owner-scoped `finally` release are reused.
+- Added `test/shorts-render-operation-lock.test.js` to verify callback propagation, lock held during render, competing request returns 409, release after completion, and missing lock support returns 503. Added the test to `npm test`.
+- Commits: `9431be18515ac2828d9ebd1d5e3312b511639614`, `db70d2646df8263f35e81778d5914cd3ba9fbdb9`, `d86946d64fe9ad3518b4ff39faf8435ee2034664`.
+- Static JavaScript syntax checks passed for `index.js` and the new test; `package.json` parsed and test wiring was confirmed. Runtime tests/lint were not executed. PR #2 remains open/draft/unmerged, base `feat/local-first-quality-gate`, head `d86946d64fe9ad3518b4ff39faf8435ee2034664`, `mergeable: false`; no workflow runs on this head.
