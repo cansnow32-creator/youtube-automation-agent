@@ -344,6 +344,11 @@ class MediaGenerationService {
     }
   }
 
+  isSubmissionRecordStale(task, minimumAgeMs = 10 * 60 * 1000) {
+    const updatedAt = Date.parse(task?.updated_at || '');
+    return Number.isFinite(updatedAt) && Date.now() - updatedAt >= minimumAgeMs;
+  }
+
   async reconcileTaskSubmission(taskId, externalTaskId, options = {}) {
     const remoteId = String(externalTaskId || '').trim();
     if (!remoteId || remoteId.length > 512) {
@@ -369,6 +374,12 @@ class MediaGenerationService {
     if (!['submitting', 'submission_unknown', 'reconciliation_required'].includes(task.status)) {
       const error = new Error(`Media task ${taskId} is not awaiting remote-task reconciliation`);
       error.code = 'MEDIA_TASK_NOT_RECONCILABLE';
+      error.status = 409;
+      throw error;
+    }
+    if (task.status === 'submitting' && !this.isSubmissionRecordStale(task)) {
+      const error = new Error('This provider submission is still recent; wait at least 10 minutes before manually attaching a remote task ID');
+      error.code = 'MEDIA_TASK_SUBMISSION_STILL_ACTIVE';
       error.status = 409;
       throw error;
     }
@@ -454,6 +465,12 @@ class MediaGenerationService {
         task.external_task_id) {
       const error = new Error('Only unresolved submissions without a remote task ID can be resolved as absent');
       error.code = 'MEDIA_TASK_NOT_RESOLVABLE_AS_ABSENT';
+      error.status = 409;
+      throw error;
+    }
+    if (task.status === 'submitting' && !this.isSubmissionRecordStale(task)) {
+      const error = new Error('This provider submission is still recent; wait at least 10 minutes and inspect the provider dashboard before resolving it as absent');
+      error.code = 'MEDIA_TASK_SUBMISSION_STILL_ACTIVE';
       error.status = 409;
       throw error;
     }
