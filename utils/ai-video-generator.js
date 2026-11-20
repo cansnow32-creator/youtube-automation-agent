@@ -4,6 +4,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const createReadStream = require('fs').createReadStream;
+const { pipeline } = require('stream/promises');
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
@@ -320,26 +321,48 @@ class AIVideoGenerator {
 
     const providers = [];
     if (this.openai) {
-      providers.push({ name: 'OpenAI', model: OPENAI_IMAGE_MODEL, run: () => this.generateOpenAIImage(prompt, imagePath) });
+      providers.push({
+        name: 'OpenAI',
+        model: OPENAI_IMAGE_MODEL,
+        run: outputPath => this.generateOpenAIImage(prompt, outputPath)
+      });
     }
     if (this.gemini) {
-      providers.push({ name: 'Gemini', model: this.geminiImageModel(), run: () => this.generateGeminiImage(prompt, imagePath) });
+      providers.push({
+        name: 'Gemini',
+        model: this.geminiImageModel(),
+        run: outputPath => this.generateGeminiImage(prompt, outputPath)
+      });
     }
     if (!providers.length) {
       throw new Error('No image generation provider configured');
     }
 
-    // Try every configured provider before giving up, so a broken OpenAI key
-    // does not hide a working Gemini key (or the reverse).
+    // Isolate each provider attempt so a partial response can never corrupt
+    // another provider's output or become visible as a completed image.
+    const extension = path.extname(imagePath) || '.png';
+    const basename = path.basename(imagePath, path.extname(imagePath));
     const failures = [];
     for (const [index, provider] of providers.entries()) {
+      const attemptPath = path.join(
+        path.dirname(imagePath),
+        '.' + basename + '.' + crypto.randomUUID() + '.' + provider.name.toLowerCase() + extension
+      );
       try {
-        return await provider.run();
+        await provider.run(attemptPath);
+        const metadata = await sharp(attemptPath, { failOn: 'error' }).metadata();
+        if (!metadata.width || !metadata.height) {
+          throw new Error(provider.name + ' returned an invalid image asset');
+        }
+        // Same-directory rename publishes only a complete, validated image.
+        await fs.rename(attemptPath, imagePath);
+        return imagePath;
       } catch (error) {
+        await fs.unlink(attemptPath).catch(() => {});
         const description = describeImageProviderError(provider.name, provider.model, error);
         failures.push(description);
         if (index < providers.length - 1) {
-          this.logger.warn(`${description} Trying ${providers[index + 1].name} instead.`);
+          this.logger.warn(description + ' Trying ' + providers[index + 1].name + ' instead.');
         }
       }
     }
@@ -432,17 +455,17 @@ class AIVideoGenerator {
   async downloadImage(url, outputPath) {
     const response = await axios({
       method: 'GET',
-      url: url,
+      url,
       responseType: 'stream'
     });
 
-    const writer = require('fs').createWriteStream(outputPath);
-    response.data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
+    try {
+      await pipeline(response.data, require('fs').createWriteStream(outputPath));
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(outputPath).catch(() => {});
+      throw error;
+    }
   }
 
   async generateVideo(script, visualAssets, audioPath, outputPath, options = {}) {
