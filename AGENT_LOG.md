@@ -465,3 +465,13 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Static syntax and package wiring checks passed; runtime tests/lint not executed. GitHub Actions state to be checked against the final PR head.
 
 - Follow-up: aligned the manual `/publish/:contentId` API guard with the publishing service so a Short in `failed` state can be retried after a definite failure, provided its prior approval/evidence remain valid. Uncertain `uploading`/`reconciliation_required` states remain blocked. Commit on PR #2: `d8fdd192f54a6b53f6f8b98c37f601bcfa7cdc99`.
+
+
+## 2026-11-20 — Add operator reconciliation for uncertain YouTube uploads
+
+- Audited publishing flow: the existing `reconcileUploadedVideo()` only verified a video ID already stored in SQLite; no operator path existed for a successful YouTube upload whose response/ID was lost.
+- Added protected unresolved-list, reconcile-by-video-ID, and explicit resolve-as-absent endpoints. Reconcile verifies the candidate video exists, belongs to the authenticated channel, and has the scheduled title before persisting it.
+- Added atomic SQLite CAS methods so attach-vs-absence decisions cannot race. Confirmed-absent decisions are recorded in metadata and move the row to known `failed`; ambiguous states remain blocked from automatic retry.
+- Added a SQLite/service regression suite and npm test wiring, plus `docs/PUBLISHING_RECONCILIATION.md`.
+- Commits on PR #2: `d15acbc6b57baedf7adddd73c3f8d3498b0cfe8c`, `9a013c22fc39bae4e724b6c28765cdcdb8166260`, `63ec8e24e7fde6afbb1485c42bc41c97f7f64e79`, `418414f727266220241b145cb225d66837d30c25`, `fa614bdc38aa38a49c2bb0f093fa6a68c57fc8d1`, `7a2483b5a198d7c249fb41b81a5d9ebc51983201`, `a1b367f96c61d060196f0c7812932febbda8a8da`.
+- Static syntax/package wiring checks passed. Runtime tests and lint were not run. PR #2 remains draft/open/unmerged, and no GitHub Actions workflow run was returned for the latest head.
