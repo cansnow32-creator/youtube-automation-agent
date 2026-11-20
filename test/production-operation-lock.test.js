@@ -186,8 +186,16 @@ async function run() {
     releaseProductionOperationLock: async (_id, owner) => { released = owner.length > 0; }
   };
   const owned = new SceneRepairService(ownedDb, {}, { dataRoot: '/tmp' });
-  owned.rebuildUnlocked = async () => 'ok';
+  let rebuildLeaseContext;
+  owned.rebuildUnlocked = async (_id, assertLease) => {
+    rebuildLeaseContext = assertLease.lease;
+    return 'ok';
+  };
   assert.equal(await owned.rebuild('p3'), 'ok');
+  assert.equal(rebuildLeaseContext.productionId, 'p3');
+  assert.equal(typeof rebuildLeaseContext.owner, 'string');
+  assert.ok(rebuildLeaseContext.owner.length > 0,
+    'rebuild passes its database lease owner into every fenced metadata write');
   assert.equal(released, true, 'owned DB lease is released after work');
   assert.equal(owned.activeRebuilds.has('p3'), false);
 
