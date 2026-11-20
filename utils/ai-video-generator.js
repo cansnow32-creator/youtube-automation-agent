@@ -576,7 +576,7 @@ class AIVideoGenerator {
           attemptId,
           assertLease
         });
-        providerOutputPaths = generated.clips.map(clip => clip.path);
+        providerOutputPaths = generated.clips.filter(clip => !clip.reused).map(clip => clip.path);
         await assertLease();
         if (generated.clips.length) {
           const produced = await this.generateHybridVideo(
