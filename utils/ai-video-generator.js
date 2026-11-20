@@ -291,6 +291,7 @@ class AIVideoGenerator {
 
   async generateVisualAssets(prompt, style = "ethereal", count = 1) {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
+    const attemptPaths = [];
 
     try {
       if (!this.openai && !this.gemini) {
@@ -298,17 +299,17 @@ class AIVideoGenerator {
       }
 
       const enhancedPrompt = this.enhanceVisualPrompt(prompt, style);
-      const localPaths = [];
 
       for (let i = 0; i < count; i++) {
         const imagePath = path.join(__dirname, '..', 'data', 'assets', `visual_${Date.now()}_${crypto.randomUUID()}_${i}.png`);
+        attemptPaths.push(imagePath);
         await this.generateImage(enhancedPrompt, imagePath);
-        localPaths.push(imagePath);
       }
 
-      this.logger.info(`Generated ${localPaths.length} visual assets`);
-      return localPaths;
+      this.logger.info(`Generated ${attemptPaths.length} visual assets`);
+      return attemptPaths;
     } catch (error) {
+      for (const imagePath of attemptPaths) await fs.unlink(imagePath).catch(() => {});
       this.logger.error('Visual asset generation failed:', error);
       return await this.simulateVisualAssets(prompt, style, count);
     }
