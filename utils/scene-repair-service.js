@@ -161,10 +161,12 @@ class SceneRepairService {
     this.activeRebuilds = new Set();
   }
 
-  async ensureManifest(bundle) {
+  async ensureManifest(bundle, assertLease = async () => {}) {
+    await assertLease();
     if (bundle.scenes?.length) return bundle.scenes;
     const scenes = buildInitialSceneManifest(bundle, bundle.assets?.finalVideo?.provider || {});
-    await this.initializeAudioSegments(bundle, scenes);
+    await this.initializeAudioSegments(bundle, scenes, assertLease);
+    await assertLease();
     return this.db.replaceProductionScenes(bundle.id, scenes);
   }
 
@@ -219,14 +221,14 @@ class SceneRepairService {
     return scenes;
   }
 
-  async getEditableBundle(productionId) {
+  async getEditableBundle(productionId, assertLease = async () => {}) {
     const bundle = await this.db.getProductionBundle(productionId);
     if (!bundle) throw this.error('Content not found', 404);
     if (bundle.schedule || bundle.review_status === 'approved') {
       throw this.error('Scene repair is locked after content is approved or scheduled', 409);
     }
     if (!bundle.scenes?.length) {
-      bundle.scenes = await this.ensureManifest(bundle);
+      bundle.scenes = await this.ensureManifest(bundle, assertLease);
     }
     return bundle;
   }
@@ -649,13 +651,16 @@ class SceneRepairService {
 
   async rebuildUnlocked(productionId, assertLease = async () => {}) {
     await assertLease();
-    const bundle = await this.getEditableBundle(productionId);
+    const bundle = await this.getEditableBundle(productionId, assertLease);
+    await assertLease();
     const scenes = await this.db.listProductionScenes(productionId);
+    await assertLease();
     if (!scenes.length) throw this.error('No scene manifest is available', 409);
     const missing = [];
     const fullNarrationReady = await this.videoGenerator.isUsableAudioFile(bundle.assets?.audio?.path);
     const currentSceneAudio = [];
     for (const scene of scenes) {
+      await assertLease();
       if (!['current', 'intentional_silence'].includes(scene.narrationStatus)) {
         missing.push(`${scene.label}: narration is ${String(scene.narrationStatus || 'unavailable').replaceAll('_', ' ')}`);
       }
@@ -678,7 +683,8 @@ class SceneRepairService {
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
 
     await assertLease();
-    const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path);
+    const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path, assertLease);
+    await assertLease();
     const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
     const attemptId = crypto.randomUUID();
     const visualTempPath = `${visualPath}.${attemptId}.rendering.mp4`;
@@ -699,9 +705,11 @@ class SceneRepairService {
       await validateVideo(visualPath);
       visualReady = true;
     } catch (_error) {
+      await assertLease();
       await fs.unlink(visualPath).catch(() => {});
     }
     if (!visualReady) {
+      await assertLease();
       await fs.unlink(visualTempPath).catch(() => {});
       try {
         await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
@@ -725,9 +733,11 @@ class SceneRepairService {
       await validateVideo(finalPath);
       finalReady = true;
     } catch (_error) {
+      await assertLease();
       await fs.unlink(finalPath).catch(() => {});
     }
     if (!finalReady) {
+      await assertLease();
       await fs.unlink(finalTempPath).catch(() => {});
       try {
         await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
@@ -741,6 +751,7 @@ class SceneRepairService {
     }
     const captions = this.buildSRT(scenes);
     const existingCaptions = await fs.readFile(captionsPath, 'utf8').catch(() => null);
+    await assertLease();
     if (existingCaptions !== captions) {
       const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
       await fs.writeFile(captionsTempPath, captions);
@@ -797,21 +808,25 @@ class SceneRepairService {
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
   }
 
-  async buildRebuildFingerprint(scenes, fallbackAudioPath) {
+  async buildRebuildFingerprint(scenes, fallbackAudioPath, assertLease = async () => {}) {
     const hash = crypto.createHash('sha256');
     const inputs = [];
     for (const scene of scenes) {
+      await assertLease();
       const entry = {
         id: scene.id, revision: scene.revision, assetType: scene.assetType,
         duration: Number(scene.duration), narrationStatus: scene.narrationStatus,
         scriptText: scene.scriptText || ''
       };
       if (scene.assetPath) entry.assetSha256 = await this.hashFile(scene.assetPath);
+      await assertLease();
       if (scene.audioPath && scene.narrationStatus === 'current') entry.audioSha256 = await this.hashFile(scene.audioPath);
+      await assertLease();
       inputs.push(entry);
     }
     const fallback = fallbackAudioPath && !scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current')
       ? await this.hashFile(fallbackAudioPath) : null;
+    await assertLease();
     hash.update(JSON.stringify({ version: 2, inputs, fallback }));
     return hash.digest('hex').slice(0, 24);
   }
@@ -827,16 +842,19 @@ class SceneRepairService {
   }
 
   async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint, assertLease = async () => {}) {
+    await assertLease();
     const hasSceneAudio = scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current');
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
-    if (!hasSceneAudio && allCurrentWithoutSegments) return fallbackAudioPath;
+    if (!hasSceneAudio && allCurrentWithoutSegments) { await assertLease(); return fallbackAudioPath; }
     const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}.m4a`);
     try {
       const stat = await fs.stat(outputPath);
       if (stat.isFile() && stat.size > 0) {
         const duration = await this.getMediaDuration(outputPath);
         if (Number.isFinite(duration) && duration > 0) {
+          await assertLease();
           await this.runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+          await assertLease();
           return outputPath;
         }
       }
