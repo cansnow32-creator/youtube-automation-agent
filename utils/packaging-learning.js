@@ -1,5 +1,23 @@
-function isApprovedPackagingLearning(item) {
-  if (!item || item.status !== 'approved') return false;
+const DEFAULT_EVIDENCE_MAX_AGE_DAYS = 90;
+
+function hasFreshEvidence(item, options = {}) {
+  const freshness = item?.evidence?.freshness;
+  if (!freshness || !Number.isFinite(Number(freshness.sampleCount)) || Number(freshness.sampleCount) < 2) return false;
+  const oldest = freshness.oldestMeasuredAt ? new Date(freshness.oldestMeasuredAt) : null;
+  const latest = freshness.latestMeasuredAt ? new Date(freshness.latestMeasuredAt) : null;
+  if (!oldest || !latest || Number.isNaN(oldest.getTime()) || Number.isNaN(latest.getTime())) return false;
+  if (latest < oldest) return false;
+  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+  if (Number.isNaN(now.getTime()) || oldest > now || latest > now) return false;
+  const maxAgeDays = Number.isFinite(Number(options.maxAgeDays))
+    ? Math.max(0, Number(options.maxAgeDays))
+    : DEFAULT_EVIDENCE_MAX_AGE_DAYS;
+  const ageDays = (now.getTime() - oldest.getTime()) / 86400000;
+  return ageDays <= maxAgeDays;
+}
+
+function isApprovedPackagingLearning(item, options = {}) {
+  if (!item || item.status !== 'approved' || !hasFreshEvidence(item, options)) return false;
   const experiment = item.proposedChange?.experiment;
   if (experiment === 'title_thumbnail_variant') return true;
   return item.category === 'packaging_experiment' &&
@@ -7,9 +25,9 @@ function isApprovedPackagingLearning(item) {
     experiment === 'validated_title_thumbnail_pattern';
 }
 
-function getApprovedPackagingLearning(recommendations = []) {
+function getApprovedPackagingLearning(recommendations = [], options = {}) {
   const recommendation = (Array.isArray(recommendations) ? recommendations : [])
-    .find(isApprovedPackagingLearning);
+    .find(item => isApprovedPackagingLearning(item, options));
   if (!recommendation) return null;
   return {
     recommendationId: recommendation.id || null,
@@ -53,10 +71,11 @@ function getAppliedPackagingLearning(experiment, selectedTitleVariant, selectedT
   };
 }
 
-function getApprovedScriptLearnings(recommendations = []) {
+function getApprovedScriptLearnings(recommendations = [], options = {}) {
   const allowedCategories = new Set(['format', 'length', 'hookLength', 'retention']);
   return (Array.isArray(recommendations) ? recommendations : [])
     .filter(item => item?.status === 'approved' &&
+      hasFreshEvidence(item, options) &&
       allowedCategories.has(String(item.category || '')) &&
       ['future_plans', 'future_scripts'].includes(item.proposedChange?.target))
     .slice(0, 8)
@@ -81,4 +100,4 @@ function getApprovedScriptLearnings(recommendations = []) {
     .filter(item => item.proposedChange.prefer || item.rationale);
 }
 
-module.exports = { isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings, getAppliedPackagingLearning };
+module.exports = { hasFreshEvidence, isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings, getAppliedPackagingLearning };
