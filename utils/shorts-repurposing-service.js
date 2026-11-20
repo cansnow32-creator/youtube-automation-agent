@@ -129,6 +129,11 @@ class ShortsRepurposingService {
 
   async update(productionId, clipId, input = {}) {
     const clip = await this.requireClip(productionId, clipId);
+    if (clip.status === 'rendering') {
+      const error = new Error('This Short cannot be edited while a render attempt is in progress');
+      error.status = 409;
+      throw error;
+    }
     if (['approved', 'scheduled', 'uploading', 'published', 'reconciliation_required'].includes(clip.status)) {
       const error = new Error('This Short is locked after approval');
       error.status = 409;
