@@ -188,14 +188,16 @@ class PublishingSchedulingAgent {
         throw new Error(`Content not found in queue: ${contentId}`);
       }
       if (scheduleEntry.status === 'published') return scheduleEntry;
+      // A durable YouTube ID always takes precedence over local asset readiness:
+      // verify the existing remote upload rather than attempting another upload.
+      if (scheduleEntry.youtubeId) {
+        return this.reconcileUploadedVideo(scheduleEntry);
+      }
       if (!await this.isNarrationReady(scheduleEntry.metadata?.audio || productionBundle?.assets?.audio)) {
         const error = new Error('Publishing is blocked because narration is missing or the intentional-silence override is incomplete');
         error.status = 409;
         error.code = 'NARRATION_REQUIRED';
         throw error;
-      }
-      if (scheduleEntry.youtubeId) {
-        return this.reconcileUploadedVideo(scheduleEntry);
       }
       if (['uploading', 'reconciliation_required'].includes(scheduleEntry.status)) {
         const error = new Error('A previous upload may have reached YouTube without returning a video ID. Reconcile the channel before attempting another upload.');
@@ -1060,8 +1062,8 @@ class PublishingSchedulingAgent {
       error.status = 404;
       throw error;
     }
-    if (['uploading', 'uploaded', 'published', 'reconciliation_required'].includes(entry.status)) {
-      const error = new Error(`Content cannot be rescheduled while it is ${entry.status}`);
+    if (entry.youtubeId || ['uploading', 'uploaded', 'published', 'reconciliation_required'].includes(entry.status)) {
+      const error = new Error('Content with a recorded YouTube video ID or an unresolved upload cannot be rescheduled');
       error.status = 409;
       throw error;
     }
@@ -1082,8 +1084,8 @@ class PublishingSchedulingAgent {
       error.status = 404;
       throw error;
     }
-    if (['uploading', 'uploaded', 'published', 'reconciliation_required'].includes(entry.status)) {
-      const error = new Error(`The schedule cannot be deleted while content is ${entry.status}`);
+    if (entry.youtubeId || ['uploading', 'uploaded', 'published', 'reconciliation_required'].includes(entry.status)) {
+      const error = new Error('A schedule with a recorded YouTube video ID or unresolved upload cannot be deleted');
       error.status = 409;
       throw error;
     }
