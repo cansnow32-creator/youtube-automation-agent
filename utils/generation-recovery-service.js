@@ -1,4 +1,6 @@
 const fs = require('fs').promises;
+const path = require('path');
+const { getMediaInfo: defaultGetMediaInfo } = require('./ffmpeg');
 
 const GENERATION_STAGES = [
   'strategy',
@@ -12,6 +14,7 @@ const GENERATION_STAGES = [
 class GenerationRecoveryService {
   constructor(db, options = {}) {
     this.db = db;
+    this.getMediaInfo = options.getMediaInfo || defaultGetMediaInfo;
     this.updateJobStage = options.updateJobStage || (async () => null);
     this.logger = options.logger || { info() {}, warn() {} };
     this.maxAttempts = Math.max(1, Number(options.maxAttempts || process.env.GENERATION_STAGE_MAX_ATTEMPTS || 2));
@@ -126,7 +129,36 @@ class GenerationRecoveryService {
     if (stage === 'seo') return Boolean(artifact.title && artifact.description && Array.isArray(artifact.tags));
     if (stage === 'production') {
       const finalVideo = artifact.assets?.finalVideo;
-      return Boolean(artifact.id && finalVideo?.path && await this.pathExists(finalVideo.path));
+      if (!artifact.id || !finalVideo || finalVideo.simulated ||
+          typeof finalVideo.path !== 'string' ||
+          path.extname(finalVideo.path).toLowerCase() !== '.mp4' ||
+          !(await this.pathExists(finalVideo.path))) {
+        return false;
+      }
+      try {
+        const media = await this.getMediaInfo(finalVideo.path);
+        if (!media || !Number.isFinite(Number(media.duration)) || Number(media.duration) <= 0 ||
+            !Number.isFinite(Number(media.width)) || Number(media.width) <= 0 ||
+            !Number.isFinite(Number(media.height)) || Number(media.height) <= 0) {
+          return false;
+        }
+        if (finalVideo.cleanPath !== undefined) {
+          if (typeof finalVideo.cleanPath !== 'string' ||
+              path.extname(finalVideo.cleanPath).toLowerCase() !== '.mp4' ||
+              !(await this.pathExists(finalVideo.cleanPath))) {
+            return false;
+          }
+          const cleanMedia = await this.getMediaInfo(finalVideo.cleanPath);
+          if (!cleanMedia || !Number.isFinite(Number(cleanMedia.duration)) || Number(cleanMedia.duration) <= 0 ||
+              !Number.isFinite(Number(cleanMedia.width)) || Number(cleanMedia.width) <= 0 ||
+              !Number.isFinite(Number(cleanMedia.height)) || Number(cleanMedia.height) <= 0) {
+            return false;
+          }
+        }
+        return true;
+      } catch (_error) {
+        return false;
+      }
     }
     if (stage === 'quality_review') return Boolean(artifact.contentId && artifact.reviewStatus);
     return false;
