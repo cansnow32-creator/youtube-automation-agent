@@ -408,6 +408,20 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (production_id) REFERENCES productions(id)
       )`,
+      `CREATE TABLE IF NOT EXISTS script_quality_reviews (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'pending',
+        topic TEXT,
+        strategy TEXT NOT NULL DEFAULT '{}',
+        draft TEXT NOT NULL,
+        quality_report TEXT NOT NULL DEFAULT '{}',
+        decision_notes TEXT,
+        decided_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_script_quality_reviews_status
+       ON script_quality_reviews(status, created_at)`,
       `CREATE TABLE IF NOT EXISTS content_provenance (
         production_id TEXT PRIMARY KEY,
         sources TEXT NOT NULL DEFAULT '[]',
@@ -1490,6 +1504,59 @@ class Database {
        error = 'The application restarted before this operator run finished', updated_at = datetime('now'),
        completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')`
     );
+  }
+
+  async saveScriptQualityReview(review = {}) {
+    const id = this.generateId('quality_review');
+    await this.executeQuery(
+      `INSERT INTO script_quality_reviews
+       (id, status, topic, strategy, draft, quality_report)
+       VALUES (?, 'pending', ?, ?, ?, ?)`,
+      [
+        id,
+        review.topic || null,
+        JSON.stringify(review.strategy || {}),
+        String(review.draft || ''),
+        JSON.stringify(review.qualityReport || {})
+      ]
+    );
+    return this.getScriptQualityReview(id);
+  }
+
+  async listScriptQualityReviews(status = 'pending', limit = 50) {
+    const rows = await this.getAllRows(
+      `SELECT * FROM script_quality_reviews
+       WHERE (? = 'all' OR status = ?)
+       ORDER BY created_at DESC LIMIT ?`,
+      [status, status, Math.min(Math.max(Number(limit) || 50, 1), 200)]
+    );
+    return rows.map(row => ({
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    }));
+  }
+
+  async getScriptQualityReview(reviewId) {
+    const row = await this.getRow('SELECT * FROM script_quality_reviews WHERE id = ?', [reviewId]);
+    return row ? {
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    } : null;
+  }
+
+  async decideScriptQualityReview(reviewId, decision, notes = '') {
+    const allowed = ['human_approved', 'rejected', 'revision_requested'];
+    if (!allowed.includes(decision)) throw new Error('Invalid quality review decision');
+    await this.executeQuery(
+      `UPDATE script_quality_reviews
+       SET status = ?, decision_notes = ?, decided_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE id = ? AND status IN ('pending', 'revision_requested')`,
+      [decision, String(notes || '').slice(0, 3000), reviewId]
+    );
+    return this.getScriptQualityReview(reviewId);
   }
 
   async saveContentReview(productionId, review = {}) {
