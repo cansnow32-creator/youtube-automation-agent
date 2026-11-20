@@ -608,6 +608,7 @@ class ProductionManagementAgent {
   }
 
   async generateVideoContent(productionData, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Generating AI video content with resumable scene assets...');
 
     const { script } = productionData;
@@ -831,6 +832,7 @@ class ProductionManagementAgent {
   }
 
   async generateAudioNarration(productionData, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Generating AI audio narration...');
     
     try {
@@ -888,6 +890,7 @@ class ProductionManagementAgent {
   }
 
   async generateCaptions(productionData, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Generating captions...');
     
     const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
@@ -1019,6 +1022,7 @@ class ProductionManagementAgent {
   }
 
   async assembleVideo(productionData, assertLease = async () => {}) {
+    await assertLease();
     this.logger.info('Assembling final AI-generated video...');
     
     try {
@@ -1026,7 +1030,7 @@ class ProductionManagementAgent {
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
-        return await this.simulateVideoAssembly(productionData, 'Narration is missing');
+        return await this.simulateVideoAssembly(productionData, 'Narration is missing', assertLease);
       }
 
       // Use AI Video Generator to create the final video
@@ -1047,7 +1051,7 @@ class ProductionManagementAgent {
 
       // The generator falls back to a placeholder .info file when it cannot render
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
-        return await this.simulateVideoAssembly(productionData);
+        return await this.simulateVideoAssembly(productionData, null, assertLease);
       }
 
       let finalVideoPath = producedPath;
