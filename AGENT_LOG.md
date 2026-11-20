@@ -378,3 +378,13 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added regression test `testHeartbeatRenewalsAreSerialized()` to `test/generation-job-lease.test.js`, checking that slow renewals never overlap and queued work completes before assertion.
 - Commits: `9e1fa4d2f0196fd79dd5afc783d0da7646d7f517`, `529baa9dd4740ddb73d1afdb0e727a226fd28821`.
 - Static syntax checks passed; runtime tests/lint remain unexecuted. Recheck latest PR head and CI.
+
+
+## 2026-11-20 — Close remaining production lease fail-open paths
+
+- Fixed `replaceAsset()` calling a missing legacy lock helper; asset replacement now uses the common production operation lease and checks ownership before writes.
+- Made scene rebuild fail closed when acquire, renew, or release support is absent, while preserving the existing local contention response.
+- Hardened production job processing and resume: all lock methods are mandatory and heartbeat renewal work is serialized.
+- Added/updated regression tests for missing lock support and asset replacement lease routing; updated the scene-repair cache test fixture.
+- Commits: `0d544b2`, `5a0bfce`, `879881d`, `e7969ed`, `9fcb8ca`, `424252c`, `094e7c8`, `7b1f5ae`.
+- Static syntax checks passed; runtime tests/lint remain unexecuted.
