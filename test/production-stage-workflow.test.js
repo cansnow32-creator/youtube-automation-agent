@@ -60,6 +60,24 @@ async function run() {
   assert.equal(retry.stages.visuals.status, 'pending');
   assert.match(retry.stages.visuals.lastError, /temporary provider error/);
 
+  // A failure while persisting the initial in_progress transition must not
+  // leave the stage permanently active in memory.
+  const persistFailure = createProductionWorkflow('approved-concept-persist-failure', now);
+  let persistAttempts = 0;
+  await assert.rejects(
+    runProductionStage(persistFailure, 'visuals', async () => {
+      throw new Error('task must not run when initial persistence fails');
+    }, async () => {
+      persistAttempts++;
+      if (persistAttempts === 1) throw new Error('database unavailable');
+    }, now),
+    /database unavailable/
+  );
+  assert.equal(persistFailure.currentStage, null);
+  assert.equal(persistFailure.stages.visuals.status, 'failed');
+  assert.match(persistFailure.stages.visuals.error, /database unavailable/);
+  assert.equal(persistAttempts, 2, 'failure state should receive one best-effort persistence attempt');
+
   const invalid = createProductionWorkflow('approved-concept-2', now);
   startProductionStage(invalid, 'visuals', now);
   assert.throws(() => startProductionStage(invalid, 'visuals', now), /still active/);
