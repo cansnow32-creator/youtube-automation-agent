@@ -445,3 +445,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added a regression test for callback propagation, lock contention, guaranteed release, and 503 when DB lock support is unavailable. Wired it into `npm test`.
 - Commits: `9431be18515ac2828d9ebd1d5e3312b511639614`, `db70d2646df8263f35e81778d5914cd3ba9fbdb9`, `d86946d64fe9ad3518b4ff39faf8435ee2034664`.
 - Static syntax and package wiring checks passed. Runtime tests/lint not executed; latest PR #2 head has no workflow runs. PR remains open/draft/unmerged and was not retargeted or rebased.
+
+## 2026-11-20 — Persist Shorts render attempts and fence stale DB writes
+
+- Audited the Shorts table after API lease integration and found the service's `renderAttemptId` was not persisted. Added `render_attempt_id` and `render_metadata` columns using the existing idempotent migration mechanism, and included both fields in normal reads/writes.
+- Added `updateShortClipForRender()` with an atomic conditional UPDATE guarded by `status='rendering'` and the attempt ID. Render success/failure now commits through this method; a superseded attempt cannot overwrite a newer render. Rendering-time edits now return 409.
+- Added SQLite CAS coverage and service tests for stale-attempt cleanup and edit rejection during rendering. All regression tests are wired into `npm test`.
+- Commits: `de935a6b4af92e2cbe76a115904bf47f7ebcd416`, `6a4cfd33d4fe2f5d6746aa716138f6a5f9a5d3ba`, `8297cd16669ba6e8b2190653f7f7f9410e5452bb`, `356a2975035a0773d787cc7df409d2442b5da836`, `a1581a8eb4235ef6573d042c10f9e12b9ee0602d`, `8ea31af5d1a29e920fb877ba0e327c63aaea24fd`, `73bcc460430ab8f3d2fbc6358bf905d368bc8ba6`, `487c4d26ac25982b7a15fe28a8991c3fcd326d90`.
+- Static syntax/package checks passed. Runtime tests/lint were not executed; GitHub reports no workflow runs for the current PR #2 head. No PR was merged, retargeted or rebased.
