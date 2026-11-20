@@ -620,6 +620,9 @@ class AIVideoGenerator {
         throw error;
       }
 
+      // Provider-generated clips that were reused from an earlier persisted task
+      // are excluded from providerOutputPaths; discard only new clips before fallback.
+      await removeAttemptFiles(providerOutputPaths);
       try {
         await assertLease();
       } catch (leaseError) {
@@ -964,7 +967,7 @@ class AIVideoGenerator {
       await assertLease();
       return outputPath;
     } catch (error) {
-      await removeAttemptFiles([videoPath, outputPath + '.info']);
+      await removeAttemptFiles([videoPath, outputPath, outputPath + '.info']);
       throw error;
     } finally {
       await browser.close().catch(() => {});
