@@ -78,6 +78,21 @@ async function run() {
   assert.match(persistFailure.stages.visuals.error, /database unavailable/);
   assert.equal(persistAttempts, 2, 'failure state should receive one best-effort persistence attempt');
 
+  const inconsistent = createProductionWorkflow('approved-concept-inconsistent', now);
+  inconsistent.stages.narration.status = 'completed';
+  inconsistent.stages.narration.completedAt = new Date().toISOString();
+  assert.throws(
+    () => prepareProductionWorkflowForResume(inconsistent, now),
+    /narration is completed after an incomplete stage/
+  );
+
+  const unknownStatus = createProductionWorkflow('approved-concept-unknown-status', now);
+  unknownStatus.stages.visuals.status = 'cancelled';
+  assert.throws(
+    () => prepareProductionWorkflowForResume(unknownStatus, now),
+    /unexpected visuals status/
+  );
+
   const invalid = createProductionWorkflow('approved-concept-2', now);
   startProductionStage(invalid, 'visuals', now);
   assert.throws(() => startProductionStage(invalid, 'visuals', now), /still active/);
