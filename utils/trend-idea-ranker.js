@@ -117,6 +117,25 @@ function historicalPerformanceForIdea(idea, sourceTopic, snapshots = []) {
   };
 }
 
+function scoreViewerValue(idea = {}, audienceDemand = null) {
+  const angle = String(idea.angle || '').trim();
+  const rationale = String(idea.rationale || '').trim();
+  const combined = `${angle} ${rationale}`.toLowerCase();
+  if (!combined.trim()) return 45;
+  const benefitTerms = /\\b(step|steps|guide|checklist|workflow|compare|comparison|avoid|fix|solve|learn|build|create|save|improve|choose|explained|tutorial|beginner|practical)\\b/i;
+  const hasConcreteBenefit = benefitTerms.test(combined);
+  const hasSpecificAngle = tokenize(angle).size >= 5;
+  const hasAudienceDemand = Boolean(audienceDemand);
+  return clamp(45 + (hasConcreteBenefit ? 25 : 0) + (hasSpecificAngle ? 20 : 0) + (hasAudienceDemand ? 10 : 0));
+}
+
+function scoreProductionFit(idea = {}, channelStrategy = {}) {
+  const preferredFormat = String(channelStrategy.default_format || '').trim().toLowerCase();
+  const ideaFormat = String(idea.format || '').trim().toLowerCase();
+  if (!preferredFormat || !ideaFormat) return 75;
+  return preferredFormat === ideaFormat ? 100 : 65;
+}
+
 function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSnapshots = [], audienceDemand = []) {
   const trends = new Map((trendTopics || []).map(item => [String(item.topic || '').toLowerCase(), item]));
   const maxTrend = Math.max(1, ...(trendTopics || []).map(item => Number(item.score) || 0));
@@ -151,6 +170,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     const demand = audienceDemandForTopic(`${sourceTopic} ${topic}`, audienceDemand);
     const historical = historicalPerformanceForIdea(idea, sourceTopic, snapshots);
     const performance = historical?.score ?? null;
+    const viewerValue = scoreViewerValue(idea, demand);
+    const productionFit = scoreProductionFit(idea, channelStrategy);
 
     let weights;
     let score;
@@ -171,6 +192,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
       score = Math.round(trendScore * weights.trend + channelFit * weights.channelFit);
     }
 
+    score = Math.round(score * 0.8 + viewerValue * 0.1 + productionFit * 0.1);
+
     return {
       ...idea,
       sourceTopic,
@@ -186,6 +209,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
         trendSourceCount: sourceTypes.length,
         trendEvidenceCount: evidence.length,
         channelFit,
+        viewerValue,
+        productionFit,
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
         historicalSampleSize: historical?.sampleSize || 0,
@@ -271,5 +296,7 @@ module.exports = {
   overlapScore,
   buildAudienceDemand,
   audienceDemandForTopic,
+  scoreViewerValue,
+  scoreProductionFit,
   filterTrendIdeasForApproval
 };
