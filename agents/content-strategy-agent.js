@@ -424,14 +424,23 @@ class ContentStrategyAgent {
     // Use only niche-ranked competitor format evidence as creative guidance;
     // these patterns are not treated as proof of audience demand or guaranteed performance.
     const competitorTemplateGuidance = (this.competitorData || [])
-      .flatMap(competitor => competitor.topPerformingTemplates || [])
+      .flatMap(competitor => (competitor.topPerformingTemplates || []).map(template => ({
+        ...template,
+        competitorChannelId: competitor.channelId || null
+      })))
+      .sort((left, right) =>
+        (Number(right.rankingScore) || 0) - (Number(left.rankingScore) || 0) ||
+        (Number(right.sampleCount) || 0) - (Number(left.sampleCount) || 0)
+      )
       .slice(0, 12)
       .map(template => ({
         pattern: template.patternId,
         format: template.format,
         sampleCount: template.sampleCount,
         nicheFitScore: template.nicheFitScore,
+        rankingScore: template.rankingScore,
         rankingBasis: template.rankingBasis,
+        competitorChannelId: template.competitorChannelId,
         exampleTitles: (template.evidence || []).slice(0, 2).map(item => item.title).filter(Boolean)
       }));
 
