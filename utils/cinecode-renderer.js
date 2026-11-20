@@ -146,7 +146,7 @@ class CineCodeRenderer {
               '-t', duration.toFixed(3), '-vf', filter,
               '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
               '-r', '30', '-movflags', '+faststart', temporaryPath
-            ]);
+            ], { assertLease });
             await assertLease();
             const outputStats = await fs.stat(temporaryPath);
             if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
