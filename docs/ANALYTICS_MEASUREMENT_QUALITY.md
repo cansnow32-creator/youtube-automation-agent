@@ -19,13 +19,13 @@ A null value means the system cannot make a reliable statement for that metric a
 
 ## Fixed early-life measurement windows
 
-The learning scheduler records separate cumulative windows from publication:
+The learning scheduler records separate publication-anchored windows:
 
-- `24h`: the first 24 hours after publication
-- `7d`: the first 7 days after publication
-- `28d`: the first 28 days after publication
+- `24h`: one UTC calendar-day bucket beginning on the publication date
+- `7d`: seven UTC calendar-day buckets beginning on the publication date
+- `28d`: 28 UTC calendar-day buckets beginning on the publication date
 
-A window is due only after its full elapsed duration. An incomplete 28-day period is not labeled as a 28-day result. Each window is stored independently for the same video.
+YouTube Analytics reports daily buckets rather than exact publication-hour slices. The scheduler waits until the corresponding full elapsed age (24 hours, 7 days, or 28 days) before requesting the window, then queries exactly the corresponding number of date buckets. Therefore these are daily-bucket approximations, not exact intraday 24-hour/7-day/28-day exposure intervals. Each window is stored independently for the same video.
 
 Channel-wide recommendations and cohort insights use the exact `7d` window as their comparable baseline. A video that has only a 24-hour or 28-day snapshot is not substituted into the 7-day cohort. This avoids comparing early launch performance with longer cumulative totals. The 24-hour and 28-day snapshots remain available for their own reporting and longitudinal analysis; they do not silently influence the fixed 7-day recommendation cohort.
 
