@@ -487,7 +487,7 @@ class ContentStrategyAgent {
       return { status: 'skipped', reason: 'Saved trend snapshot contains no usable topic names', created: 0 };
     }
 
-    const { buildAudienceDemand, scoreTrendIdeas } = require('../utils/trend-idea-ranker');
+    const { buildAudienceDemand, scoreTrendIdeas, filterTrendIdeasForApproval } = require('../utils/trend-idea-ranker');
     const engagementInsights = this.db.listEngagementInsights
       ? await this.db.listEngagementInsights({ limit: 50 })
       : [];
@@ -612,8 +612,12 @@ class ContentStrategyAgent {
       });
     }
 
-    const scored = scoreTrendIdeas(response, trendTopics, channelStrategy, history, audienceDemand)
-      .filter(item => item.topic && !existingTopics.has(item.topic.toLowerCase()))
+    const rankedCandidates = scoreTrendIdeas(response, trendTopics, channelStrategy, history, audienceDemand);
+    const qualityGate = filterTrendIdeasForApproval(rankedCandidates, [...existingTopics], {
+      channelStrategy,
+      minimumScore: options.minimumScore
+    });
+    const scored = qualityGate.ideas
       .slice(0, Math.max(1, Math.min(10, Number(options.limit || 8))));
     const created = [];
     for (const idea of scored) {
@@ -647,6 +651,7 @@ class ContentStrategyAgent {
       model,
       snapshotId: snapshot.id,
       candidates: response.length,
+      rejectedByQualityGate: qualityGate.rejected,
       createdCount: created.length,
       rerankedBacklogCount: rescoredBacklog.length,
       ideas: created
