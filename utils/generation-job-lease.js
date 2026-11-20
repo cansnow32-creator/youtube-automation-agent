@@ -37,21 +37,23 @@ async function acquireGenerationJobLease(db, jobId, options = {}) {
   };
   const heartbeat = setInterval(() => {
     if (released || leaseFailure) return;
-    renewalInFlight = db.renewProductionOperationLock(lockId, owner, leaseMs)
-      .then(renewed => {
+    renewalInFlight = renewalInFlight.then(async () => {
+      if (released || leaseFailure) return;
+      try {
+        const renewed = await db.renewProductionOperationLock(lockId, owner, leaseMs);
         if (!renewed) {
           leaseFailure = Object.assign(
             new Error('Generation job lease lost for ' + jobId),
             { code: 'GENERATION_JOB_LEASE_LOST', status: 409 }
           );
         }
-      })
-      .catch(cause => {
+      } catch (cause) {
         leaseFailure = Object.assign(
           new Error('Generation job lease could not be verified for ' + jobId + ': ' + cause.message),
           { code: 'GENERATION_JOB_LEASE_UNVERIFIED', status: 503 }
         );
-      });
+      }
+    });
   }, heartbeatMs);
   heartbeat.unref?.();
 
