@@ -20,6 +20,7 @@ const { ActivationMetrics } = require('./utils/activation-metrics');
 const { AnonymousTelemetry } = require('./utils/anonymous-telemetry');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
 const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/generation-recovery-service');
+const { acquireGenerationJobLease } = require('./utils/generation-job-lease');
 const { ProvenanceService } = require('./utils/provenance-service');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
@@ -1617,173 +1618,224 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
-    const job = await this.db.getGenerationJob(jobId);
-    if (!job || !['failed', 'interrupted'].includes(job.status) || job.stage !== 'script') {
-      const error = new Error('The linked job must be failed or interrupted at the script stage');
-      error.status = 409;
-      throw error;
-    }
     if (this.activeJobs.has(jobId)) {
       const error = new Error('This generation job is already running');
       error.status = 409;
       throw error;
     }
-    const strategyCheckpoint = await this.db.getGenerationCheckpoint(jobId, 'strategy');
-    if (strategyCheckpoint?.status !== 'completed' || !strategyCheckpoint.artifact?.topic) {
-      const error = new Error('The strategy checkpoint is missing; refusing to continue with an unlinked draft');
-      error.status = 409;
-      throw error;
-    }
-    let parsed;
+
+    const lease = await acquireGenerationJobLease(this.db, jobId);
+    let transferred = false;
     try {
-      parsed = this.agents.scriptWriter.parseAIJsonResponse(review.draft);
-    } catch (_error) {
-      const error = new Error('The saved draft is not valid JSON. Edit and re-review it before continuing.');
-      error.status = 422;
-      throw error;
-    }
-    const strategy = { ...strategyCheckpoint.artifact, ...(review.strategy || {}), jobId };
-    const writer = this.agents.scriptWriter;
-    const sections = writer.normalizeAISections(parsed.sections, strategy);
-    if (!parsed.title || String(parsed.title).trim().length > 100 || !parsed.hook ||
-        !sections.length || !parsed.introduction || !parsed.conclusion) {
-      const error = new Error('The approved draft is missing required title, hook, introduction, sections, or conclusion fields');
-      error.status = 422;
-      throw error;
-    }
-    const report = review.quality_report || {};
-    const script = {
-      title: String(parsed.title).trim(),
-      hook: writer.normalizeAIHook(parsed.hook),
-      introduction: writer.normalizeAIIntroduction(parsed.introduction),
-      mainContent: { sections, totalDuration: writer.calculateSectionsDuration(sections) },
-      conclusion: writer.normalizeAIConclusion(parsed.conclusion),
-      callToAction: writer.normalizeAICTA(parsed.cta, strategy),
-      duration: writer.estimateDuration({ sections }),
-      tone: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.tone || 'informative',
-      pacing: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.pacing || 'steady',
-      keywords: strategy.keywords || [],
-      claims: writer.normalizeAIClaims(parsed.claims, strategy.researchSources || []),
-      metadata: {
-        strategy,
-        generatedAt: new Date().toISOString(),
-        version: '1.0',
-        generationSource: 'human_approved_saved_draft',
-        qualityGate: { ...report, status: 'human_review_required' },
-        humanApproval: { reviewId: review.id, decidedAt: review.decided_at, notes: review.decision_notes || '' }
+      await lease.assertLease();
+      const currentReview = await this.db.getScriptQualityReview(reviewId);
+      const job = await this.db.getGenerationJob(jobId);
+      await lease.assertLease();
+      if (!currentReview || currentReview.status !== 'human_approved') {
+        const error = new Error('The linked script review is no longer human-approved');
+        error.status = 409;
+        throw error;
       }
-    };
-    script.fullScript = writer.formatFullScript(script);
-    if (!script.fullScript || script.fullScript.length < 100) {
-      const error = new Error('The approved draft did not produce a usable full script');
-      error.status = 422;
-      throw error;
+      if (!job || !['failed', 'interrupted'].includes(job.status) || job.stage !== 'script') {
+        const error = new Error('The linked job must be failed or interrupted at the script stage');
+        error.status = 409;
+        throw error;
+      }
+
+      const strategyCheckpoint = await this.db.getGenerationCheckpoint(jobId, 'strategy');
+      await lease.assertLease();
+      if (strategyCheckpoint?.status !== 'completed' || !strategyCheckpoint.artifact?.topic) {
+        const error = new Error('The strategy checkpoint is missing; refusing to continue with an unlinked draft');
+        error.status = 409;
+        throw error;
+      }
+      let parsed;
+      try {
+        parsed = this.agents.scriptWriter.parseAIJsonResponse(currentReview.draft);
+      } catch (_error) {
+        const error = new Error('The saved draft is not valid JSON. Edit and re-review it before continuing.');
+        error.status = 422;
+        throw error;
+      }
+      const strategy = { ...strategyCheckpoint.artifact, ...(currentReview.strategy || {}), jobId };
+      const writer = this.agents.scriptWriter;
+      const sections = writer.normalizeAISections(parsed.sections, strategy);
+      if (!parsed.title || String(parsed.title).trim().length > 100 || !parsed.hook ||
+          !sections.length || !parsed.introduction || !parsed.conclusion) {
+        const error = new Error('The approved draft is missing required title, hook, introduction, sections, or conclusion fields');
+        error.status = 422;
+        throw error;
+      }
+      const report = currentReview.quality_report || {};
+      const script = {
+        title: String(parsed.title).trim(),
+        hook: writer.normalizeAIHook(parsed.hook),
+        introduction: writer.normalizeAIIntroduction(parsed.introduction),
+        mainContent: { sections, totalDuration: writer.calculateSectionsDuration(sections) },
+        conclusion: writer.normalizeAIConclusion(parsed.conclusion),
+        callToAction: writer.normalizeAICTA(parsed.cta, strategy),
+        duration: writer.estimateDuration({ sections }),
+        tone: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.tone || 'informative',
+        pacing: writer.templates[(strategy.contentType || 'explainer').toLowerCase()]?.pacing || 'steady',
+        keywords: strategy.keywords || [],
+        claims: writer.normalizeAIClaims(parsed.claims, strategy.researchSources || []),
+        metadata: {
+          strategy,
+          generatedAt: new Date().toISOString(),
+          version: '1.0',
+          generationSource: 'human_approved_saved_draft',
+          qualityGate: { ...report, status: 'human_review_required' },
+          humanApproval: { reviewId: currentReview.id, decidedAt: currentReview.decided_at, notes: currentReview.decision_notes || '' }
+        }
+      };
+      script.fullScript = writer.formatFullScript(script);
+      if (!script.fullScript || script.fullScript.length < 100) {
+        const error = new Error('The approved draft did not produce a usable full script');
+        error.status = 422;
+        throw error;
+      }
+      await lease.assertLease();
+      await this.db.saveScript(script);
+      await lease.assertLease();
+      await this.db.saveGenerationCheckpoint(jobId, 'script', {
+        status: 'completed',
+        artifact: script,
+        error: null,
+        completedAt: new Date().toISOString()
+      });
+      await lease.assertLease();
+      await this.db.updateGenerationJob(jobId, {
+        details: { approvedDraftReviewId: currentReview.id, approvedDraftAcceptedAt: new Date().toISOString() }
+      });
+      await lease.assertLease();
+      const updated = await this.resumeGenerationJob(jobId, { forceHumanApproval: true }, lease);
+      transferred = true;
+      return updated;
+    } finally {
+      if (!transferred) await lease.release().catch(error => {
+        this.logger.error('Failed to release script continuation lease:', error);
+      });
     }
-    await this.db.saveScript(script);
-    await this.db.saveGenerationCheckpoint(jobId, 'script', {
-      status: 'completed',
-      artifact: script,
-      error: null,
-      completedAt: new Date().toISOString()
-    });
-    await this.db.updateGenerationJob(jobId, {
-      details: { approvedDraftReviewId: review.id, approvedDraftAcceptedAt: new Date().toISOString() }
-    });
-    return this.resumeGenerationJob(jobId, { forceHumanApproval: true });
   }
 
-  async resumeGenerationJob(jobId, options = {}) {
+  async resumeGenerationJob(jobId, options = {}, inheritedLease = null) {
     if (this.setupRequired || !this.agents.strategy) {
       const error = new Error('Finish setup with npm run walkthrough before resuming content generation');
       error.status = 503;
       throw error;
     }
-    const job = await this.db.getGenerationJob(jobId);
-    if (!job) {
-      const error = new Error('Generation job not found');
-      error.status = 404;
-      throw error;
-    }
-    if (!['failed', 'interrupted'].includes(job.status)) {
-      const error = new Error('Only failed or interrupted generation jobs can be resumed');
-      error.status = 409;
-      throw error;
-    }
-    const linkedQualityReview = job.details?.qualityReviewId
-      ? await this.db.getScriptQualityReview(job.details.qualityReviewId)
-      : await this.db.getScriptQualityReviewByJobId(job.id);
-    if (linkedQualityReview) {
-      const review = linkedQualityReview;
-      if (review && ['pending', 'revision_requested'].includes(review.status)) {
-        const error = new Error('This generation job is waiting for a human script-review decision. Resolve the saved draft in the Script review queue before retrying.');
-        error.status = 409;
-        error.code = 'SCRIPT_QUALITY_REVIEW_PENDING';
-        error.qualityReviewId = review.id;
+    const lease = inheritedLease || await acquireGenerationJobLease(this.db, jobId);
+    let transferred = false;
+    try {
+      await lease.assertLease();
+      const job = await this.db.getGenerationJob(jobId);
+      await lease.assertLease();
+      if (!job) {
+        const error = new Error('Generation job not found');
+        error.status = 404;
         throw error;
       }
-      if (review && review.status === 'human_approved') {
-        const approvedCheckpoint = await this.db.getGenerationCheckpoint(job.id, 'script');
-        const accepted = job.details?.approvedDraftReviewId === review.id &&
-          approvedCheckpoint?.status === 'completed' &&
-          approvedCheckpoint.artifact?.metadata?.humanApproval?.reviewId === review.id;
-        if (!accepted) {
-          const error = new Error('The human-approved draft must be explicitly accepted as the script checkpoint before resuming.');
+      if (!['failed', 'interrupted'].includes(job.status)) {
+        const error = new Error('Only failed or interrupted generation jobs can be resumed');
+        error.status = 409;
+        throw error;
+      }
+      const linkedQualityReview = job.details?.qualityReviewId
+        ? await this.db.getScriptQualityReview(job.details.qualityReviewId)
+        : await this.db.getScriptQualityReviewByJobId(job.id);
+      await lease.assertLease();
+      if (linkedQualityReview) {
+        const review = linkedQualityReview;
+        if (review && ['pending', 'revision_requested'].includes(review.status)) {
+          const error = new Error('This generation job is waiting for a human script-review decision. Resolve the saved draft in the Script review queue before retrying.');
           error.status = 409;
-          error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
+          error.code = 'SCRIPT_QUALITY_REVIEW_PENDING';
           error.qualityReviewId = review.id;
           throw error;
         }
+        if (review && review.status === 'human_approved') {
+          const approvedCheckpoint = await this.db.getGenerationCheckpoint(job.id, 'script');
+          await lease.assertLease();
+          const accepted = job.details?.approvedDraftReviewId === review.id &&
+            approvedCheckpoint?.status === 'completed' &&
+            approvedCheckpoint.artifact?.metadata?.humanApproval?.reviewId === review.id;
+          if (!accepted) {
+            const error = new Error('The human-approved draft must be explicitly accepted as the script checkpoint before resuming.');
+            error.status = 409;
+            error.code = 'APPROVED_DRAFT_CONTINUATION_REQUIRED';
+            error.qualityReviewId = review.id;
+            throw error;
+          }
+        }
       }
-    }
-    const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
-    await requireApprovedVideoConcept(this.db, approvedConceptId);
-    if (this.activeJobs.has(job.id)) {
-      const error = new Error('This generation job is already running');
-      error.status = 409;
-      throw error;
-    }
-    const maxConcurrent = Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10));
-    if (this.activeJobs.size >= maxConcurrent) {
-      const error = new Error(`Generation is busy (${this.activeJobs.size}/${maxConcurrent} active jobs). Try again when the current job finishes.`);
-      error.status = 429;
-      throw error;
-    }
-    if (['scheduler', 'autonomous_operator'].includes(job.source)) {
-      await this.readiness?.assertReady('Automated generation recovery');
-    }
+      const approvedConceptId = job.details?.strategyContext?.approvedVideoConceptId;
+      await requireApprovedVideoConcept(this.db, approvedConceptId);
+      await lease.assertLease();
+      if (this.activeJobs.has(job.id)) {
+        const error = new Error('This generation job is already running');
+        error.status = 409;
+        throw error;
+      }
+      const maxConcurrent = Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10));
+      if (this.activeJobs.size >= maxConcurrent) {
+        const error = new Error(`Generation is busy (${this.activeJobs.size}/${maxConcurrent} active jobs). Try again when the current job finishes.`);
+        error.status = 429;
+        throw error;
+      }
+      if (['scheduler', 'autonomous_operator'].includes(job.source)) {
+        await this.readiness?.assertReady('Automated generation recovery');
+        await lease.assertLease();
+      }
 
-    const checkpoints = await this.db.listGenerationCheckpoints(job.id);
-    const resumeFrom = options.stage || this.recovery.resumePoint(checkpoints);
-    if (!GENERATION_STAGES.includes(resumeFrom)) {
-      const error = new Error('Resume stage is not supported');
-      error.status = 400;
-      throw error;
-    }
-    if (options.stage) await this.recovery.resetFrom(job.id, resumeFrom);
-    const input = {
-      topic: job.topic,
-      style: job.style,
-      length: job.length || 'medium',
-      strategyContext: job.details?.strategyContext || {},
-      forceHumanApproval: options.forceHumanApproval === true
-    };
-    const updated = await this.db.updateGenerationJob(job.id, {
-      status: 'queued',
-      stage: resumeFrom,
-      error: null,
-      cancelRequested: false,
-      completedAt: null,
-      details: {
-        resumeCount: Number(job.details?.resumeCount || 0) + 1,
-        resumeFrom,
-        failedStage: null
+      if (!this.recovery) {
+        this.recovery = new GenerationRecoveryService(this.db, {
+          logger: this.logger,
+          updateJobStage: (...args) => this.updateJobStage(...args)
+        });
       }
-    });
-    const work = this.runGenerationJob(job.id, input)
-      .catch(error => this.logger.error(`Resumed generation job ${job.id} failed:`, error))
-      .finally(() => this.activeJobs.delete(job.id));
-    this.activeJobs.set(job.id, work);
-    return updated;
+      const checkpoints = await this.db.listGenerationCheckpoints(job.id);
+      await lease.assertLease();
+      const resumeFrom = options.stage || this.recovery.resumePoint(checkpoints);
+      if (!GENERATION_STAGES.includes(resumeFrom)) {
+        const error = new Error('Resume stage is not supported');
+        error.status = 400;
+        throw error;
+      }
+      if (options.stage) await this.recovery.resetFrom(job.id, resumeFrom, lease.assertLease);
+      await lease.assertLease();
+      const input = {
+        topic: job.topic,
+        style: job.style,
+        length: job.length || 'medium',
+        strategyContext: job.details?.strategyContext || {},
+        forceHumanApproval: options.forceHumanApproval === true
+      };
+      const updated = await this.db.updateGenerationJob(job.id, {
+        status: 'queued',
+        stage: resumeFrom,
+        error: null,
+        cancelRequested: false,
+        completedAt: null,
+        details: {
+          resumeCount: Number(job.details?.resumeCount || 0) + 1,
+          resumeFrom,
+          failedStage: null
+        }
+      });
+      await lease.assertLease();
+      const work = this.runGenerationJob(job.id, input, lease)
+        .catch(error => this.logger.error(`Resumed generation job ${job.id} failed:`, error))
+        .finally(() => this.activeJobs.delete(job.id));
+      this.activeJobs.set(job.id, work);
+      transferred = true;
+      return updated;
+    } finally {
+      if (!transferred && !inheritedLease) {
+        await lease.release().catch(error => {
+          this.logger.error('Failed to release generation resume lease:', error);
+        });
+      }
+    }
   }
 
   async waitForGenerationJob(jobId) {
@@ -1813,14 +1865,29 @@ class YouTubeAutomationAgent {
     return this.startGenerationJob(input);
   }
 
-  async runGenerationJob(jobId, input) {
+  async runGenerationJob(jobId, input, inheritedLease = null) {
+    const lease = inheritedLease || await acquireGenerationJobLease(this.db, jobId);
     try {
+      return await this.runGenerationJobUnlocked(jobId, input, lease.assertLease);
+    } finally {
+      await lease.release().catch(error => {
+        this.logger.error('Failed to release generation job lease:', error);
+      });
+    }
+  }
+
+  async runGenerationJobUnlocked(jobId, input, assertLease = async () => {}) {
+    try {
+      await assertLease();
       await this.db.updateGenerationJob(jobId, { status: 'running', progress: 2, error: null, completedAt: null });
+      await assertLease();
       const result = await this.generateContent(input.topic, input.style, input.length, {
         jobId,
         strategyContext: input.strategyContext,
-        forceHumanApproval: input.forceHumanApproval === true
+        forceHumanApproval: input.forceHumanApproval === true,
+        assertLease
       });
+      await assertLease();
       await this.db.updateGenerationJob(jobId, {
         status: 'completed',
         stage: result.reviewStatus === 'approved' ? 'scheduled' : result.reviewStatus,
@@ -1830,11 +1897,17 @@ class YouTubeAutomationAgent {
         details: { reviewStatus: result.reviewStatus, qualityScore: result.qualityScore },
         completedAt: new Date().toISOString()
       });
+      await assertLease();
       await this.db.setSetting('last_content_generation', new Date().toISOString());
+      await assertLease();
       return result;
     } catch (error) {
+      // Lease loss is not an ordinary job failure: a stale worker must not
+      // overwrite the state written by the current owner.
+      await assertLease();
       const cancelled = error.code === 'JOB_CANCELLED';
       const current = await this.db.getGenerationJob(jobId);
+      await assertLease();
       const failedStage = current?.stage || 'starting';
       await this.db.updateGenerationJob(jobId, {
         status: cancelled ? 'cancelled' : 'failed',
@@ -1852,6 +1925,7 @@ class YouTubeAutomationAgent {
         },
         completedAt: new Date().toISOString()
       });
+      await assertLease();
       await this.operator.notify({
         type: cancelled ? 'generation_cancelled' : 'generation_failure',
         level: cancelled ? 'warning' : 'error',
@@ -1876,20 +1950,25 @@ class YouTubeAutomationAgent {
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
     this.logger.info('Starting content generation pipeline...');
-    const { jobId = null, strategyContext: rawStrategyContext = {}, forceHumanApproval = false } = options;
+    const { jobId = null, strategyContext: rawStrategyContext = {}, forceHumanApproval = false, assertLease = async () => {} } = options;
+    await assertLease();
     const strategyContext = rawStrategyContext || {};
     const approvedConcept = await requireApprovedVideoConcept(
       this.db,
       strategyContext.approvedVideoConceptId
     );
+    await assertLease();
     strategyContext.approvedVideoConcept = approvedConcept.concept;
     strategyContext.approvedVideoConceptId = approvedConcept.id;
     const profile = await this.db.getChannelProfile() || {};
+    await assertLease();
     const lengthLabels = { short: '2-4 minutes', medium: '8-12 minutes', long: '15-20 minutes' };
 
     // Step 1: Strategy
-    const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
+    const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async stageAssertLease => {
+      await stageAssertLease();
       const generated = await this.agents.strategy.generateContentStrategy(topic);
+      await stageAssertLease();
       const { getApprovedPackagingLearning } = require('./utils/packaging-learning');
       const approvedLearnings = this.db.listLearningRecommendations
         ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
@@ -1920,8 +1999,9 @@ class YouTubeAutomationAgent {
       generated.researchSources = Array.isArray(strategyContext.researchSources)
         ? strategyContext.researchSources
         : [];
+      await stageAssertLease();
       return generated;
-    });
+    }, assertLease);
     this.logger.info(`Strategy generated: ${strategy.topic}`);
 
     // Step 2: Script Writing
@@ -1929,7 +2009,13 @@ class YouTubeAutomationAgent {
       jobId,
       'script',
       25,
-      () => this.agents.scriptWriter.generateScript(strategy)
+      async stageAssertLease => {
+        await stageAssertLease();
+        const result = await this.agents.scriptWriter.generateScript(strategy);
+        await stageAssertLease();
+        return result;
+      },
+      assertLease
     );
     this.logger.info(`Script generated: ${script.title}`);
 
@@ -1938,7 +2024,13 @@ class YouTubeAutomationAgent {
       jobId,
       'thumbnail',
       40,
-      () => this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning)
+      async stageAssertLease => {
+        await stageAssertLease();
+        const result = await this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning);
+        await stageAssertLease();
+        return result;
+      },
+      assertLease
     );
     this.logger.info('Thumbnail generated');
 
@@ -1947,7 +2039,13 @@ class YouTubeAutomationAgent {
       jobId,
       'seo',
       52,
-      () => this.agents.seoOptimizer.optimize(script, strategy)
+      async stageAssertLease => {
+        await stageAssertLease();
+        const result = await this.agents.seoOptimizer.optimize(script, strategy);
+        await stageAssertLease();
+        return result;
+      },
+      assertLease
     );
     this.logger.info('SEO optimization complete');
 
@@ -1956,30 +2054,44 @@ class YouTubeAutomationAgent {
       jobId,
       'production',
       62,
-      () => this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId })
+      async stageAssertLease => {
+        await stageAssertLease();
+        const result = await this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId, assertLease: stageAssertLease });
+        await stageAssertLease();
+        return result;
+      },
+      assertLease
     );
     this.logger.info('Production processing complete');
 
     // Re-persist reused production artifacts in case a restart happened between checkpointing and persistence.
+    await assertLease();
     const contentId = await this.db.saveProductionData(productionData);
+    await assertLease();
     await this.db.saveProductionSnapshot(productionData);
+    await assertLease();
     if (!this.provenance) this.provenance = new ProvenanceService(this.db);
     productionData.provenance = await this.provenance.initialize(contentId, productionData);
+    await assertLease();
     productionData.discoverability = this.discoverability
       ? await this.discoverability.auditProduction(productionData, profile, 'youtube')
       : null;
+    await assertLease();
     this.logger.info(`Content saved with ID: ${contentId}`);
 
     // Step 6: Quality and approval gate
-    return this.runGenerationStage(jobId, 'quality_review', 90, async () => {
+    return this.runGenerationStage(jobId, 'quality_review', 90, async stageAssertLease => {
+      await stageAssertLease();
       const approvalRequired = forceHumanApproval || await this.db.getSetting('approval_required') !== 'false';
       const packagingExperiment = approvalRequired
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
         : null;
       const quality = await this.operator.runQualityChecks(productionData, profile);
+      await stageAssertLease();
       const reviewStatus = quality.passed
         ? (approvalRequired ? 'needs_review' : 'approved')
         : 'needs_attention';
+      await stageAssertLease();
       await this.db.saveContentReview(contentId, {
         status: reviewStatus,
         qualityChecks: quality.checks,
@@ -1991,13 +2103,20 @@ class YouTubeAutomationAgent {
         reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
         reviewedAt: approvalRequired ? null : new Date().toISOString()
       });
+      await stageAssertLease();
 
       let scheduleEntry = null;
       if (reviewStatus === 'approved') {
+        await stageAssertLease();
         scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
+        await stageAssertLease();
         await this.db.updateProductionStatus(contentId, scheduleEntry ? 'scheduled' : productionData.status);
+        await stageAssertLease();
       } else {
+        await stageAssertLease();
         await this.db.updateProductionStatus(contentId, reviewStatus);
+        await stageAssertLease();
+        await stageAssertLease();
         await this.operator.notify({
           type: 'review_required',
           level: quality.passed ? 'info' : 'warning',
@@ -2005,6 +2124,7 @@ class YouTubeAutomationAgent {
           message: `${script.title} ${quality.passed ? 'is ready for approval' : 'failed one or more quality checks'}`,
           data: { contentId, qualityScore: quality.score }
         });
+        await stageAssertLease();
       }
 
       return {
@@ -2015,13 +2135,17 @@ class YouTubeAutomationAgent {
         qualityScore: quality.score,
         scheduledFor: scheduleEntry ? scheduleEntry.publishTime : null
       };
-    });
+    }, assertLease);
   }
 
-  async runGenerationStage(jobId, stage, progress, producer) {
+  async runGenerationStage(jobId, stage, progress, producer, assertLease = async () => {}) {
+    await assertLease();
     if (!jobId) {
       await this.updateJobStage(jobId, stage, progress);
-      return producer();
+      await assertLease();
+      const result = await producer(assertLease);
+      await assertLease();
+      return result;
     }
     if (!this.recovery) {
       this.recovery = new GenerationRecoveryService(this.db, {
@@ -2029,7 +2153,7 @@ class YouTubeAutomationAgent {
         updateJobStage: (...args) => this.updateJobStage(...args)
       });
     }
-    return this.recovery.run(jobId, stage, progress, producer);
+    return this.recovery.run(jobId, stage, progress, producer, { assertLease });
   }
 
   validateEditorData(input = {}, existing = {}) {
