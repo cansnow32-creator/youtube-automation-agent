@@ -792,7 +792,8 @@ class AIVideoGenerator {
 
     const { chromium } = require('playwright');
     const browser = await chromium.launch();
-    const slidesDir = path.join(path.dirname(outputPath), 'slides');
+    const outputStem = path.basename(outputPath, path.extname(outputPath));
+    const slidesDir = path.join(path.dirname(outputPath), `${outputStem}_slides`);
 
     try {
       const page = await browser.newPage();
