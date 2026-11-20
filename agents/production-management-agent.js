@@ -682,7 +682,7 @@ class ProductionManagementAgent {
       // Try to generate AI thumbnail first
       await assertLease();
       const thumbnailScript = thumbnail.script || script || { title: thumbnail.title || 'Untitled Video' };
-      const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal');
+      const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal', assertLease);
       await assertLease();
 
       // generateThumbnail returns a simulated placeholder instead of throwing when
@@ -819,7 +819,7 @@ class ProductionManagementAgent {
 
       try {
         await assertLease();
-        const generated = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
+        const generated = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1, assertLease);
         await assertLease();
         const imagePath = Array.isArray(generated)
           ? generated.find(candidate => typeof candidate === 'string' && path.extname(candidate).toLowerCase() !== '.info')
