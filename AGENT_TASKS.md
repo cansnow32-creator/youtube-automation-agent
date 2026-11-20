@@ -50,3 +50,6 @@ Status values: todo, in_progress, blocked, done, needs_user.
 - [ ] needs_user — Paid model/API usage: no Gemini/Groq or other paid API fallback without explicit approval.
 - [ ] needs_user — Merge any PR: explicit user approval required.
 - [ ] needs_user — Enable automatic YouTube publishing: remains disabled unless explicitly authorized.
+
+- [x] done — Close visual-provider partial-output gap in generateVisualAssets(): track UUID-scoped output path before provider invocation and remove partial output before simulation fallback on failure. Added test/visual-generation-artifact-cleanup.test.js and wired it into npm test. Commits: fb3cf772bfc2372cfdecc4df4669e1007d0a82ee, c3f81469c0b779eeefa0bf1ebdd8cd7c88e9575e, 660b967a0911be27e686bbfce6777ef74f663478. Static verification only; tests/lint unexecuted.
+- [ ] in_progress — Inspect OpenAI/Gemini image provider internals for secondary temp outputs and continue production side-effect audit. Then obtain real CI execution; no current-head workflow run is present.
