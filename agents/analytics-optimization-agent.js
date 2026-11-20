@@ -385,19 +385,75 @@ class AnalyticsOptimizationAgent {
       dimensions: 'insightTrafficSourceType',
       filters: `video==${videoId}`
     });
-    
-    const sources = response.data.rows || [];
-    const totalViews = sources.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
-    
+
+    // Keep YouTube's canonical source identifiers. Labels are presentation only;
+    // unknown and OTHER buckets are never silently reclassified as a known source.
+    const sourceMetadata = {
+      YT_SEARCH: { displayName: 'YouTube Search', group: 'search' },
+      SEARCH: { displayName: 'YouTube Search', group: 'search' },
+      YOUTUBE_SEARCH: { displayName: 'YouTube Search', group: 'search' },
+      RELATED_VIDEO: { displayName: 'Suggested videos', group: 'recommendations' },
+      SUGGESTED_VIDEO: { displayName: 'Suggested videos', group: 'recommendations' },
+      VIDEO_BROWSE: { displayName: 'Browse features', group: 'browse' },
+      SHORTS: { displayName: 'Shorts feed', group: 'shorts' },
+      EXT_URL: { displayName: 'External', group: 'external' },
+      EXTERNAL: { displayName: 'External', group: 'external' },
+      NOTIFICATION: { displayName: 'Notifications', group: 'notifications' },
+      YT_CHANNEL: { displayName: 'Channel pages', group: 'channel' },
+      YT_OTHER_PAGE: { displayName: 'Other YouTube pages', group: 'youtube_other' },
+      PLAYLIST: { displayName: 'Playlists', group: 'playlist' },
+      SOUND_PAGE: { displayName: 'Sound pages', group: 'sound' },
+      END_SCREEN: { displayName: 'End screens', group: 'end_screen' },
+      ADVERTISING: { displayName: 'Advertising', group: 'paid' },
+      PROMOTED: { displayName: 'Promoted', group: 'paid' },
+      LIVE_REDIRECT: { displayName: 'Live redirects', group: 'live_redirect' },
+      SUBSCRIBER: { displayName: 'Subscriptions', group: 'subscriber' },
+      ANNOTATION: { displayName: 'Annotations', group: 'other_youtube' },
+      CAMPAIGN_CARD: { displayName: 'Campaign cards', group: 'other_youtube' },
+      NO_LINK_EMBEDDED: { displayName: 'Embedded player', group: 'other' },
+      NO_LINK_OTHER: { displayName: 'Other', group: 'other' }
+    };
+    const numeric = value => value === null || value === undefined || value === ''
+      ? null
+      : Number.isFinite(Number(value)) ? Number(value) : null;
+    const rows = response.data.rows || [];
+    const normalized = rows.map(row => {
+      const source = String(row?.[0] || 'UNKNOWN').trim().toUpperCase();
+      const metadata = sourceMetadata[source] || null;
+      return {
+        source,
+        displayName: metadata?.displayName || (source === 'OTHER' ? 'Other (unclassified)' : 'Unknown source'),
+        group: metadata?.group || 'unknown',
+        known: Boolean(metadata),
+        views: numeric(row?.[1])
+      };
+    });
+    const validViews = normalized.map(item => item.views).filter(value => value !== null);
+    const totalsComplete = normalized.length > 0 && validViews.length === normalized.length;
+    const totalViews = validViews.length ? validViews.reduce((sum, value) => sum + value, 0) : null;
+    const canCalculateShares = totalsComplete && totalViews > 0;
+    const sources = normalized.map(item => ({
+      ...item,
+      percentage: canCalculateShares && item.views !== null
+        ? Number(((item.views / totalViews) * 100).toFixed(1))
+        : null
+    }));
+    const top = canCalculateShares
+      ? [...sources].filter(item => item.known && item.views !== null).sort((left, right) => right.views - left.views)[0]
+      : null;
+
     return {
-      sources: sources.map(row => ({
-        source: row[0],
-        views: Number(row[1]) || 0,
-        percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
-      })),
-      topSource: sources.length > 0 ? sources[0][0] : 'unknown',
-      organicPercentage: this.calculateOrganicPercentage(sources),
-      available: sources.length > 0
+      sources,
+      totalViews,
+      totalsComplete,
+      topSource: top?.source || 'unknown',
+      organicPercentage: canCalculateShares ? this.calculateOrganicPercentage(rows) : null,
+      available: totalsComplete && validViews.length > 0,
+      dataQuality: {
+        status: !rows.length ? 'no_rows' : totalsComplete ? 'complete' : 'partial',
+        source: 'youtube_analytics',
+        note: 'Traffic-source reports expose views by source; source-level impressions and CTR are not inferred.'
+      }
     };
   }
 
@@ -794,14 +850,20 @@ class AnalyticsOptimizationAgent {
 
   analyzeSearchPerformance(trafficSources) {
     const sources = trafficSources?.sources || [];
-    if (!sources.length || !sources.some(source => source.percentage !== null && source.percentage !== undefined && source.percentage !== '' && Number.isFinite(Number(source.percentage)))) {
+    const knownSources = sources.filter(source => source.known !== false && source.group !== 'unknown');
+    const hasMeasuredShares = knownSources.some(source =>
+      source.percentage !== null && source.percentage !== undefined && source.percentage !== '' &&
+      Number.isFinite(Number(source.percentage))
+    );
+    if (!knownSources.length || !hasMeasuredShares) {
       return { searchPercentage: null, searchQuality: 'unknown', organicDiscovery: null };
     }
-    const searchSources = sources.filter(source =>
-      ['SEARCH', 'YOUTUBE_SEARCH'].includes(source.source) &&
-      source.percentage !== null && source.percentage !== undefined && source.percentage !== '' && Number.isFinite(Number(source.percentage))
+    const searchSources = knownSources.filter(source =>
+      ['YT_SEARCH', 'SEARCH', 'YOUTUBE_SEARCH'].includes(source.source) &&
+      source.percentage !== null && source.percentage !== undefined && source.percentage !== '' &&
+      Number.isFinite(Number(source.percentage))
     );
-    const searchPercentage = searchSources.reduce((sum, source) => sum + Number(source.percentage), 0);
+    const searchPercentage = Number(searchSources.reduce((sum, source) => sum + Number(source.percentage), 0).toFixed(1));
     return {
       searchPercentage,
       searchQuality: searchPercentage > 20 ? 'good' : searchPercentage > 10 ? 'average' : 'poor',
@@ -872,12 +934,23 @@ class AnalyticsOptimizationAgent {
   }
 
   calculateOrganicPercentage(sources) {
-    const organicSources = ['SEARCH', 'YOUTUBE_SEARCH', 'SUGGESTED_VIDEO'];
-    const totalViews = (sources || []).reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    const organicSources = new Set([
+      'YT_SEARCH', 'SEARCH', 'YOUTUBE_SEARCH', 'RELATED_VIDEO', 'SUGGESTED_VIDEO',
+      'VIDEO_BROWSE', 'SHORTS', 'PLAYLIST', 'YT_CHANNEL', 'YT_OTHER_PAGE',
+      'NOTIFICATION', 'SOUND_PAGE', 'END_SCREEN', 'SUBSCRIBER'
+    ]);
+    const rows = Array.isArray(sources) ? sources : [];
+    const numeric = value => value === null || value === undefined || value === ''
+      ? null
+      : Number.isFinite(Number(value)) ? Number(value) : null;
+    if (!rows.length) return null;
+    const values = rows.map(row => numeric(row?.[1]));
+    // A partial source report cannot produce a trustworthy share denominator.
+    if (values.some(value => value === null)) return null;
+    const totalViews = values.reduce((sum, value) => sum + value, 0);
     if (totalViews <= 0) return null;
-    const organicViews = (sources || [])
-      .filter(row => organicSources.includes(row[0]))
-      .reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    const organicViews = rows.reduce((sum, row, index) =>
+      sum + (organicSources.has(String(row?.[0] || '').toUpperCase()) ? values[index] : 0), 0);
     return Number(((organicViews / totalViews) * 100).toFixed(1));
   }
 
