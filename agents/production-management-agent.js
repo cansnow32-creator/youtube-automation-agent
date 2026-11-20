@@ -61,6 +61,56 @@ class ProductionManagementAgent {
   }
 
   async processContent(contentData) {
+    const jobId = contentData?.jobId;
+    if (!jobId) return this.processContentUnlocked(contentData);
+    if (typeof this.db.acquireProductionOperationLock !== 'function') {
+      throw new Error('Job production requires database operation-lock support');
+    }
+    const lockId = `job:${jobId}`;
+    const owner = `job_${process.pid}_${crypto.randomUUID()}`;
+    const leaseMs = 2 * 60 * 60 * 1000;
+    const acquired = await this.db.acquireProductionOperationLock(lockId, owner, leaseMs);
+    if (!acquired) {
+      const error = new Error(`Generation job ${jobId} is already being processed`);
+      error.code = 'PRODUCTION_JOB_LOCKED';
+      error.status = 409;
+      throw error;
+    }
+    let leaseFailure = null;
+    let renewalInFlight = Promise.resolve();
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    const heartbeat = setInterval(() => {
+      renewalInFlight = this.db.renewProductionOperationLock(lockId, owner, leaseMs)
+        .then(renewed => {
+          if (!renewed) leaseFailure = Object.assign(
+            new Error(`Generation job lease lost for ${jobId}`),
+            { code: 'PRODUCTION_JOB_LEASE_LOST', status: 409 }
+          );
+        })
+        .catch(cause => {
+          leaseFailure = Object.assign(
+            new Error(`Generation job lease could not be verified for ${jobId}: ${cause.message}`),
+            { code: 'PRODUCTION_JOB_LEASE_UNVERIFIED', status: 503 }
+          );
+        });
+    }, 30_000);
+    heartbeat.unref?.();
+    try {
+      return await this.processContentUnlocked(contentData, assertLease);
+    } finally {
+      clearInterval(heartbeat);
+      await renewalInFlight.catch(() => {});
+      await this.db.releaseProductionOperationLock(lockId, owner).catch(error => {
+        this.logger.error('Failed to release generation job lock:', error);
+      });
+    }
+  }
+
+  async processContentUnlocked(contentData, assertLease = async () => {}) {
+    await assertLease();
     let productionData = null;
     try {
       this.logger.info('Processing content for production...');
@@ -125,12 +175,13 @@ class ProductionManagementAgent {
       };
       productionData.jobId = jobId;
       productionData.timeline.productionWorkflow = createProductionWorkflow(approvedConcept.id);
-      const persistWorkflow = async () => this.db.updateProductionData(productionData);
+      const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
       
       // Add to pipeline
       this.pipeline.push(productionData);
       
       // Save to database
+      await assertLease();
       await this.db.saveProductionData(productionData);
       await this.db.saveProductionSnapshot(productionData);
       
@@ -186,6 +237,7 @@ class ProductionManagementAgent {
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         throw new Error('Production cannot be marked ready without a real MP4 final video');
       }
+      await assertLease();
       productionData.status = 'ready';
       productionData.timeline.readyForUpload = new Date().toISOString();
 
@@ -196,6 +248,7 @@ class ProductionManagementAgent {
     } catch (error) {
       this.logger.error('Failed to process content:', error);
       if (productionData?.id) {
+        await assertLease();
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
         await this.db.updateProductionData(productionData).catch(persistError => {
