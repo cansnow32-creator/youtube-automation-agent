@@ -87,6 +87,11 @@ class ContentStrategyAgent {
       this.fetchYouTubeTrends(),
       this.analyzeCompetitors()
     ]);
+    // Competitor performance is useful niche research, but it is not a substitute
+    // for the requested YouTube-wide trending feed in a weekly trend snapshot.
+    if (!Array.isArray(trends) || trends.length === 0) {
+      throw new Error('YouTube trending feed is unavailable; previous snapshot was preserved');
+    }
     const topics = this.mergeTrendData(trends, competitors);
     if (!topics.length) {
       throw new Error('Trend refresh returned no usable topics; previous snapshot was preserved');
