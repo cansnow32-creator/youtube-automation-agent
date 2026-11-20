@@ -35,7 +35,7 @@ For Kling tasks, supply the originating task type when known:
 }
 ```
 
-Allowed task types are `text2video` and `image2video`. The server queries the configured provider before changing the local row. It accepts only a recognized remote status. A running/queued task is resumed by polling the same external ID; a succeeded task becomes `download_pending` so the existing output can be downloaded without generating another video.
+Allowed task types are `text2video` and `image2video`. The server queries the configured provider before changing the local row. It accepts only a recognized remote status. A running/queued task is resumed by polling the same external ID; a succeeded task becomes `download_pending` so the existing output can be downloaded without generating another video. The final update is conditional on the row still having the status and external task ID that were read before the provider query; if another operator action or worker changed it meanwhile, the API returns `409` and does not overwrite the newer state.
 
 ## Resolve an ambiguous submission that does not exist remotely
 
