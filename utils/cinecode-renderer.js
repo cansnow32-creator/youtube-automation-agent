@@ -165,15 +165,18 @@ class CineCodeRenderer {
             createdPaths.push(manifestPath);
             await assertLease();
           } catch (error) {
-            await removeAttemptFiles([temporaryPath, manifestTemp]);
+            await removeAttemptFiles([temporaryPath, manifestTemp, outputPath, manifestPath]);
             if (isLeaseFailure(error)) {
-              await removeAttemptFiles([outputPath, manifestPath, ...createdPaths]);
+              await removeAttemptFiles(createdPaths);
               createdPaths.length = 0;
             }
             throw error;
           }
         } else {
           await assertLease();
+          // Cached scene files belong to this uncommitted attempt prefix too.
+          // Keep them for a normal retry, but remove them if this worker loses its lease.
+          createdPaths.push(outputPath, manifestPath);
           this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
         }
 
