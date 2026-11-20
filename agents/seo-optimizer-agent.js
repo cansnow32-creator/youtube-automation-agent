@@ -63,13 +63,15 @@ class SEOOptimizerAgent {
     }
   }
 
-  async optimize(script, strategy) {
+  async optimize(script, strategy, assertLease = async () => {}) {
     try {
+      await assertLease();
       this.logger.info(`Optimizing SEO for: ${script.title}`);
       
       const platformMetadata = getReviewedPlatformMetadata(script);
       // Reuse the independently reviewed metadata instead of making another provider call.
       const aiSEO = platformMetadata ? null : await this.generateSEOWithAI(script, strategy);
+      await assertLease();
       let title, description, tags;
 
       if (aiSEO) {
@@ -78,12 +80,15 @@ class SEOOptimizerAgent {
         this.logger.info('Using template SEO optimization');
         // Generate optimized title
         title = await this.optimizeTitle(script.title, strategy);
-        
+        await assertLease();
+
         // Generate description
         description = await this.generateDescription(script, strategy);
-        
+        await assertLease();
+
         // Extract and optimize tags
         tags = await this.generateTags(script, strategy);
+        await assertLease();
       }
       
       if (platformMetadata?.youtube) {
@@ -103,7 +108,8 @@ class SEOOptimizerAgent {
       
       // Calculate SEO score
       const seoScore = await this.calculateSEOScore(title, description, tags);
-      
+      await assertLease();
+
       const seoData = {
         title,
         description,
@@ -124,9 +130,11 @@ class SEOOptimizerAgent {
         createdAt: new Date().toISOString()
       };
       
-      // Save to database
+      // Persist only while this worker still owns the generation job.
+      await assertLease();
       await this.db.saveSEOData(seoData);
-      
+      await assertLease();
+
       this.logger.info(`SEO optimization complete. Score: ${seoScore}/100`);
       return seoData;
     } catch (error) {
