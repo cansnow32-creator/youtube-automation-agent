@@ -2,6 +2,20 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Serialize short scene edits and uploaded asset replacement
+
+- Branch: `feat/video-concept-approval`.
+- Static review found `updateScene()`, `reorder()`, and `replaceAsset()` bypassed the production-scoped operation lock used by rebuild/resume. Concurrent edits could race scene metadata, ordering, or asset publication.
+- Added `withProductionEditLock()` using the existing owner-scoped DB lock and guaranteed owner-only release in `finally`. Wrapped the three short operations; lock contention returns `SCENE_EDIT_IN_PROGRESS` (409).
+- Added regression coverage for a competing lock owner preventing an edit and successful owner release.
+- Commits: `37bdd45d359ca27a8d7f779c06f0e8c15962ce4e`, `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0`.
+- Re-fetched both changed files from GitHub and confirmed the wrappers/test are present. No test or lint execution occurred; GitHub reports zero workflow runs for PR #2 head. No pass is claimed.
+- Next: add lease heartbeat/assertions for long-running visual/narration regeneration and silence override; then obtain actual CI execution. Do not merge.
+
+
+
+Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
+
 ## 2026-11-20 — Fence scene rebuild manifest and shared-output cleanup with lease checks
 
 - Static review found `rebuildUnlocked()` called `getEditableBundle()` which could create a missing scene manifest through `ensureManifest()` without receiving the active rebuild lease. It also validated and hashed scene files without periodic lease checks, and could delete a shared visual/final output after a validation failure before verifying ownership.
