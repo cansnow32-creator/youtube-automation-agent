@@ -171,6 +171,41 @@ async function run() {
     assert.equal(fake.lastVideoResult.actualProvider, 'cinecode');
     assert.equal(slideshowCalls, 0);
 
+    let receivedAttemptId = null;
+    let receivedLease = null;
+    const leaseLostGenerator = {
+      logger: { info() {}, error() {} },
+      mediaGeneration: {
+        settings: async () => ({ provider: 'replicate', resolution: '720p', aspectRatio: '16:9' }),
+        generateClips: async options => {
+          receivedAttemptId = options.attemptId;
+          receivedLease = options.assertLease;
+          throw Object.assign(new Error('generation lease lost while waiting for remote clip'), {
+            code: 'GENERATION_JOB_LEASE_LOST',
+            status: 409
+          });
+        }
+      },
+      generateSlideshowVideo: async () => {
+        slideshowCalls++;
+        return 'unexpected-fallback.mp4';
+      }
+    };
+    await assert.rejects(
+      () => AIVideoGenerator.prototype.generateVideo.call(
+        leaseLostGenerator, { title: 'Test' }, [imageOne], 'voice.mp3', 'lease-fenced-final.mp4',
+        {
+          productionId: 'production-lease-fence',
+          attemptId: 'attempt-lease-1',
+          assertLease: async () => {}
+        }
+      ),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(receivedAttemptId, 'attempt-lease-1');
+    assert.equal(typeof receivedLease, 'function');
+    assert.equal(slideshowCalls, 0, 'lease loss must not trigger the slideshow fallback');
+
     const failing = {
       ...fake,
       cineCodeRenderer: { renderScenes: async () => { throw new Error('CineCode test failure'); } }
