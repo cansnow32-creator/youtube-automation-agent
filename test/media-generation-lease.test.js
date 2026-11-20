@@ -910,7 +910,7 @@ async function testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory() {
   }
 }
 
-async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting() {
+async function testLegacyFailedTaskPollingErrorReconcilesInsteadOfResubmitting() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-remote-reconcile-'));
   const db = makeStatefulMediaTaskDb({
     id: 'media-running-task',
@@ -919,7 +919,7 @@ async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting
     scene_index: 0,
     provider: 'test-provider',
     model: 'test-model',
-    status: 'running',
+    status: 'failed',
     external_task_id: 'existing-remote-task',
     providerData: { model: 'test-model' },
     output_path: null,
@@ -996,7 +996,7 @@ async function main() {
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testConcurrentTerminalRetryClaimCannotSubmitSecondRemoteJob();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
-  await testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting();
+  await testLegacyFailedTaskPollingErrorReconcilesInsteadOfResubmitting();
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
   await testPartialAttemptCleanupPreservesReusedClips();
   await testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence();
