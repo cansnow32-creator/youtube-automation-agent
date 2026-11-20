@@ -490,3 +490,10 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added the regression test to the npm test script and documented both retry endpoints in docs/PUBLISHING_RECONCILIATION.md.
 - PR #2 commits: 7c3043a754201fffbb6f354bb0b8c9c86750b5aa, f794729381d97432db4eec45c76afae6309cf0a5, 6c3034243042a395e3f5eb23e1e64f243571160e, 17702f00f6445c919dcbaaa31c90408f3e9e90cc, 78ad061bb95f18448e82c68943c562eb4cefcbd6.
 - Static JavaScript syntax checks passed for the publishing agent, route file, and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint were not run in this session. PR #2 head: 78ad061bb95f18448e82c68943c562eb4cefcbd6, open/draft/unmerged, base unchanged, no workflow runs. No merge, rebase, or base change performed.
+
+### Missing-metric protection in channel learning — 2026-11-20
+- Fixed ChannelLearningEngine.normalizeMetrics(): unavailable views, impressions, CTR, retention, watch time, engagement, and derived ratios remain null instead of being converted to zero.
+- Dimension recommendations now exclude unmeasured metric values. Channel packaging and retention recommendations each require at least two genuinely measured values, and their evidence sample size reflects only those measured videos.
+- Added test/channel-learning-missing-metrics.test.js for partial analytics normalization, no false recommendations from missing CTR/retention, and exclusion of unmeasured cohorts. Wired it into npm test.
+- PR #2 commits: d32a6be3a82312277a4e3f413b4e199cba032937, b7c09132e271dbe49807cac67bccc29c422028e9, de0fcafa2c94782cf866b2c158dbc88ce58975b4.
+- Static JavaScript syntax checks passed for the learning engine and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint not run. PR #2 remains open/draft/unmerged; no merge, rebase, or base change.
