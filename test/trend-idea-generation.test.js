@@ -183,6 +183,8 @@ async function run() {
         'local idea generation should receive niche-ranked competitor format evidence');
       assert.match(body.messages[0].content, /numbered_list/,
         'competitor template guidance should include the ranked pattern metadata');
+      assert.ok(body.messages[0].content.indexOf('numbered_list') < body.messages[0].content.indexOf('question'),
+        'template guidance should be globally sorted by niche ranking across competitor channels');
       return {
         ok: true,
         json: async () => ({
@@ -230,11 +232,24 @@ async function run() {
 
     const strategy = new ContentStrategyAgent(db, {});
     strategy.competitorData = [{
+      channelId: 'UC-lower-ranked',
+      topPerformingTemplates: [{
+        patternId: 'question',
+        format: 'explainer',
+        sampleCount: 3,
+        nicheFitScore: 35,
+        rankingScore: 42,
+        rankingBasis: 'niche_fit_and_performance',
+        evidence: [{ title: 'Why does editing take so long?' }]
+      }]
+    }, {
+      channelId: 'UC-higher-ranked',
       topPerformingTemplates: [{
         patternId: 'numbered_list',
         format: 'tutorial',
         sampleCount: 2,
         nicheFitScore: 82,
+        rankingScore: 86,
         rankingBasis: 'niche_fit_and_performance',
         evidence: [{ title: '7 AI video editing steps for beginners' }]
       }]
