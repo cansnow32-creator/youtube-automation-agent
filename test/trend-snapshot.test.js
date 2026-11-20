@@ -1,10 +1,14 @@
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const path = require('node:path');
+const fs = require('node:fs/promises');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
 const { DailyAutomation } = require('../schedules/daily-automation');
 
 async function run() {
   const db = new Database();
+  db.dbPath = path.join(os.tmpdir(), `agenttube-trend-snapshot-${process.pid}-${Date.now()}.db`);
   await db.initialize();
   const createdIds = [];
 
@@ -99,6 +103,9 @@ async function run() {
       );
     }
     await db.close();
+    await Promise.all(['', '-wal', '-shm'].map(suffix =>
+      fs.rm(`${db.dbPath}${suffix}`, { force: true })
+    ));
   }
 
   process.stdout.write('Weekly trend snapshot tests passed\\n');
