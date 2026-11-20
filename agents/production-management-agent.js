@@ -154,7 +154,7 @@ class ProductionManagementAgent {
         status: 'processing',
         assets: {
           script: await this.processScript(script, assertLease),
-          thumbnail: await this.processThumbnail(thumbnail, script),
+          thumbnail: await this.processThumbnail(thumbnail, script, assertLease),
           audio: null, // Will be generated later
           video: null, // Will be generated later
           captions: null // Will be generated later
@@ -511,11 +511,13 @@ class ProductionManagementAgent {
     return ttsText;
   }
 
-  async processThumbnail(thumbnail, script) {
+  async processThumbnail(thumbnail, script, assertLease = async () => {}) {
     try {
       // Try to generate AI thumbnail first
+      await assertLease();
       const thumbnailScript = thumbnail.script || script || { title: thumbnail.title || 'Untitled Video' };
       const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal');
+      await assertLease();
 
       // generateThumbnail returns a simulated placeholder instead of throwing when
       // no image provider works; the designer's real image beats that placeholder.
@@ -529,6 +531,8 @@ class ProductionManagementAgent {
         };
       }
     } catch (error) {
+      // Do not turn lease loss into a thumbnail fallback write.
+      await assertLease();
       this.logger.error('AI thumbnail generation failed:', error);
     }
 
@@ -540,7 +544,9 @@ class ProductionManagementAgent {
 
     if (thumbnail.path && await fs.access(thumbnail.path).then(() => true).catch(() => false)) {
       const originalBuffer = await fs.readFile(thumbnail.path);
+      await assertLease();
       await fs.mkdir(path.dirname(productionThumbnailPath), { recursive: true });
+      await assertLease();
       await fs.writeFile(productionThumbnailPath, originalBuffer);
       return {
         path: productionThumbnailPath,
@@ -551,7 +557,9 @@ class ProductionManagementAgent {
     }
 
     // Create placeholder
+    await assertLease();
     await fs.mkdir(path.dirname(productionThumbnailPath), { recursive: true });
+    await assertLease();
     await fs.writeFile(productionThumbnailPath + '.placeholder', 'Thumbnail placeholder');
     return {
       path: productionThumbnailPath + '.placeholder',
