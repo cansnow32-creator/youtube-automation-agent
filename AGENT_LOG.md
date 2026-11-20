@@ -37,6 +37,17 @@
 
 # AgentTube — Continuity Log
 
+## 2026-11-20 — Remove partial image outputs after provider failure
+
+- Branch: feat/video-concept-approval.
+- Audit found generateVisualAssets() added a generated image path to its cleanup list only after generateImage() completed. A provider that wrote partial bytes and then threw could leave an orphan file before the simulation fallback.
+- Register the UUID-scoped image output path before invoking generateImage(); on failure, remove every path from the current attempt before invoking the existing simulation fallback.
+- Added test/visual-generation-artifact-cleanup.test.js to simulate a provider partial write followed by failure and assert that the partial file is removed. Added test to npm test.
+- Commits: fb3cf772bfc2372cfdecc4df4669e1007d0a82ee, c3f81469c0b779eeefa0bf1ebdd8cd7c88e9575e, 660b967a0911be27e686bbfce6777ef74f663478.
+- Re-fetched implementation, test and package.json through GitHub. Static verification only; no tests/lint run. Current PR #2 head has zero workflow runs.
+- Next: inspect provider internals for secondary temp outputs, continue side-effect audit and obtain CI. Do not merge.
+
+
 ## 2026-11-20 — Clean up stale visual and narration regeneration artifacts
 
 - Audited SceneRepairService.regenerateNarrationUnlocked() and regenerateUnlocked() for side effects after lease loss/provider failure.
