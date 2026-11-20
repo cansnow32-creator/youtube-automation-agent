@@ -206,6 +206,7 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
             const review = await this.db.saveScriptQualityReview({
               topic: strategy.topic,
               strategy,
+              jobId: strategy.jobId || null,
               draft: error.draft,
               qualityReport: error.qualityReport || this.qualityPipeline.lastReport
             });
