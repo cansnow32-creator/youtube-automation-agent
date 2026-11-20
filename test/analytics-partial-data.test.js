@@ -87,6 +87,70 @@ async function run() {
   assert.equal(agent.calculateOrganicPercentage([['SEARCH', 75], ['SUGGESTED_VIDEO', 15], ['EXTERNAL', 10]]), 90);
   assert.equal(agent.calculateOrganicPercentage([]), null, 'organic share is unknown when total views are zero');
 
+  // Empty successful reports mean "not measured in this window", not zero retention or CTR.
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: {} })
+    }
+  };
+  const emptyWatchTime = await agent.getWatchTimeAnalytics('empty-video', '2026-11-01', '2026-11-20');
+  assert.equal(emptyWatchTime.totalWatchTime, null);
+  assert.equal(emptyWatchTime.averageViewPercentage, null);
+  assert.equal(emptyWatchTime.retentionQuality, 'unknown');
+  assert.equal(emptyWatchTime.available, false);
+
+  const emptyThumbnail = await agent.analyzeThumbnailPerformance('empty-video', {
+    startDate: '2026-11-01', endDate: '2026-11-20'
+  });
+  assert.equal(emptyThumbnail.impressions, null);
+  assert.equal(emptyThumbnail.clickThroughRate, null);
+  assert.equal(emptyThumbnail.available, false);
+  assert.deepEqual(emptyThumbnail.recommendations, [
+    'Thumbnail performance is unavailable for this measurement window'
+  ]);
+
+  const noMetricScore = agent.calculatePerformanceScore({
+    views: { totalViews: null, averageCTR: null },
+    watchTime: { averageViewPercentage: null },
+    engagement: { engagementRate: null }
+  });
+  assert.equal(noMetricScore.score, null, 'no measured metrics must not be presented as a zero performance score');
+  assert.equal(noMetricScore.grade, 'N/A');
+
+  const unknownSearch = agent.analyzeSearchPerformance({ sources: [] });
+  assert.equal(unknownSearch.searchPercentage, null);
+  assert.equal(unknownSearch.searchQuality, 'unknown');
+  assert.equal(unknownSearch.organicDiscovery, null);
+
+  const neutralInsights = await agent.generateInsights(
+    { title: 'Video', description: '', tags: [] },
+    {
+      views: { totalViews: null },
+      watchTime: { averageViewPercentage: null },
+      engagement: { engagementRate: null }
+    },
+    { clickThroughRate: null },
+    { overallSEOScore: 60 }
+  );
+  assert.equal(neutralInsights.some(item => ['views', 'retention', 'thumbnail', 'engagement'].includes(item.category)), false,
+    'missing measurements must not produce low-performance warnings');
+
+  // Engagement rates must use the same Analytics measurement window, not lifetime Data API counters.
+  let engagementQuery = null;
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async args => {
+        engagementQuery = args;
+        return { data: { rows: [[1000, 40, 10]] } };
+      }
+    }
+  };
+  const engagement = await agent.calculateEngagementMetrics('window-video', '2026-11-01', '2026-11-20');
+  assert.equal(engagementQuery.startDate, '2026-11-01');
+  assert.equal(engagementQuery.endDate, '2026-11-20');
+  assert.equal(engagement.engagementRate, 5);
+  assert.equal(engagement.views, 1000);
+
   // If every core metric endpoint fails, the fallback is explicit and ineligible for learning.
   for (const method of [
     'getViewsAnalytics',
