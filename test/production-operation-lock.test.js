@@ -93,6 +93,46 @@ async function run() {
     assert.deepEqual(unchanged, { status: 'processing', priority: 50 },
       'a stale worker cannot overwrite production state after lease takeover');
     await connectionB.releaseProductionOperationLock('guarded-production', 'new-owner');
+
+    // Manifest replacement runs on a dedicated SQLite connection in one
+    // BEGIN IMMEDIATE transaction. A stale lease cannot delete existing rows.
+    connectionA.dbPath = lockPath;
+    await connectionA.executeQuery(`CREATE TABLE production_scenes (
+      id TEXT PRIMARY KEY, production_id TEXT NOT NULL, position INTEGER NOT NULL,
+      label TEXT, script_text TEXT, prompt TEXT, duration REAL, asset_type TEXT,
+      asset_origin TEXT, asset_path TEXT, audio_path TEXT, narration_provider TEXT,
+      narration_model TEXT, narration_task_id TEXT, narration_error TEXT,
+      narration_generated_at TEXT, narration_cost TEXT, provider TEXT, model TEXT,
+      external_task_id TEXT, status TEXT, narration_status TEXT, revision INTEGER,
+      locked INTEGER, rights_confirmed INTEGER, provenance_source_ids TEXT,
+      contains_synthetic_media INTEGER, estimated_cost TEXT, actual_cost TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(production_id, position)
+    )`);
+    await connectionA.executeQuery(
+      'INSERT INTO production_scenes (id, production_id, position, label) VALUES (?, ?, ?, ?)',
+      ['keep-scene', 'guarded-production', 0, 'Original']
+    );
+    await assert.rejects(
+      connectionA.replaceProductionScenes('guarded-production', [], {
+        productionId: 'guarded-production', owner: 'old-owner'
+      }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.equal((await connectionA.getProductionScene('guarded-production', 'keep-scene')).label, 'Original',
+      'stale manifest replacement cannot delete existing scenes');
+
+    // A failure halfway through replacement rolls back the deletion and the
+    // first insert, preserving the previous complete manifest.
+    await connectionA.acquireProductionOperationLock('guarded-production', 'atomic-owner', 10000);
+    await assert.rejects(connectionA.replaceProductionScenes('guarded-production', [
+      { id: 'duplicate-scene', label: 'First', duration: 5 },
+      { id: 'duplicate-scene', label: 'Duplicate', duration: 5 }
+    ], { productionId: 'guarded-production', owner: 'atomic-owner' }));
+    const preserved = await connectionA.getProductionScene('guarded-production', 'keep-scene');
+    assert.equal(preserved.label, 'Original',
+      'failed multi-row manifest replacement rolls back and preserves the previous manifest');
+    await connectionA.releaseProductionOperationLock('guarded-production', 'atomic-owner');
   } finally {
     await Promise.all([
       new Promise(resolve => connectionA.db.close(() => resolve())),
