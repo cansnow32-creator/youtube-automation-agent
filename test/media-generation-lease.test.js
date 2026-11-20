@@ -381,6 +381,27 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
     assert.equal(secondClaim.createdByThisInvocation, false,
       'a second caller must not believe it owns an existing unique task row');
     assert.equal(secondClaim.id, firstClaim.id);
+
+    const manualClaims = await Promise.all([
+      db.createMediaGenerationTask({
+        jobId: null,
+        productionId: 'production-concurrent-manual-claim',
+        sceneIndex: 5,
+        provider: 'test-provider',
+        model: 'test-model'
+      }),
+      db.createMediaGenerationTask({
+        jobId: null,
+        productionId: 'production-concurrent-manual-claim',
+        sceneIndex: 5,
+        provider: 'test-provider',
+        model: 'test-model'
+      })
+    ]);
+    assert.equal(manualClaims[0].id, manualClaims[1].id,
+      'concurrent manual callers must resolve to the same production-scoped task row');
+    assert.equal(manualClaims.filter(task => task.createdByThisInvocation).length, 1,
+      'exactly one concurrent manual caller may claim the new task row');
   } finally {
     await db.close();
     await fs.rm(directory, { recursive: true, force: true });
