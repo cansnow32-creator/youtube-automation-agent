@@ -43,7 +43,7 @@ async function run() {
     assert.equal(result.winnerArmId, null, 'sequential observations cannot establish a winner');
     assert.equal(result.comparisonMethod, 'sequential_same_video_observational');
     assert.equal(result.exposureAttribution, 'unavailable_from_youtube_analytics');
-    assert.equal(result.eligibleArms, 1);
+    assert.equal(result.armsWithObservations, 2);
     assert.match(result.reason, /does not attribute impressions and clicks/i);
   }
 
@@ -54,7 +54,7 @@ async function run() {
     assert.equal(result.winnerArmId, null, 'even a small difference must remain observational');
     assert.equal(result.confidence, 'unverified');
     assert.equal(result.guardrails.passed, false);
-    assert.equal(result.arms.find(arm => arm.armId === 'variant').observedCtr, 8.1);
+    assert.equal(result.arms.find(arm => arm.armId === 'variant').observedVideoCtr, 8.1);
   }
 
   {
@@ -140,7 +140,7 @@ async function run() {
     )[0].experimentFeedback;
     assert.equal(linked.causalInterpretation, 'observational_only_no_causal_winner');
     assert.equal(linked.exposureAttribution, 'unavailable_from_youtube_analytics');
-    assert.equal(linked.armObservations[0].observedCtr, 5.2);
+    assert.equal(linked.armObservations[0].observedVideoCtr, 5.2);
   }
 
   process.stdout.write('Growth experiment evidence tests passed\\n');
