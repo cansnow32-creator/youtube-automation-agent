@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const Replicate = require('replicate');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
@@ -566,16 +567,67 @@ class AIVideoGenerator {
     if (!segments.length) throw new Error('No usable provider clips or still images were generated');
 
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
+    const visualTempPath = visualPath.replace(/\.mp4$/i, '_rendering.mp4');
+    const visualManifestPath = visualPath + '.render.json';
     const finalTempPath = outputPath.replace(/\.mp4$/i, '_finalizing.mp4');
+    const sourceFingerprint = [];
+    for (const segment of segments) {
+      const stats = await fs.stat(segment.path);
+      if (!stats.isFile() || stats.size <= 0) throw new Error(`Hybrid video source is missing or empty: ${segment.path}`);
+      sourceFingerprint.push({
+        type: segment.type,
+        path: path.resolve(segment.path),
+        size: stats.size,
+        mtimeMs: stats.mtimeMs,
+        duration: Number(segment.duration)
+      });
+    }
+    const visualFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+      segments: sourceFingerprint,
+      renderOptions: { width: renderOptions.width || 1920, height: renderOptions.height || 1080, fps: 30, codec: 'libx264', pixelFormat: 'yuv420p' }
+    })).digest('hex');
+
     try {
-      await this.renderMediaTimeline(segments, visualPath, renderOptions);
+      let visualCached = false;
+      try {
+        const [manifest, stats] = await Promise.all([
+          fs.readFile(visualManifestPath, 'utf8').then(JSON.parse),
+          fs.stat(visualPath)
+        ]);
+        if (manifest.fingerprint === visualFingerprint && stats.isFile() && stats.size > 0) {
+          await this.validateRenderedVideo(visualPath);
+          visualCached = true;
+          this.logger.info('Reusing completed hybrid visual timeline; audio mux will resume.');
+        }
+      } catch (_cacheError) {
+        visualCached = false;
+      }
+
+      if (!visualCached) {
+        await fs.rm(visualTempPath, { force: true });
+        await this.renderMediaTimeline(segments, visualTempPath, renderOptions);
+        await this.validateRenderedVideo(visualTempPath);
+        await fs.rm(visualPath, { force: true });
+        await fs.rename(visualTempPath, visualPath);
+        const manifestTempPath = visualManifestPath + '.tmp';
+        await fs.writeFile(manifestTempPath, JSON.stringify({
+          version: 1,
+          fingerprint: visualFingerprint,
+          sources: sourceFingerprint,
+          renderedAt: new Date().toISOString()
+        }, null, 2));
+        await fs.rename(manifestTempPath, visualManifestPath);
+      }
+
       await this.addAudioToVideo(visualPath, audioPath, finalTempPath, { loopVideo: true });
       await this.validateRenderedVideo(finalTempPath);
       await fs.rm(outputPath, { force: true });
       await fs.rename(finalTempPath, outputPath);
       return outputPath;
     } finally {
-      await fs.rm(visualPath, { force: true }).catch(() => {});
+      // Keep the completed visual-only timeline and its manifest: a failed audio
+      // mux must not force the expensive image/clip concatenation to run again.
+      await fs.rm(visualTempPath, { force: true }).catch(() => {});
       await fs.rm(finalTempPath, { force: true }).catch(() => {});
     }
   }
