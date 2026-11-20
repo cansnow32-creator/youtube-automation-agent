@@ -386,3 +386,11 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added `test/shorts-render-operation-lock.test.js` to verify callback propagation, lock held during render, competing request returns 409, release after completion, and missing lock support returns 503. Added the test to `npm test`.
 - Commits: `9431be18515ac2828d9ebd1d5e3312b511639614`, `db70d2646df8263f35e81778d5914cd3ba9fbdb9`, `d86946d64fe9ad3518b4ff39faf8435ee2034664`.
 - Static JavaScript syntax checks passed for `index.js` and the new test; `package.json` parsed and test wiring was confirmed. Runtime tests/lint were not executed. PR #2 remains open/draft/unmerged, base `feat/local-first-quality-gate`, head `d86946d64fe9ad3518b4ff39faf8435ee2034664`, `mergeable: false`; no workflow runs on this head.
+
+## 2026-11-20 — Fence Shorts render database commits by attempt ID
+
+- Found `renderAttemptId` was being passed by the service but was not part of the SQLite schema or persistence methods. Added `render_attempt_id` and `render_metadata` columns through the idempotent migration helper and persisted/parsed both fields.
+- Added `updateShortClipForRender()` using a conditional SQLite UPDATE that only commits while the row remains `status='rendering'` and `render_attempt_id` matches. Render success and ordinary failure use this method; a superseded attempt cannot publish an output path or overwrite the newer attempt. The service now fails closed if the DB CAS method is missing, and edits are rejected while rendering.
+- Added a real SQLite compare-and-set regression test and service regressions for superseded attempts and edits during render; all new tests are wired into `npm test`.
+- Commits: `de935a6b4af92e2cbe76a115904bf47f7ebcd416`, `6a4cfd33d4fe2f5d6746aa716138f6a5f9a5d3ba`, `8297cd16669ba6e8b2190653f7f7f9410e5452bb`, `356a2975035a0773d787cc7df409d2442b5da836`, `a1581a8eb4235ef6573d042c10f9e12b9ee0602d`, `8ea31af5d1a29e920fb877ba0e327c63aaea24fd`, `73bcc460430ab8f3d2fbc6358bf905d368bc8ba6`, `487c4d26ac25982b7a15fe28a8991c3fcd326d90`.
+- Static JavaScript syntax checks passed for all touched JS files; `package.json` parsed and test wiring was confirmed. Runtime tests/lint not executed. PR #2 remains open/draft/unmerged; latest head is recorded in GitHub PR metadata; no workflow runs.
