@@ -1368,6 +1368,39 @@ class Database {
     return this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
   }
 
+  async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}) {
+    const current = await this.getMediaGenerationTaskById(taskId);
+    const expectedRemoteId = expectedExternalTaskId || null;
+    if (!current || current.status !== expectedStatus || (current.external_task_id || null) !== expectedRemoteId) {
+      return { updated: false, task: current };
+    }
+
+    // The WHERE clause is the concurrency guard. The read above only supplies
+    // unchanged columns; it is never treated as proof that this caller still owns
+    // the row after an asynchronous provider status lookup.
+    const result = await this.executeQuery(
+      `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
+       output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now')
+       WHERE id = ? AND status = ? AND external_task_id IS ?`,
+      [
+        changes.model === undefined ? current.model : changes.model,
+        changes.externalTaskId === undefined ? current.external_task_id : changes.externalTaskId,
+        changes.status === undefined ? current.status : changes.status,
+        JSON.stringify(changes.providerData === undefined ? (current.providerData ?? {}) : (changes.providerData ?? {})),
+        changes.outputPath === undefined ? current.output_path : changes.outputPath,
+        changes.error === undefined ? current.error : changes.error,
+        changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+        taskId,
+        expectedStatus,
+        expectedRemoteId
+      ]
+    );
+    return {
+      updated: result.changes === 1,
+      task: await this.getMediaGenerationTaskById(taskId)
+    };
+  }
+
   async listMediaGenerationTasks(jobId) {
     const rows = await this.getAllRows('SELECT * FROM media_generation_tasks WHERE job_id = ? ORDER BY scene_index, created_at', [jobId]);
     return rows.map(row => this.parseMediaGenerationTask(row));
