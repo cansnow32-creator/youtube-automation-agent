@@ -1275,13 +1275,26 @@ class Database {
     }
 
     const id = this.generateId('media');
-    const insertResult = await this.executeQuery(
-      `INSERT INTO media_generation_tasks (
-        id, job_id, production_id, scene_index, provider, model, status, request, provider_data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
-      ${jobId ? 'ON CONFLICT(job_id, scene_index, provider) DO NOTHING' : ''}`,
-      [id, jobId, productionId, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
-    );
+    const insertResult = jobId
+      ? await this.executeQuery(
+        `INSERT INTO media_generation_tasks (
+          id, job_id, production_id, scene_index, provider, model, status, request, provider_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
+        ON CONFLICT(job_id, scene_index, provider) DO NOTHING`,
+        [id, jobId, productionId, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
+      )
+      : await this.executeQuery(
+        `INSERT INTO media_generation_tasks (
+          id, job_id, production_id, scene_index, provider, model, status, request, provider_data
+        )
+        SELECT ?, NULL, ?, ?, ?, ?, ?, ?, '{}'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM media_generation_tasks
+          WHERE job_id IS NULL AND production_id = ? AND scene_index = ? AND provider = ?
+        )`,
+        [id, productionId, input.sceneIndex, input.provider, input.model, input.status || 'submitting',
+          JSON.stringify(input.request || {}), productionId, input.sceneIndex, input.provider]
+      );
     const createdByThisInvocation = insertResult.changes === 1;
     if (jobId && !createdByThisInvocation) {
       await this.executeQuery(
