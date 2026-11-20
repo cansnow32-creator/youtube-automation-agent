@@ -11,8 +11,8 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0`; 0 workflow runs |
-| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `07651ee8125a838d1209b4da564cee7a49dfd2dc` before this state refresh |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`; 0 workflow runs |
+| [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `152e6eb3ce4c31646f98e524d2ef5e536ced85d3` before this state refresh |
 
 PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `322cd1f0aff871dd09720c46dfdf20a3c71038ac`; compare against the live base branch before attempting synchronization. PR #2 remains open/draft/unmerged and GitHub reports zero workflow runs on its current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
@@ -82,3 +82,13 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 - Added regression coverage for lock contention and owner-only release in `test/production-operation-lock.test.js`.
 - Commits: `37bdd45d359ca27a8d7f779c06f0e8c15962ce4e` (service), `550e7be00ad7c9f2b2a742da46a0441d9ce01ed0` (test).
 - Static inspection only. Tests and lint were not executed. Narration regeneration, visual regeneration, and silence override remain to audit for long-running lease heartbeats and stale-worker side effects.
+
+
+## Latest PR #2 scene-operation lease protection — 2026-11-20
+
+- Live PR #2 head: `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`, open/draft/unmerged; base remains `feat/local-first-quality-gate` at `9438d3d6e9015684cc074f832188e05ecbf3ab51`.
+- Static audit found paid visual regeneration, narration regeneration, and silence overrides were not using the shared production operation lock. Added `withProductionOperationLease()` with owner-scoped acquisition/release, 60-second heartbeat renewal, and fail-closed lease assertions. Wrapped all three mutation paths and added assertions around provider returns and DB writes; lease loss is not converted into a normal failed-generation write.
+- Added regression coverage for lock contention, heartbeat lease loss/release, and all three public mutation wrappers.
+- Commits: `aada5058e501de82bcb3d71191d0591bc9e4e10d` (service) and `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b` (tests).
+- GitHub Actions still reports zero workflow runs on current PR #2 head. Tests/lint were not executed. Provider internals can still create orphan temporary output before the post-provider lease check; cooperative checks are not atomic filesystem fencing.
+- Next: inspect media-generation provider output cleanup and route-level review refresh side effects; then establish real CI. Preserve stacked PR relationship; do not merge.
