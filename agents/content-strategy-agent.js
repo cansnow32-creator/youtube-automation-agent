@@ -573,13 +573,22 @@ class ContentStrategyAgent {
     }
 
     const existing = await this.db.listContentIdeas();
-    const existingTopics = new Set(existing.map(item => String(item.topic || '').trim().toLowerCase()));
     const history = await this.db.listPerformanceSnapshots({ reliableOnly: true });
     const parseRationale = value => {
       if (!value) return {};
       if (typeof value === 'object') return value;
       try { return JSON.parse(value); } catch { return {}; }
     };
+    // Include saved angles and pillars, not only titles, so a new title cannot
+    // reintroduce an editorial concept already present in the channel backlog.
+    const existingIdeasForDedup = existing.map(item => {
+      const rationale = parseRationale(item.rationale);
+      return {
+        topic: String(item.topic || '').trim(),
+        angle: String(item.angle || '').trim(),
+        pillar: String(rationale.pillar || '').trim()
+      };
+    }).filter(item => item.topic);
 
     // Re-score saved trend ideas still waiting in the backlog using the newest
     // real channel outcomes. Production ideas are intentionally left untouched.
@@ -613,7 +622,7 @@ class ContentStrategyAgent {
     }
 
     const rankedCandidates = scoreTrendIdeas(response, trendTopics, channelStrategy, history, audienceDemand);
-    const qualityGate = filterTrendIdeasForApproval(rankedCandidates, [...existingTopics], {
+    const qualityGate = filterTrendIdeasForApproval(rankedCandidates, existingIdeasForDedup, {
       channelStrategy,
       minimumScore: options.minimumScore
     });
@@ -643,7 +652,7 @@ class ContentStrategyAgent {
         })
       });
       created.push({ id: stored.id, topic: stored.topic, score: idea.score, scoreBreakdown: idea.scoreBreakdown });
-      existingTopics.add(idea.topic.toLowerCase());
+      existingIdeasForDedup.push({ topic: idea.topic, angle: idea.angle || '', pillar: idea.pillar || '' });
     }
 
     return {
