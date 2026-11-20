@@ -25,6 +25,22 @@ assert.deepEqual(
   getAppliedPackagingLearning(experiment, 1, 1).appliedTo,
   ['title', 'thumbnail']
 );
+assert.deepEqual(
+  getAppliedPackagingLearning(experiment, 1, 1, true).appliedTo,
+  ['thumbnail'],
+  'a manual title override may still retain the separately selected thumbnail attribution'
+);
+
+const generationOnlyAttributes = engine.extractAttributes(
+  { videoDetails: { title: 'A Sample Title' } },
+  {
+    strategy: { packagingLearning: { recommendationId: 'pack-1' } },
+    appliedLearnings: [],
+    packagingChangeHistory: [{ source: 'operator_post_publish', title: 'Updated title' }]
+  }
+);
+assert.deepEqual(generationOnlyAttributes.appliedLearnings, [], 'generation guidance alone must not count as applied packaging');
+assert.equal(generationOnlyAttributes.packagingChangeHistory[0].title, 'Updated title');
 
 const applied = engine.extractAppliedLearnings({
   packagingLearning: { recommendationId: 'pack-1' },
