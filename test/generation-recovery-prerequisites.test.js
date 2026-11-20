@@ -73,7 +73,7 @@ async function run() {
 
     await db.saveGenerationCheckpoint('job-2', 'strategy', {
       status: 'completed',
-      artifact: { topic: ' ' }
+      artifact: { topic: '' }
     });
     await assert.rejects(
       recovery.run('job-2', 'script', 20, async () => ({
@@ -87,10 +87,10 @@ async function run() {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 
-  process.stdout.write('Generation recovery prerequisite tests passed\\n');
+  process.stdout.write('Generation recovery prerequisite tests passed\n');
 }
 
 run().catch(error => {
-  process.stderr.write(`Generation recovery prerequisite tests failed: ${error.stack || error.message}\\n`);
+  process.stderr.write(`Generation recovery prerequisite tests failed: ${error.stack || error.message}\n`);
   process.exitCode = 1;
 });
