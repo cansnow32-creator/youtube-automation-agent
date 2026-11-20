@@ -2134,9 +2134,17 @@ class YouTubeAutomationAgent {
       const generated = await this.agents.strategy.generateContentStrategy(topic, stageAssertLease);
       await stageAssertLease();
       const { getApprovedPackagingLearning, getApprovedScriptLearnings } = require('./utils/packaging-learning');
-      const approvedLearnings = this.db.listLearningRecommendations
-        ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
-        : [];
+      // Use the same measured application feedback shown in the learning summary.
+      // A fresh negative signal blocks reuse only; it never changes operator approval.
+      const learningSummary = this.agents.analytics?.getLearningSummary
+        ? await this.agents.analytics.getLearningSummary()
+        : null;
+      await stageAssertLease();
+      const approvedLearnings = Array.isArray(learningSummary?.recommendations)
+        ? learningSummary.recommendations.filter(item => item?.status === 'approved')
+        : this.db.listLearningRecommendations
+          ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
+          : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
       generated.approvedScriptLearnings = getApprovedScriptLearnings(approvedLearnings);
       generated.jobId = jobId;
