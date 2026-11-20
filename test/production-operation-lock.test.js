@@ -24,6 +24,28 @@ async function run() {
     await fs.rm(replacementDir, { recursive: true, force: true });
   }
 
+  // Rebuild artifacts are immutable per attempt: a stale worker cannot
+  // overwrite a newer worker's final video or narration mix.
+  const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-rebuild-attempts-'));
+  try {
+    const repair = new SceneRepairService({}, {}, {
+      dataRoot: artifactDir,
+      getMediaDuration: async () => 5,
+      runFFmpeg: async args => {
+        const output = args[args.length - 1];
+        if (output.endsWith('.m4a')) await fs.writeFile(output, 'valid-test-audio');
+      }
+    });
+    const scenes = [{ narrationStatus: 'current', audioPath: '/unused/scene.mp3', duration: 5 }];
+    const first = await repair.rebuildNarration('prod', scenes, null, 'fingerprint', async () => {}, 'attempt-one');
+    const second = await repair.rebuildNarration('prod', scenes, null, 'fingerprint', async () => {}, 'attempt-two');
+    assert.notEqual(first, second, 'separate rebuild attempts publish to distinct narration paths');
+    assert.equal(await fs.readFile(first, 'utf8'), 'valid-test-audio');
+    assert.equal(await fs.readFile(second, 'utf8'), 'valid-test-audio');
+  } finally {
+    await fs.rm(artifactDir, { recursive: true, force: true });
+  }
+
   // Exercise the lock against two independent SQLite connections. The
   // mocked assertions below verify SQL shape; this integration check verifies
   // SQLite's atomic conflict handling across separate connections.
