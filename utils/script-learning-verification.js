@@ -1,11 +1,11 @@
 const VERIFIED_HOOK_LENGTHS = new Set(['concise', 'extended']);
 
 function normalizePreference(value) {
-  return String(value || '').trim().toLowerCase().replace(/[\\s-]+/g, '_');
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function countWords(value) {
-  return String(value || '').trim().split(/\\s+/).filter(Boolean).length;
+  return String(value || '').trim().split(/\s+/).filter(Boolean).length;
 }
 
 function verifyAppliedScriptLearnings(learnings = [], script = {}) {
