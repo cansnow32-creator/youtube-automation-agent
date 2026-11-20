@@ -108,6 +108,12 @@ Each item links to its walkthrough in the [feature guide](docs/features.md).
 **Engage**
 - [Audience Engagement Studio](docs/features.md#audience-engagement-studio): comment sync, themes and questions, spam quarantine, reply drafts that post only after you approve them, and video ideas mined from repeated requests.
 
+## Local-first script quality gate
+
+Set `QUALITY_PIPELINE_ENABLED=true` to draft and review scripts with your local Ollama model (default `qwen3.5:4b`). The default path does not require Gemini or Groq reviewer keys and does not make paid reviewer calls. It can revise a draft up to `QUALITY_MAX_REVISIONS` times; drafts that do not meet the score or blocker requirements are held for operator review. An Ollama self-review is an automated aid, not independent fact verification: the existing factual-source, media-rights, quality-check, and human approval steps remain required.
+
+Optional Gemini and Groq second opinions are disabled by default. They run only when `QUALITY_ALLOW_REMOTE_REVIEW=true` is explicitly set and the corresponding credentials are configured. Reviewers run local Ollama first, then the opted-in remote reviewers.
+
 ## AI providers
 
 One key gets you started. Pick a text provider in the walkthrough: Gemini, OpenAI, OpenRouter (400+ models, including Claude), Kimi, MiMo, GLM, DeepSeek, or MiniMax. Gemini has free tiers for text and narration.
