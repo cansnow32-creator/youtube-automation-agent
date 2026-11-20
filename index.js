@@ -1967,7 +1967,7 @@ class YouTubeAutomationAgent {
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async stageAssertLease => {
       await stageAssertLease();
-      const generated = await this.agents.strategy.generateContentStrategy(topic);
+      const generated = await this.agents.strategy.generateContentStrategy(topic, stageAssertLease);
       await stageAssertLease();
       const { getApprovedPackagingLearning } = require('./utils/packaging-learning');
       const approvedLearnings = this.db.listLearningRecommendations
@@ -2011,7 +2011,7 @@ class YouTubeAutomationAgent {
       25,
       async stageAssertLease => {
         await stageAssertLease();
-        const result = await this.agents.scriptWriter.generateScript(strategy);
+        const result = await this.agents.scriptWriter.generateScript(strategy, stageAssertLease);
         await stageAssertLease();
         return result;
       },
@@ -2026,7 +2026,7 @@ class YouTubeAutomationAgent {
       40,
       async stageAssertLease => {
         await stageAssertLease();
-        const result = await this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning);
+        const result = await this.agents.thumbnailDesigner.generateThumbnail(script, strategy.packagingLearning, stageAssertLease);
         await stageAssertLease();
         return result;
       },
