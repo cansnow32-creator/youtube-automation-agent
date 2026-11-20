@@ -547,6 +547,7 @@ class Database {
         youtube_id TEXT,
         youtube_url TEXT,
         error TEXT,
+        render_attempt_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(production_id, position),
@@ -718,13 +719,16 @@ class Database {
     await this.ensureColumns('script_quality_reviews', {
       job_id: 'TEXT'
     });
+    await this.ensureColumns('shorts_clips', {
+      render_attempt_id: 'TEXT'
+    });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews', 'shorts_clips']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -1639,7 +1643,7 @@ class Database {
         title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
         duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
         publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
-        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, updated_at = datetime('now')
+        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_attempt_id = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
         next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
@@ -1647,10 +1651,34 @@ class Database {
         next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
         next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
         next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
-        next.error || null, id
+        next.error || null, next.renderAttemptId || null, id
       ]
     );
     return this.getShortClip(id);
+  }
+
+  async updateShortClipForRender(id, attemptId, changes = {}) {
+    const current = await this.getShortClip(id);
+    if (!current || current.status !== 'rendering' || current.renderAttemptId !== attemptId) return null;
+    const next = { ...current, ...changes };
+    await this.executeQuery(
+      `UPDATE shorts_clips SET
+        title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
+        duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
+        publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
+        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, updated_at = datetime('now')
+       WHERE id = ? AND status = 'rendering' AND render_attempt_id = ?`,
+      [
+        next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
+        Number(next.startSeconds || 0), Number(next.duration || 30), next.layout || 'blur', next.rationale || null,
+        next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
+        next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
+        next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
+        next.error || null, id, attemptId
+      ]
+    );
+    const saved = await this.getShortClip(id);
+    return saved?.renderAttemptId === attemptId && saved.status === next.status ? saved : null;
   }
 
   parseShortClip(row) {
@@ -1672,7 +1700,8 @@ class Database {
       approvedAt: row.approved_at || null,
       scheduleId: row.schedule_id || null,
       youtubeId: row.youtube_id || null,
-      youtubeUrl: row.youtube_url || null
+      youtubeUrl: row.youtube_url || null,
+      renderAttemptId: row.render_attempt_id || null
     };
   }
 
