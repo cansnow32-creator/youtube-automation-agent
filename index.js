@@ -651,6 +651,71 @@ class YouTubeAutomationAgent {
   setupOperatorAPI() {
     const protect = this.requireAPIKey();
 
+    this.app.get('/api/publishing/unresolved', protect, async (req, res) => {
+      try {
+        const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+        if (typeof this.db.listUnresolvedPublishScheduleEntries !== 'function') {
+          return res.status(503).json({ success: false, error: 'Publishing reconciliation storage is unavailable' });
+        }
+        const entries = await this.db.listUnresolvedPublishScheduleEntries(limit);
+        return res.json({
+          success: true,
+          entries: entries.map(entry => ({
+            id: entry.id,
+            productionId: entry.productionId,
+            title: entry.title,
+            publishTime: entry.publishTime,
+            status: entry.status,
+            youtubeId: entry.youtubeId || null,
+            error: entry.error || null,
+            contentType: entry.metadata?.contentType || (entry.metadata?.shortClipId ? 'short' : 'long_form'),
+            shortClipId: entry.metadata?.shortClipId || null,
+            createdAt: entry.created_at || null
+          }))
+        });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/publishing/:scheduleId/reconcile', protect, async (req, res) => {
+      try {
+        if (!this.agents.publishing) {
+          return res.status(503).json({ success: false, error: 'YouTube publishing is not configured' });
+        }
+        const result = await this.agents.publishing.reconcileUnresolvedUpload(
+          req.params.scheduleId,
+          req.body?.videoId
+        );
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({
+          success: false,
+          error: error.message,
+          code: error.code || null
+        });
+      }
+    });
+
+    this.app.post('/api/publishing/:scheduleId/resolve-no-upload', protect, async (req, res) => {
+      try {
+        if (!this.agents.publishing) {
+          return res.status(503).json({ success: false, error: 'YouTube publishing is not configured' });
+        }
+        const result = await this.agents.publishing.resolveUnresolvedUploadAsAbsent(
+          req.params.scheduleId,
+          req.body?.confirmedAbsent
+        );
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({
+          success: false,
+          error: error.message,
+          code: error.code || null
+        });
+      }
+    });
+
     this.app.get('/api/media-generation/tasks/unresolved', protect, async (req, res) => {
       try {
         const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
