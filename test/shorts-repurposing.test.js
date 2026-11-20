@@ -98,9 +98,40 @@ async function testSupersededRenderAttemptCannotCommit() {
   }
 }
 
+async function testShortEditsAreRejectedDuringRender() {
+  const harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
+  let releaseRender;
+  let markStarted;
+  const renderGate = new Promise(resolve => { releaseRender = resolve; });
+  const renderStarted = new Promise(resolve => { markStarted = resolve; });
+  harness.service.runFFmpeg = async args => {
+    const destination = args[args.length - 1];
+    if (String(destination).endsWith('.rendering.mp4')) {
+      await fs.writeFile(destination, Buffer.from('rendered-short'));
+      markStarted();
+      await renderGate;
+    }
+  };
+  try {
+    const rendering = harness.service.render(harness.productionId, harness.clip.id);
+    await renderStarted;
+    await assert.rejects(
+      harness.service.update(harness.productionId, harness.clip.id, { layout: 'blur' }),
+      error => error.status === 409 && /while a render attempt is in progress/.test(error.message)
+    );
+    releaseRender();
+    const result = await rendering;
+    assert.equal(result.status, 'rendered');
+  } finally {
+    releaseRender?.();
+    await fs.rm(harness.root, { recursive: true, force: true });
+  }
+}
+
 async function run() {
   await testLeaseLossCleansOnlyTheCurrentShortAttempt();
   await testSupersededRenderAttemptCannotCommit();
+  await testShortEditsAreRejectedDuringRender();
   let harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
   try {
     const rendered = await harness.service.render(harness.productionId, harness.clip.id);
