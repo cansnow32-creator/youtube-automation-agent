@@ -421,3 +421,12 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Thumbnail fallback paths now include UUIDs and clean up the just-written output if lease ownership is lost after the write.
 - Added a thumbnail fallback lease-loss cleanup regression. Static syntax/package/test wiring checks passed; runtime tests/lint not executed.
 - Commits: `535d37bd5c68368e925c5669e01516d75b85fac2`, `9c04a8cb43c59ac85ac032102f3f4e9bbe763750`, `e0370bf71252b9f938c2b426048a2595b2b6ac60`, `2eee7d4091d50cdc66125bbe439bd06de78f1b24`.
+
+
+## 2026-11-20 — Fix CineCode scene cleanup and final ready-state fence
+
+- Corrected `getVideoAttemptSidecarPaths()`: the CineCode scene cleanup loop was unreachable after an early return and attempted to push into an undeclared array. It now returns the main video sidecars plus each of 20 possible CineCode scene outputs, render intermediates, and manifests.
+- Added regression coverage in `test/production-attempt-artifact-cleanup.test.js`; confirmed the test is already wired into `npm test`.
+- Added a final lease assertion immediately before the production-ready DB write.
+- Commits: `46bd3d07d6e747b19b9c00951cf65dd4c7c02e8b`, `c9d67d71a689a7a844613c88194580e45ee903c8`, `9f94c71a733d9642af406db80c7a8f483d8faa86`, `7f30f11537b78ed1d9943e18bf46fde53c215fcb`.
+- Static syntax/package/test wiring checks passed; runtime tests/lint not run. PR #2 remains open/draft/unmerged; latest head `7f30f11537b78ed1d9943e18bf46fde53c215fcb`; no workflow run found.
