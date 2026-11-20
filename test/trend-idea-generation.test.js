@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { Database } = require('../database/db');
 const { ContentStrategyAgent } = require('../agents/content-strategy-agent');
-const { scoreTrendIdeas, buildAudienceDemand } = require('../utils/trend-idea-ranker');
+const { scoreTrendIdeas, buildAudienceDemand, filterTrendIdeasForApproval } = require('../utils/trend-idea-ranker');
 const { rankTemplatesForNiche } = require('../utils/viral-template-analyzer');
 
 async function run() {
@@ -14,6 +14,33 @@ async function run() {
   await db.initialize();
   assert.equal(require('../utils/trend-idea-ranker').overlapScore('öğrenme alışkanlıkları', 'öğrenme alışkanlıkları geliştirme'), 67,
     'Turkish characters must remain valid tokens during niche matching');
+  const qualityGate = filterTrendIdeasForApproval([
+    { topic: 'A practical AI editing workflow', sourceTopic: 'AI editing', score: 72,
+      scoreBreakdown: { channelFit: 68, trendEvidenceCount: 2 } },
+    { topic: 'Ancient Roman battle tactics explained', sourceTopic: 'AI editing', score: 81,
+      scoreBreakdown: { channelFit: 4, trendEvidenceCount: 2 } },
+    { topic: 'A practical AI editing workflow for beginners', sourceTopic: 'AI editing', score: 75,
+      scoreBreakdown: { channelFit: 70, trendEvidenceCount: 2 } },
+    { topic: 'A weakly supported editing idea', sourceTopic: 'AI editing', score: 32,
+      scoreBreakdown: { channelFit: 60, trendEvidenceCount: 1 } },
+    { topic: 'A fresh editing concept with no sources', sourceTopic: 'AI editing', score: 90,
+      scoreBreakdown: { channelFit: 70, trendEvidenceCount: 0 } }
+  ], ['Existing AI editing workflow for beginners'], {
+    channelStrategy: { objective: 'Teach AI video editing', audience: 'beginner video creators', contentPillars: ['editing tutorials'] }
+  });
+  assert.equal(qualityGate.ideas.length, 0,
+    'near-duplicates, off-audience, low-score and unsupported ideas must not enter the approval backlog');
+  assert.deepEqual(qualityGate.rejected, {
+    lowScore: 1, offAudience: 1, duplicate: 1, missingEvidence: 1, invalid: 0
+  });
+
+  const profileFreeGate = filterTrendIdeasForApproval([
+    { topic: 'A useful general editing explainer', sourceTopic: 'Editing', score: 55,
+      scoreBreakdown: { channelFit: 0, trendEvidenceCount: 1 } }
+  ], [], {});
+  assert.equal(profileFreeGate.ideas.length, 1,
+    'missing channel profile must not invent an audience mismatch');
+
   const keywordAgent = new ContentStrategyAgent(db, {});
   assert.deepEqual(keywordAgent.extractKeywords('İçerik üretimi ve yapay zekâ video araçları'), [
     'içerik', 'üretimi', 'yapay', 'zekâ', 'video', 'araçları'
