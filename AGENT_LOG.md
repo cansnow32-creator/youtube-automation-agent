@@ -1,3 +1,15 @@
+## 2026-11-20 — Reconcile legacy failed provider records before replacement
+
+- A backwards-compatibility audit found that earlier releases could persist a media task as `failed` after a provider status/network error even though the external task ID remained active. Treating every local failed row as terminal could create a second paid remote job.
+- `generateClip()` now queries the provider first when an existing failed/cancelled row still has an external task ID. If the provider reports queued/running/succeeded, the same remote task is resumed. If it reports terminal failed/cancelled, a conditional DB submission claim is required before a replacement is created. Polling errors remain `reconciliation_required` with the known remote ID retained.
+- Recovery writes now preserve a known remote task ID unless state is explicitly `submission_unknown`; a transient task-row update failure therefore does not discard an ID that can be polled on the next attempt.
+- Final ownership hardening: remote generation requires durable DB task lookup/create/update methods and an explicit `createdByThisInvocation === true` result before a new provider request. Missing/ambiguous ownership fails closed. Manual production task inserts use one conditional `INSERT ... SELECT ... WHERE NOT EXISTS`, and a concurrent SQLite regression test asserts exactly one claimant.
+- Added tests for legacy local-failed/remote-running task recovery, terminal legacy failure before replacement, and fail-closed missing DB ownership proof. The file declares 14 test functions and all 14 are called from its test runner.
+- Commits: `b5c2a83f0ba3c45d7b7a586a43a23aabf10054b0`, `ad309461248954801ab6bc330f6259b616fc5c31`, `aeeecb9ed83f12f56c765f0f3bf3b2e420bbfcd2`, `6e0d03b44e3bdadafa4ea8a178e586d6c116dac6`, `fc2b6ce7136a04e8157ebca788b24c4ae0fa37a0`, `4428a5c0749d314285d73004abed5e9ad8a69348`, `d68ebc2d7a7d404268cf020627c6200d68a8e001`, `ceb87bca9acc9222348d2a834ba046971aaccd53`, `15cdd161c6174622c2040f2dd24025fe4540b682`, `647e7aa26679fcad142baa8ebbdac6e6090ca35b`.
+- GitHub re-fetch + static parse passed for `index.js`, `database/db.js`, `utils/media-generation-service.js`, provider registry, regression test, `package.json` and reconciliation docs. All 14 media test functions are included in the `npm test` chain. No runtime test/lint has run. Current PR #2 head `6e0d03b44e3bdadafa4ea8a178e586d6c116dac6` has zero PR-triggered workflow runs.
+- No PR merged or retargeted; PR #2 still targets PR #1's branch.
+- Next: obtain a real CI run for the current PR #2 head and use its runtime/test results to decide any further fixes. Do not merge.
+ 
 ## 2026-11-20 — Make remote provider retries idempotent and recoverable
 
 - Refreshed PR state and continued the provider retry audit. A timeout/network error could occur after a provider accepted a request but before the external task ID was persisted; the previous code could mark the row failed and create a second paid task on retry.
