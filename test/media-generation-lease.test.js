@@ -643,6 +643,10 @@ async function testFreshSubmittingTaskCannotBeManuallyReconciledOrCleared() {
   let dbWrites = 0;
   const db = {
     async getMediaGenerationTaskById() { return { ...row }; },
+    async compareAndSetMediaGenerationTask() {
+      dbWrites++;
+      return { updated: true, task: { ...row } };
+    },
     async updateMediaGenerationTask() {
       dbWrites++;
       return { ...row };
