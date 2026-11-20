@@ -398,6 +398,39 @@ async function run() {
     await fs.rm(sceneInitDir, { recursive: true, force: true });
   }
 
+  // Rebuild may need to create a missing scene manifest. The rebuild lease
+  // must reach that fallback path; a stale worker must not write scene rows.
+  const ensureManifestDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ensure-manifest-lease-'));
+  try {
+    let ensureManifestWrites = 0;
+    const ensureManifestService = new SceneRepairService({
+      replaceProductionScenes: async () => {
+        ensureManifestWrites += 1;
+        return [];
+      }
+    }, {
+      isUsableAudioFile: async () => false
+    }, { dataRoot: ensureManifestDir });
+    let ensureManifestChecks = 0;
+    await assert.rejects(
+      ensureManifestService.ensureManifest({
+        id: 'lease-lost-ensure-manifest',
+        script: { title: 'Manifest lease test' },
+        assets: { audio: {}, video: {} },
+        estimatedDuration: 8
+      }, async () => {
+        ensureManifestChecks += 1;
+        if (ensureManifestChecks >= 2) {
+          throw Object.assign(new Error('scene rebuild lease lost before manifest write'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'SCENE_REBUILD_LEASE_LOST'
+    );
+    assert.equal(ensureManifestWrites, 0, 'missing scene manifest is not persisted after lease loss');
+  } finally {
+    await fs.rm(ensureManifestDir, { recursive: true, force: true });
+  }
+
   process.stdout.write('Production operation lock tests passed\\n');
 }
 
