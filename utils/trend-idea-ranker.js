@@ -135,7 +135,17 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     if (!trend || !topic) return null;
 
     const rawTrend = Math.max(0, Number(trend.score) || 0);
-    const trendScore = clamp(Math.round((Math.log1p(rawTrend) / Math.log1p(maxTrend)) * 100));
+    const rawTrendScore = clamp(Math.round((Math.log1p(rawTrend) / Math.log1p(maxTrend)) * 100));
+    const sourceTypes = [...new Set((Array.isArray(trend.sources) ? trend.sources : [])
+      .filter(source => typeof source === 'string' && source.trim()))];
+    const evidence = Array.isArray(trend.evidence) ? trend.evidence : [];
+    const hasEvidenceMetadata = Array.isArray(trend.sources) || Array.isArray(trend.evidence);
+    // Pull weakly-supported trend scores toward neutral. This is deliberately
+    // bounded so a single-source topic can still rank well when other signals agree.
+    const trendEvidenceConfidence = hasEvidenceMetadata
+      ? clamp(0.5 + Math.min(sourceTypes.length, 2) * 0.15 + Math.min(evidence.length, 3) * 0.1, 0, 0.95) / 100 * 100
+      : 1;
+    const trendScore = clamp(Math.round(50 + (rawTrendScore - 50) * trendEvidenceConfidence));
     const fit = overlapScore(`${sourceTopic} ${topic}`, profile);
     const channelFit = fit === null ? 50 : fit;
     const demand = audienceDemandForTopic(`${sourceTopic} ${topic}`, audienceDemand);
@@ -171,6 +181,10 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
       score,
       scoreBreakdown: {
         trend: trendScore,
+        rawTrend: rawTrendScore,
+        trendEvidenceConfidence: Number(trendEvidenceConfidence.toFixed(2)),
+        trendSourceCount: sourceTypes.length,
+        trendEvidenceCount: evidence.length,
         channelFit,
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
