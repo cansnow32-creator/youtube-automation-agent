@@ -239,6 +239,7 @@ function makeStatefulMediaTaskDb(initialTask = null) {
       return row ? { ...row, providerData: { ...(row.providerData || {}) } } : null;
     },
     async createMediaGenerationTask(input) {
+      const createdByThisInvocation = !row;
       if (!row) {
         row = {
           id: 'media-stateful-task',
@@ -255,7 +256,24 @@ function makeStatefulMediaTaskDb(initialTask = null) {
           completed_at: null
         };
       }
-      return { ...row, providerData: { ...(row.providerData || {}) } };
+      return { ...row, providerData: { ...(row.providerData || {}) }, createdByThisInvocation };
+    },
+    async claimMediaGenerationTaskForSubmission(taskId, expectedStatus, expectedExternalTaskId, previousTasks = []) {
+      if (!row || row.id !== taskId || row.status !== expectedStatus ||
+          (row.external_task_id || null) !== (expectedExternalTaskId || null) ||
+          !['failed', 'cancelled'].includes(expectedStatus)) {
+        return { claimed: false, task: row ? { ...row, providerData: { ...(row.providerData || {}) } } : null };
+      }
+      row = {
+        ...row,
+        status: 'submitting',
+        external_task_id: null,
+        providerData: previousTasks.length ? { previousTasks: [...previousTasks] } : {},
+        output_path: null,
+        error: null,
+        completed_at: null
+      };
+      return { claimed: true, task: { ...row, providerData: { ...(row.providerData || {}) } } };
     },
     async updateMediaGenerationTask(_id, changes) {
       row = { ...row };
@@ -706,6 +724,58 @@ async function testLeaseLossAfterNonCancellableSubmissionBlocksRetry() {
   }
 }
 
+async function testConcurrentTerminalRetryClaimCannotSubmitSecondRemoteJob() {
+  let row = {
+    id: 'media-retry-claimed',
+    status: 'failed',
+    external_task_id: 'old-terminal-task',
+    providerData: {},
+    output_path: 'old.mp4',
+    error: 'previous provider task failed'
+  };
+  let updateCalls = 0;
+  let createCalls = 0;
+  const db = {
+    async findMediaGenerationTask() { return { ...row, providerData: { ...row.providerData } }; },
+    async claimMediaGenerationTaskForSubmission() {
+      // Simulate another worker winning the conditional SQLite UPDATE.
+      row = { ...row, status: 'submitting', external_task_id: null, output_path: null };
+      return { claimed: false, task: { ...row } };
+    },
+    async updateMediaGenerationTask(_id, changes) {
+      updateCalls++;
+      row = { ...row, ...changes };
+      return { ...row };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      return { status: 'queued', externalTaskId: 'duplicate-task' };
+    }
+  };
+
+  await assert.rejects(
+    service.generateClip({
+      jobId: 'job-claim-race',
+      productionId: 'production-claim-race',
+      scene: { index: 0, prompt: 'competing retry' },
+      provider,
+      outputPath: path.join(require('node:os').tmpdir(), 'competing-retry.mp4'),
+      request: { prompt: 'competing retry' }
+    }),
+    error => error.code === 'MEDIA_TASK_SUBMISSION_IN_PROGRESS'
+  );
+  assert.equal(createCalls, 0, 'the worker that lost the atomic claim must not submit a provider job');
+  assert.equal(updateCalls, 0, 'the losing worker must not overwrite the winning claimant state');
+  assert.equal(row.status, 'submitting');
+  assert.equal(row.external_task_id, null);
+}
+
 async function testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-history-'));
   const outputPath = path.join(directory, 'new-scene.mp4');
@@ -851,6 +921,7 @@ async function main() {
   await testFreshSubmittingTaskCannotBeManuallyReconciledOrCleared();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
+  await testConcurrentTerminalRetryClaimCannotSubmitSecondRemoteJob();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
   await testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting();
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
