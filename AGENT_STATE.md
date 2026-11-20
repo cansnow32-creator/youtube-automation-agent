@@ -313,3 +313,13 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added `testHeartbeatRenewalsAreSerialized()` to `test/generation-job-lease.test.js`; verifies a delayed renewal prevents overlap, queued renewal completes before lease assertion, and maximum concurrent renewals remains one. Existing npm test script already includes this test file.
 - Commits: `9e1fa4d2f0196fd79dd5afc783d0da7646d7f517`, `529baa9dd4740ddb73d1afdb0e727a226fd28821`.
 - Static JS syntax checks passed for generation lease and lease tests; `package.json` parses and includes generation lease test. Runtime tests/lint not executed. Keep PR #2 open/draft; do not merge or retarget.
+
+
+## Latest production operation lease audit — 2026-11-20
+
+- Found `SceneRepairService.replaceAsset()` calling a missing `withProductionEditLock()` method. Replaced it with the shared `withProductionOperationLease()` wrapper and threaded `assertLease` into `replaceAssetUnlocked()` before bundle access, filesystem writes, scene metadata writes, and revision writes.
+- Found `SceneRepairService.rebuild()` still treated DB lock acquire/renew support as optional. It now fails closed with `SCENE_REBUILD_LOCK_UNAVAILABLE` / HTTP 503 unless acquire, renew, and release methods all exist. Local in-process rebuild contention is still checked first and remains HTTP 409.
+- Found `ProductionManagementAgent.processContent()` and `resumeProduction()` only checked acquire support and launched independent heartbeat promises. Both now require acquire/renew/release support, return explicit HTTP 503 lock-unavailable errors, and serialize heartbeat renewals so assertions wait for queued renewals.
+- Added missing-lock regression coverage for rebuild, job production and resume; routed asset replacement through the shared lease; updated the cache test fixture to supply required lock methods.
+- Commits include `0d544b2`, `5a0bfce`, `879881d`, `e7969ed`, `9fcb8ca`, `424252c`, `094e7c8`, `7b1f5ae`.
+- Static JS syntax checks passed for changed implementation and tests; package JSON parses and test script includes affected test files. Runtime tests/lint not executed. PR #2 remains open/draft; do not merge or retarget.
