@@ -3,12 +3,23 @@ const Replicate = require('replicate');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const createReadStream = require('fs').createReadStream;
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, getMediaDuration, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
 const { CineCodeRenderer } = require('./cinecode-renderer');
+
+async function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 const OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
@@ -579,6 +590,7 @@ class AIVideoGenerator {
         path: path.resolve(segment.path),
         size: stats.size,
         mtimeMs: stats.mtimeMs,
+        sha256: await hashFile(segment.path),
         duration: Number(segment.duration)
       });
     }
