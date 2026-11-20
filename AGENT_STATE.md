@@ -98,3 +98,13 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 
 - Further route inspection found scene mutation handlers call `refreshContentReview()` only after the SceneRepairService method has released its production operation lock. The quality-check read and `saveContentReview()` can therefore race with a subsequent scene edit and persist review data based on a stale bundle.
 - Next: move mutation plus review refresh into one production-scoped lease boundary (including update/reorder/replace/regenerate/narration/silence/rebuild routes), or otherwise fence review persistence against scene revision changes. Add a focused stale-review regression test before considering scene-edit serialization complete.
+
+
+## Latest PR #2 review-refresh race fix — 2026-11-20
+
+- Live PR #2 head: `9615d030839f4ad5322e9ab1fb3a02eee28f9937`, open/draft/unmerged; base remains `feat/local-first-quality-gate` at `9438d3d6e9015684cc074f832188e05ecbf3ab51`.
+- Fixed the route-level stale review race by making `refreshContentReview()` acquire the same production-scoped operation lease as scene edits/rebuilds. The lock is held while reading the bundle, running quality checks, and saving review state; lease ownership is rechecked before persistence.
+- Added `test/content-review-lock.test.js` covering a competing refresh being rejected while the first quality check holds the shared lock; added it to `npm test`.
+- Commits: `7bf63295ed60213272917bad5ade79566629cfdb` (implementation), `5e9cbdb92787b66979d6ce6dd421007a34bb4a15` (test), `f22e1e82f52a8c800aebddbd390bd429d05940be` (test script), `9615d030839f4ad5322e9ab1fb3a02eee28f9937` (test output cleanup).
+- GitHub Actions reports zero workflow runs on the current head. Tests and lint were not executed; this remains static review plus source/test re-fetch. A competing refresh gets HTTP 409 and must be retried by its caller after the active operation releases the lock.
+- Next: continue auditing media provider orphan-file cleanup and other non-scene operations that mutate the same production review state; then obtain real CI. Do not merge.
