@@ -136,27 +136,64 @@ function scoreProductionFit(idea = {}, channelStrategy = {}) {
   return preferredFormat === ideaFormat ? 100 : 65;
 }
 
-function scoreProductionEffort(idea = {}, channelStrategy = {}) {
+function scoreProductionRequirements(idea = {}, channelStrategy = {}) {
   const text = `${idea.topic || ''} ${idea.angle || ''} ${idea.rationale || ''}`.toLowerCase();
-  if (!text.trim()) return 75;
-  const highEffort = /documentary|investigation|deep dive|in-depth|interview|case study|3d animation|frame-by-frame|original animation|field research|on location|multi-location/i;
-  const mediumEffort = /comparison|review|experiment|data analysis|historical|timeline|explainer|story|tutorial|step-by-step/i;
-  let score = highEffort.test(text) ? 45 : mediumEffort.test(text) ? 70 : 90;
+  if (!text.trim()) {
+    return { research: 75, visuals: 75, narration: 75, editing: 75, capabilityPenalty: 0 };
+  }
 
-  // Only adjust for capabilities explicitly configured by the channel owner.
+  const has = pattern => pattern.test(text);
+  const scores = {
+    research: has(/documentary|investigation|deep dive|in-depth|case study|field research|fact.?check|data analysis|belgesel|araştırma|inceleme|vaka analizi/)
+      ? 45 : has(/comparison|review|historical|timeline|statistics|comparison|karşılaştırma|inceleme|tarihsel|istatistik/)
+        ? 70 : 90,
+    visuals: has(/3d animation|original animation|frame-by-frame|motion graphics|visual effects|archival footage|maps? and charts|animasyon|hareketli grafik|arşiv görüntüsü|harita ve grafik/)
+      ? 40 : has(/screen recording|product demo|charts|diagrams|stock footage|ekran kaydı|ürün demosu|grafik|şema/)
+        ? 70 : 90,
+    narration: has(/interview|multiple speakers|voice actors|dialogue|on location|röportaj|birden fazla konuşmacı|seslendirmen|diyalog|saha çekimi/)
+      ? 40 : has(/voiceover|narration|scripted story|storytelling|seslendirme|anlatım|hikâye anlatımı/)
+        ? 70 : 90,
+    editing: has(/frame-by-frame|multi-location|rapid cuts|complex transitions|synchronized|çoklu mekân|hızlı kurgu|karmaşık geçiş|eşzamanlı/)
+      ? 40 : has(/shorts|captions|subtitles|b-roll|screen recording|short video|altyazı|ekran kaydı/)
+        ? 70 : 90
+  };
+
+  // Capabilities are optional, explicit channel-owner settings; absence is not a limitation.
   const capabilities = Array.isArray(channelStrategy.productionCapabilities)
     ? channelStrategy.productionCapabilities.map(value => String(value).toLowerCase())
     : null;
-  if (capabilities && capabilities.length) {
-    const needs = [];
-    if (/interview|on location|field research/i.test(text)) needs.push('interviews');
-    if (/3d animation|frame-by-frame|original animation/i.test(text)) needs.push('animation');
-    if (/documentary|investigation|field research/i.test(text)) needs.push('research');
-    if (needs.some(need => !capabilities.includes(need))) score -= 15;
+  let capabilityPenalty = 0;
+  if (capabilities?.length) {
+    const requirements = [
+      { terms: /interview|on location|field research|röportaj|saha çekimi/, capability: 'interviews', key: 'narration' },
+      { terms: /3d animation|original animation|frame-by-frame|animasyon/, capability: 'animation', key: 'visuals' },
+      { terms: /documentary|investigation|field research|belgesel|araştırma/, capability: 'research', key: 'research' },
+      { terms: /voiceover|narration|seslendirme|anlatım/, capability: 'voiceover', key: 'narration' },
+      { terms: /motion graphics|visual effects|hareketli grafik/, capability: 'motion graphics', key: 'visuals' }
+    ];
+    for (const requirement of requirements) {
+      if (requirement.terms.test(text) && !capabilities.includes(requirement.capability)) {
+        scores[requirement.key] -= 15;
+        capabilityPenalty += 15;
+      }
+    }
   }
-  return clamp(score);
+
+  for (const key of ['research', 'visuals', 'narration', 'editing']) {
+    scores[key] = clamp(scores[key]);
+  }
+  return { ...scores, capabilityPenalty };
 }
 
+function scoreProductionEffort(idea = {}, channelStrategy = {}) {
+  const requirements = scoreProductionRequirements(idea, channelStrategy);
+  return clamp(Math.round(
+    requirements.research * 0.35 +
+    requirements.visuals * 0.25 +
+    requirements.narration * 0.2 +
+    requirements.editing * 0.2
+  ));
+}
 function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSnapshots = [], audienceDemand = []) {
   const trends = new Map((trendTopics || []).map(item => [String(item.topic || '').toLowerCase(), item]));
   const maxTrend = Math.max(1, ...(trendTopics || []).map(item => Number(item.score) || 0));
@@ -193,7 +230,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     const performance = historical?.score ?? null;
     const viewerValue = scoreViewerValue(idea, demand);
     const productionFit = scoreProductionFit(idea, channelStrategy);
-    const productionEffort = scoreProductionEffort(idea, channelStrategy);
+    const productionRequirements = scoreProductionRequirements(idea, channelStrategy);\n    const productionEffort = scoreProductionEffort(idea, channelStrategy);
 
     let weights;
     let score;
