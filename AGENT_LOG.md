@@ -1,3 +1,9 @@
+## 2026-11-20 — Identify route-level stale review race
+
+- Inspected scene mutation routes after adding the long-running operation lease. Found handlers invoke `refreshContentReview()` after service methods return and release the shared lock. The quality-check read and subsequent `saveContentReview()` can race a second scene mutation and persist stale review state.
+- No code change made for this finding yet. Next: keep mutation plus review refresh inside one production-scoped lease, or add revision fencing to review persistence; add a focused regression test.
+- Current PR #2 head remains `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`. Tests/lint have not been executed; GitHub Actions has no run for this head. Do not merge.
+
 ## 2026-11-20 — Add shared leases to scene regeneration and silence overrides
 
 - Continued PR #2 static audit. Found `regenerate()`, `regenerateNarration()`, and `setSilenceOverride()` did not acquire the production-scoped operation lock shared with rebuild and short scene edits.
