@@ -1293,6 +1293,14 @@ class ProductionManagementAgent {
         } catch (_cacheError) {
           captionCached = false;
         }
+        if (captionCached && captionedPath !== productionData.assets.finalVideo?.path) {
+          generatedPaths.push(
+            captionedPath,
+            captionedPath + '.rendering.mp4',
+            captionManifestPath,
+            captionManifestPath + '.tmp'
+          );
+        }
         if (!captionCached) {
           generatedPaths.push(captionedPath, captionTempPath, captionManifestPath, manifestTempPath);
           await assertLease();
