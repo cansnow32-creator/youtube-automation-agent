@@ -3,6 +3,7 @@ const fs = require('node:fs').promises;
 const os = require('node:os');
 const path = require('node:path');
 const { ShortsRepurposingService } = require('../utils/shorts-repurposing-service');
+const crypto = require('node:crypto');
 
 async function createHarness(mediaInfo) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shorts-render-test-'));
@@ -48,7 +49,29 @@ async function createHarness(mediaInfo) {
   return { root, service, state, productionId, clip };
 }
 
+async function testLeaseLossCleansOnlyTheCurrentShortAttempt() {
+  const harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
+  let leaseLost = false;
+  const leaseError = Object.assign(new Error('generation job lease lost'), { code: 'GENERATION_JOB_LEASE_LOST', status: 409 });
+  const assertLease = async () => { if (leaseLost) throw leaseError; };
+  harness.service.runFFmpeg = async args => {
+    const destination = args[args.length - 1];
+    if (String(destination).endsWith('.rendering.mp4')) {
+      await fs.writeFile(destination, Buffer.from('partial short'));
+      leaseLost = true;
+    }
+  };
+  try {
+    await assert.rejects(harness.service.render(harness.productionId, harness.clip.id, { assertLease }), error => error === leaseError);
+    const outputDir = path.join(harness.root, 'shorts', harness.productionId);
+    assert.deepEqual(await fs.readdir(outputDir), [], 'lease loss must remove this attempt output, captions, and temporary file');
+    assert.equal(harness.state.status, 'rendering', 'a stale worker must not write a failed status after losing its lease');
+  } finally {
+    await fs.rm(harness.root, { recursive: true, force: true });
+  }
+}
 async function run() {
+  await testLeaseLossCleansOnlyTheCurrentShortAttempt();
   let harness = await createHarness(async () => ({ duration: 30, width: 1080, height: 1920, hasAudio: true }));
   try {
     const rendered = await harness.service.render(harness.productionId, harness.clip.id);
@@ -74,8 +97,8 @@ async function run() {
       assert.equal(harness.state.status, 'failed');
       assert.equal(harness.state.outputPath, undefined);
       const outputDir = path.join(harness.root, 'shorts', harness.productionId);
-      await assert.rejects(fs.access(path.join(outputDir, `${harness.clip.id}.rendering.mp4`)));
-      await assert.rejects(fs.access(path.join(outputDir, `${harness.clip.id}.mp4`)));
+      const remaining = await fs.readdir(outputDir);
+      assert.deepEqual(remaining, [], 'failed render must remove only its attempt-scoped files');
     } finally {
       await fs.rm(harness.root, { recursive: true, force: true });
     }
