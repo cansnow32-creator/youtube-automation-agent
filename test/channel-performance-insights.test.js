@@ -145,6 +145,24 @@ async function run() {
       'a partial 28d period must not be labeled as complete'
     );
 
+    const longitudinal = learning.buildLongitudinalInsights([
+      { videoId: 'long-1', measurementWindow: '24h', simulated: false, metrics: { views: 120, watchHours: 12, ctr: 5, retention: 40 } },
+      { videoId: 'long-1', measurementWindow: '7d', simulated: false, metrics: { views: 700, watchHours: 70, ctr: 4, retention: 35 } },
+      { videoId: 'long-1', measurementWindow: '28d', simulated: false, metrics: { views: 2800, watchHours: 280, ctr: 3, retention: 30 } },
+      { videoId: 'long-2', measurementWindow: '7d', simulated: false, metrics: { views: null, watchHours: null, ctr: null, retention: null } },
+      { videoId: 'fake', measurementWindow: '28d', simulated: true, metrics: { views: 999999, watchHours: 999, ctr: 99, retention: 99 } }
+    ]);
+    assert.equal(longitudinal.windows['24h'].metrics.views.medianPerDay, 120);
+    assert.equal(longitudinal.windows['7d'].metrics.views.medianPerDay, 100);
+    assert.equal(longitudinal.windows['28d'].metrics.views.medianPerDay, 100);
+    assert.equal(longitudinal.windows['7d'].metrics.views.measuredVideos, 1,
+      'missing values must not be treated as zero or counted as measured');
+    assert.equal(longitudinal.windows['28d'].videoCount, 1,
+      'simulated snapshots must not enter longitudinal summaries');
+    assert.equal(longitudinal.windows['28d'].rateMetrics.ctr.median, 3,
+      'rate metrics are displayed independently, not normalized as additive totals');
+    assert.match(longitudinal.interpretation, /nested cumulative/);
+
     assert.equal(learning.durationBucket('PT45S'), 'under_1m');
     assert.equal(learning.durationBucket('PT2M10S'), '1_to_3m');
     assert.equal(learning.durationBucket('PT6M'), '3_to_8m');
