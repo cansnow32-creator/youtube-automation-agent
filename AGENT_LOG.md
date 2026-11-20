@@ -28,6 +28,16 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Guard initial script artifacts against generation-job lease loss
+
+- Continued PR #2 static audit. Found processScript() wrote the JSON script and TTS companion file without checking the generation-job lease.
+- Passed the job-scoped assertLease callback from processContentUnlocked() into processScript(). Added checks immediately before each file write and after the second write.
+- Added regression coverage for lease loss before the first write and between the JSON and TTS writes in test/production-operation-lock.test.js.
+- Commits on feat/video-concept-approval: 83f818e73f875b086af18920057059b7b7c97162, 60204e2013dbabc5cd966ebf2bfc39a53a2fb711, and 8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064 (test assertion correction).
+- Re-fetched the changed source and regression test from GitHub. PR #2 is open/draft/unmerged at 8c9bb15adc055c3b1cdf17a539ee56f6ebf9c064. GitHub reports zero workflow runs for this head; no test pass is claimed.
+- The lease assertion is cooperative: it prevents later writes once lease loss is observable, but is not an OS-level atomic fencing mechanism if a lease expires between assertion and the filesystem call.
+- Next: continue auditing other filesystem and external side effects (starting with thumbnail/media writes), then obtain an actual CI run. Do not merge.
+
 ## 2026-11-20 — Tighten production lease regression assertion
 
 - PR #2 static review found the lease-renewal SQL test regex was too permissive: it matched both the intended question-mark placeholder and a backslash variant.
