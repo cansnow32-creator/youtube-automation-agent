@@ -37,6 +37,7 @@ async function main() {
     const winner = claims.find(Boolean);
     assert.equal(winner.status, 'uploading');
     assert.equal(winner.productionId, 'short-1');
+    assert.ok(winner.uploadStartedAt, 'the atomic claim records when the upload attempt began');
     const persisted = await dbA.getLatestScheduleEntry('short-1');
     assert.equal(persisted.status, 'uploading');
 
