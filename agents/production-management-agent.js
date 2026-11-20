@@ -120,13 +120,26 @@ class ProductionManagementAgent {
       await runProductionStage(
         productionData.timeline.productionWorkflow,
         'visuals',
-        () => this.generateVideoContent(productionData),
+        async () => {
+          const assets = await this.generateVideoContent(productionData);
+          const realAssets = Array.isArray(assets)
+            ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
+            : [];
+          if (!realAssets.length) throw new Error('Visual stage produced placeholder assets only; configure a working image provider before retrying');
+          return { assetCount: realAssets.length };
+        },
         persistWorkflow
       );
       await runProductionStage(
         productionData.timeline.productionWorkflow,
         'narration',
-        () => this.generateAudioNarration(productionData),
+        async () => {
+          const audioPath = await this.generateAudioNarration(productionData);
+          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+          }
+          return { audioPath, provider: productionData.assets.audio.provider || null };
+        },
         persistWorkflow
       );
       await runProductionStage(
@@ -135,6 +148,9 @@ class ProductionManagementAgent {
         async () => {
           await this.generateCaptions(productionData);
           await this.assembleVideo(productionData);
+          if (productionData.assets.finalVideo?.simulated) {
+            throw new Error(productionData.assets.finalVideo.blockedReason || 'Editing stage produced a placeholder video only');
+          }
           await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
           return {
             captionsGenerated: Boolean(productionData.assets.captions?.path),
@@ -207,15 +223,31 @@ class ProductionManagementAgent {
     const persistWorkflow = async () => this.db.updateProductionData(productionData);
     try {
       if (workflow.stages.visuals.status !== 'completed') {
-        await runProductionStage(workflow, 'visuals', () => this.generateVideoContent(productionData), persistWorkflow);
+        await runProductionStage(workflow, 'visuals', async () => {
+          const assets = await this.generateVideoContent(productionData);
+          const realAssets = Array.isArray(assets)
+            ? assets.filter(asset => typeof asset === 'string' && path.extname(asset).toLowerCase() !== '.info')
+            : [];
+          if (!realAssets.length) throw new Error('Visual stage produced placeholder assets only; configure a working image provider before retrying');
+          return { assetCount: realAssets.length };
+        }, persistWorkflow);
       }
       if (workflow.stages.narration.status !== 'completed') {
-        await runProductionStage(workflow, 'narration', () => this.generateAudioNarration(productionData), persistWorkflow);
+        await runProductionStage(workflow, 'narration', async () => {
+          const audioPath = await this.generateAudioNarration(productionData);
+          if (productionData.assets.audio?.simulated || productionData.assets.audio?.status !== 'ready') {
+            throw new Error(productionData.assets.audio?.error || 'Narration stage produced simulated audio only');
+          }
+          return { audioPath, provider: productionData.assets.audio.provider || null };
+        }, persistWorkflow);
       }
       if (workflow.stages.editing.status !== 'completed') {
         await runProductionStage(workflow, 'editing', async () => {
           await this.generateCaptions(productionData);
           await this.assembleVideo(productionData);
+          if (productionData.assets.finalVideo?.simulated) {
+            throw new Error(productionData.assets.finalVideo.blockedReason || 'Editing stage produced a placeholder video only');
+          }
           await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
           return {
             captionsGenerated: Boolean(productionData.assets.captions?.path),
