@@ -139,7 +139,7 @@ class MediaGenerationService {
         });
         if (!result.reused) attemptOutputPaths.push(result.outputPath);
         await assertLease();
-        clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id });
+        clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id, reused: result.reused === true });
       }
       await assertLease();
       const models = [...new Set(clips.map(clip => clip.model).filter(Boolean))];
