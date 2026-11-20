@@ -281,7 +281,7 @@ function renderScriptQualityReviews(reviews) {
         <div><strong>Blockers</strong>${blockers.length ? `<ul>${blockers.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No structured blockers returned.</p>'}</div>
         <div><strong>Revision guidance</strong>${revisions.length ? `<ul>${revisions.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No revision guidance returned.</p>'}</div>
       </div>
-      <details><summary>Show saved draft</summary><pre>${escapeHTML(review.draft || '')}</pre></details>
+      <details><summary>Review and edit saved draft</summary><textarea class="quality-review-draft-editor" data-quality-draft spellcheck="false">${escapeHTML(review.draft || '')}</textarea><button class="button secondary small" data-quality-resubmit="${escapeHTML(review.id)}">Save changes &amp; run local re-review</button></details>
       <div class="script-quality-review-actions">
         <button class="button secondary small" data-quality-decision="revision_requested" data-quality-review-id="${escapeHTML(review.id)}">Request revision</button>
         <button class="button secondary small" data-quality-decision="rejected" data-quality-review-id="${escapeHTML(review.id)}">Reject</button>
@@ -1483,6 +1483,29 @@ document.addEventListener('click', async event => {
       await refreshDashboard(true);
       switchView('pipeline');
     } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+
+  const qualityResubmit = event.target.closest('[data-quality-resubmit]');
+  if (qualityResubmit) {
+    const card = qualityResubmit.closest('.script-quality-review-card');
+    const draft = card?.querySelector('[data-quality-draft]')?.value || '';
+    if (!draft.trim()) return showToast('Revised draft cannot be empty.', 'error');
+    if (!confirm('Send this edited draft to the local Ollama reviewer? It will return to the human review queue.')) return;
+    qualityResubmit.disabled = true;
+    try {
+      const result = await api('/api/script-quality-reviews/' + encodeURIComponent(qualityResubmit.dataset.qualityResubmit) + '/revise', {
+        method: 'POST',
+        body: JSON.stringify({ draft })
+      });
+      showToast(result.automatedReviewPassed
+        ? 'Local re-review passed. Human approval is still required.'
+        : 'Draft re-reviewed and kept in the human review queue.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      qualityResubmit.disabled = false;
+    }
     return;
   }
 
