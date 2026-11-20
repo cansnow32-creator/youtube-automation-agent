@@ -2435,6 +2435,15 @@ class Database {
     return row ? this.deserializeScheduleEntry(row) : null;
   }
 
+  async getScheduleEntryByYoutubeId(youtubeId) {
+    if (!youtubeId) return null;
+    const row = await this.getRow(
+      'SELECT * FROM publish_schedule WHERE youtube_id = ? ORDER BY published_at DESC LIMIT 1',
+      [youtubeId]
+    );
+    return row ? this.deserializeScheduleEntry(row) : null;
+  }
+
   async listUnresolvedPublishScheduleEntries(limit = 100) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
     const rows = await this.getAllRows(
@@ -3351,6 +3360,8 @@ class Database {
       script: JSON.parse(row.script || '{}'),
       thumbnail: selectedThumbnail?.concept ? { ...thumbnail, concept: selectedThumbnail.concept } : thumbnail,
       seo: JSON.parse(row.seo || '{}'),
+      appliedLearnings: Array.isArray(editorData.appliedLearnings) ? editorData.appliedLearnings : [],
+      packagingChangeHistory: Array.isArray(metadata.packagingChangeHistory) ? metadata.packagingChangeHistory : [],
       productionCost: this.summarizeProductionCost(sourceScenes),
       retentionScenes: this.buildRetentionSceneContext(sourceScenes, shortClip),
       retentionDuration: isShort ? shortClip?.duration || null : sourceScenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0)
