@@ -501,6 +501,7 @@ async function run() {
   const sceneInitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-init-lease-'));
   let sceneInitWrites = 0;
   let segmentRuns = 0;
+  const segmentOutputs = [];
   const sceneInit = new SceneRepairService({
     replaceProductionScenes: async () => {
       sceneInitWrites += 1;
@@ -510,7 +511,10 @@ async function run() {
     isUsableAudioFile: async () => true
   }, {
     dataRoot: sceneInitDir,
-    runFFmpeg: async () => { segmentRuns += 1; }
+    runFFmpeg: async args => {
+      segmentRuns += 1;
+      segmentOutputs.push(args.at(-1));
+    }
   });
   let sceneInitLeaseChecks = 0;
   try {
@@ -532,6 +536,8 @@ async function run() {
       error => error.code === 'PRODUCTION_RESUME_LEASE_LOST'
     );
     assert.equal(segmentRuns, 1, 'the narration segment render completes before lease loss is observed');
+    assert.match(path.basename(segmentOutputs[0] || ''), /^000_r1_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp3$/i,
+      'each initialization attempt writes narration to a unique immutable artifact path');
     assert.equal(sceneInitWrites, 0, 'scene manifest is not persisted after lease loss during audio splitting');
   } finally {
     await fs.rm(sceneInitDir, { recursive: true, force: true });
