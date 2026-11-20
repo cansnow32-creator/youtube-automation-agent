@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const sharp = require('sharp');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
@@ -76,12 +77,59 @@ class CineCodeRenderer {
         'format=yuv420p'
       ].join(',');
       const outputPath = path.join(outputDir, `${prefix}_cinecode_scene_${String(index + 1).padStart(2, '0')}.mp4`);
-      await this.runFFmpeg([
-        '-y', '-loop', '1', '-framerate', '30', '-i', imagePath,
-        '-t', duration.toFixed(3), '-vf', filter,
-        '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
-        '-r', '30', '-movflags', '+faststart', outputPath
-      ]);
+      const manifestPath = `${outputPath}.render.json`;
+      const imageFingerprint = {
+        path: path.resolve(imagePath),
+        size: imageStats.size,
+        mtimeMs: imageStats.mtimeMs
+      };
+      const renderFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+        image: imageFingerprint,
+        duration,
+        width,
+        height,
+        filter,
+        encoder: 'libx264-veryfast-crf21'
+      })).digest('hex');
+      let reusable = false;
+      try {
+        const [manifest, cachedStats] = await Promise.all([
+          fs.readFile(manifestPath, 'utf8').then(JSON.parse),
+          fs.stat(outputPath)
+        ]);
+        reusable = manifest.fingerprint === renderFingerprint &&
+          cachedStats.isFile() && cachedStats.size > 0;
+      } catch (_error) {
+        // Missing or invalid cache metadata forces a fresh render.
+      }
+
+      if (!reusable) {
+        const temporaryPath = `${outputPath}.rendering.mp4`;
+        await fs.rm(temporaryPath, { force: true });
+        try {
+          await this.runFFmpeg([
+            '-y', '-loop', '1', '-framerate', '30', '-i', imagePath,
+            '-t', duration.toFixed(3), '-vf', filter,
+            '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
+            '-r', '30', '-movflags', '+faststart', temporaryPath
+          ]);
+          const outputStats = await fs.stat(temporaryPath);
+          if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
+          await fs.rename(temporaryPath, outputPath);
+          const manifestTemp = `${manifestPath}.tmp`;
+          await fs.writeFile(manifestTemp, JSON.stringify({
+            fingerprint: renderFingerprint,
+            source: imageFingerprint,
+            renderedAt: new Date().toISOString()
+          }, null, 2));
+          await fs.rename(manifestTemp, manifestPath);
+        } catch (error) {
+          await fs.rm(temporaryPath, { force: true }).catch(() => {});
+          throw error;
+        }
+      } else {
+        this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
+      }
       const outputStats = await fs.stat(outputPath);
       if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
       rendered.push({
