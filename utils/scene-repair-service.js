@@ -730,7 +730,7 @@ class SceneRepairService {
 
   async cleanupStaleRepairTemps(productionId, maxAgeMs = 24 * 60 * 60 * 1000) {
     const targets = [
-      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.rendering\.mp4$/i },
+      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_visual\.mp4\.rendering\.mp4|\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.rendering\.mp4)$/i },
       { directory: path.join(this.dataRoot, 'captions'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing$/i },
       { directory: path.join(this.dataRoot, 'audio'), prefix: `${productionId}_scene_mix_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing\.m4a$/i }
     ];
