@@ -357,43 +357,6 @@ async function run() {
   assert.equal(visualGenerations, 1, 'visual generation stops after lease loss is observed');
   assert.equal(visualLeaseChecks >= 3, true, 'lease loss is rechecked in the provider-error catch path');
 
-  // Scene-manifest initialization is part of the production edit stage.
-  // If the lease expires while FFmpeg splits narration, no scene rows may be
-  // published by the stale worker.
-  const sceneInitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-init-lease-'));
-  try {
-    let sceneRowsWritten = false;
-    let sceneLeaseChecks = 0;
-    const sceneInit = new SceneRepairService({
-      replaceProductionScenes: async () => {
-        sceneRowsWritten = true;
-        return [];
-      }
-    }, {
-      isUsableAudioFile: async () => true
-    }, {
-      dataRoot: sceneInitDir,
-      runFFmpeg: async () => 'rendered-segment'
-    });
-    await assert.rejects(
-      sceneInit.initializeProduction({
-        id: 'lease-lost-scene-init',
-        script: { title: 'Test video' },
-        estimatedDuration: 10,
-        assets: { audio: { path: '/tmp/narration.mp3', status: 'ready' }, video: {} }
-      }, {}, async () => {
-        sceneLeaseChecks += 1;
-        if (sceneLeaseChecks >= 4) {
-          throw Object.assign(new Error('job lease lost during scene audio split'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
-        }
-      }),
-      error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
-    );
-    assert.equal(sceneRowsWritten, false, 'scene manifest is not persisted after lease loss during FFmpeg splitting');
-  } finally {
-    await fs.rm(sceneInitDir, { recursive: true, force: true });
-  }
-
   // Losing the production lease while splitting narration must stop scene
   // manifest persistence after FFmpeg returns.
   const sceneInitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-init-lease-'));
@@ -423,7 +386,7 @@ async function run() {
         estimatedDuration: 8
       }, {}, async () => {
         sceneInitLeaseChecks += 1;
-        if (sceneInitLeaseChecks === 4) {
+        if (sceneInitLeaseChecks >= 4) {
           throw Object.assign(new Error('production lease lost after narration split'), { code: 'PRODUCTION_RESUME_LEASE_LOST' });
         }
       }),
