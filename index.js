@@ -651,6 +651,63 @@ class YouTubeAutomationAgent {
   setupOperatorAPI() {
     const protect = this.requireAPIKey();
 
+    this.app.get('/api/media-generation/tasks/unresolved', protect, async (req, res) => {
+      try {
+        const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+        const tasks = await this.db.listUnresolvedMediaGenerationTasks(limit);
+        return res.json({
+          success: true,
+          tasks: tasks.map(task => ({
+            id: task.id,
+            jobId: task.job_id,
+            productionId: task.production_id,
+            sceneIndex: task.scene_index,
+            provider: task.provider,
+            model: task.model,
+            status: task.status,
+            externalTaskId: task.external_task_id,
+            providerTaskType: task.providerData?.taskType || null,
+            updatedAt: task.updated_at,
+            error: task.error
+          }))
+        });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/media-generation/tasks/:taskId/reconcile', protect, async (req, res) => {
+      try {
+        const mediaGeneration = this.agents.production?.aiVideoGenerator?.mediaGeneration;
+        if (!mediaGeneration) {
+          return res.status(503).json({ success: false, error: 'Media generation service is not initialized' });
+        }
+        const task = await mediaGeneration.reconcileTaskSubmission(
+          req.params.taskId,
+          req.body?.externalTaskId,
+          { providerTaskType: req.body?.providerTaskType }
+        );
+        return res.json({
+          success: true,
+          task: {
+            id: task.id,
+            jobId: task.job_id,
+            productionId: task.production_id,
+            sceneIndex: task.scene_index,
+            provider: task.provider,
+            model: task.model,
+            status: task.status,
+            externalTaskId: task.external_task_id,
+            providerTaskType: task.providerData?.taskType || null,
+            updatedAt: task.updated_at,
+            error: task.error
+          }
+        });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.get('/api/script-quality-reviews', protect, async (req, res) => {
       try {
         const status = ['pending', 'human_approved', 'rejected', 'revision_requested', 'all'].includes(req.query.status)
