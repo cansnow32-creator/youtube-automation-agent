@@ -47,3 +47,20 @@ covered by `test/production-stage-workflow.test.js` and included in `npm test`.
 ## Dashboard retry behavior
 
 The existing protected `POST /api/content/:productionId/retry` endpoint now resumes a failed or interrupted production when a persisted stage workflow exists. It reuses the saved script, approved concept, and completed stage artifacts, then retries from the first failed or interrupted stage. Older productions without a persisted workflow keep the existing full-generation retry behavior. The endpoint does not schedule or publish content as part of recovery; the separate operator approval and publishing gates remain in force.
+
+## Cross-process operation safety
+
+Production creation for a generation job uses a database-backed lease keyed by
+the job ID. A second worker receives a conflict instead of creating a duplicate
+production for the same job. Resuming an existing production uses a separate
+production-scoped lease, so direct retries cannot run the same saved workflow
+concurrently. Both leases are renewed while work is active and checked before
+workflow persistence; losing or failing to verify a lease stops subsequent
+state commits. Long-running media commands are not forcibly cancelled, but
+their outputs are not committed after lease loss is detected.
+
+Scene-repair output replacement uses a temporary file and a rollback backup.
+If promoting the validated temporary output fails, the previous output is
+restored rather than being discarded first. Regression coverage for lock
+conflicts, lease loss, and replacement rollback lives in
+`test/production-operation-lock.test.js`.
