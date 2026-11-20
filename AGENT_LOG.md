@@ -405,3 +405,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added regression coverage for late provider completion after lease loss and for suppressing simulated visual fallback after lease loss. Corrected the existing partial-output test to inspect the actual attempt path.
 - Static syntax checks passed; runtime tests/lint not executed.
 - Commits: `963df9d6886807a0544923212191aa5e109639c5`, `a09716ad5e089f1855d7ad5cc1c2bdb7c049e636`, `3afde4bf1c61fe1c12ddc4c6afafdce0df851680`, `e98e5e8039c8a409f9e64f73b1ac73140a2bb549`.
+
+
+## 2026-11-20 — Abort FFmpeg work on production lease loss
+
+- Added lease-aware FFmpeg execution: checks before spawn, periodic checks during the child process, AbortController cancellation, and propagation of the original lease-loss error.
+- Wired lease callbacks through CineCode, hybrid timeline and mux, slideshow, background music mixing, validation decode, and Gemini TTS encoding. Added cleanup of background-mix outputs/manifests on post-publish lease loss.
+- Added real FFmpeg cancellation and audio mixer lease-propagation/post-publish cleanup regressions. Static syntax checks passed; runtime tests/lint not executed.
+- Commits: `028cf9a9fa55646c43d6ef6833d43d8d05dc9a56`, `e97f317a784dbc62937a24b16d0edcdfd6162bda`, `0a00d5511bd969560766b9a28244f19e6a3d40dd`, `5c5d80e901dde39e14fc43f155c80cdb901279bf`, `c50bbb5bf42cbb216d5c62a1e905bb49852ba193`, `7bfd7738f447ef30a4cde6b7a404abb25476bfb3`, `2d8b979362851db3d46352772f83f660330e46f5`, `6e397e3b90b4924c9909574da746f9841b27acca`, `38a5fdd8cc08a1c377fcf6ecd44402bc92a63c9f`, `d451ad7fad6cfce18af34cb2df8f102c2c5b1b00`, `b11ec6b07315385aebaf34519808982cd2180c68`.
