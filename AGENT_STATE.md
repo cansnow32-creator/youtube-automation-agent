@@ -371,3 +371,11 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added `testVideoAttemptCleanupIncludesCineCodeSceneArtifacts()` to `test/production-attempt-artifact-cleanup.test.js` and verified that test file is already included in `npm test`.
 - Added a fresh `assertLease()` immediately before the final ready-state database update in `processContentUnlocked()`.
 - Static syntax checks passed for the production agent and regression test; `package.json` parsed and test wiring was confirmed. Runtime tests and lint were not run. PR #2 latest head: `7f30f11537b78ed1d9943e18bf46fde53c215fcb`; no Actions run found for that head; PR remains draft/open/unmerged.
+
+## Latest Shorts render lease fencing — 2026-11-20
+
+- `ShortsRepurposingService.render()` now accepts an optional `{ assertLease }` callback, checks ownership before and after each long-running/render/publication step, and passes the guard into both FFmpeg render and decode-validation calls.
+- Replaced shared deterministic `<clipId>.mp4`, `<clipId>.rendering.mp4`, and `<clipId>.srt` paths with UUID-scoped attempt paths. This prevents concurrent/retried renders from overwriting another attempt's media.
+- On failure, removes only this attempt's MP4/temp/SRT files. If lease is lost, it rethrows without writing `status: failed`, avoiding a stale worker's post-loss DB mutation. Stores `renderAttemptId` when marking the clip rendering/rendered/failed for recovery visibility.
+- Added a regression that simulates lease loss after FFmpeg writes a partial output and verifies the attempt files are removed and the stale worker does not write failed status. The test is already wired into `npm test`.
+- Static syntax/package/test wiring checks passed; runtime tests/lint not run. Commits: `81290bfc53539307587e013af41e31b78ba50783`, `1061a6a9357b11f8de602e774f705b0e59627006`.
