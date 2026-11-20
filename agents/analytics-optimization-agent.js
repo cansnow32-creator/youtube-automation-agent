@@ -193,40 +193,69 @@ class AnalyticsOptimizationAgent {
   async getVideoAnalytics(videoId, period = null, options = {}) {
     const endDate = period?.endDate || new Date().toISOString().split('T')[0];
     const startDate = period?.startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    try {
-      // Get various analytics metrics
-      const [
-        viewsData,
-        watchTimeData,
-        demographicsData,
-        trafficSourcesData,
-        deviceData,
-        outcomeData
-      ] = await Promise.all([
-        this.getViewsAnalytics(videoId, startDate, endDate),
-        this.getWatchTimeAnalytics(videoId, startDate, endDate),
-        this.getDemographicsAnalytics(videoId, startDate, endDate),
-        this.getTrafficSourcesAnalytics(videoId, startDate, endDate),
-        this.getDeviceAnalytics(videoId, startDate, endDate),
-        this.getOutcomeAnalytics(videoId, startDate, endDate, options.currency || 'USD')
-      ]);
-      
-      return {
-        simulated: false,
-        period: { startDate, endDate },
-        views: viewsData,
-        watchTime: watchTimeData,
-        demographics: demographicsData,
-        trafficSources: trafficSourcesData,
-        devices: deviceData,
-        outcomes: outcomeData,
-        engagement: await this.calculateEngagementMetrics(videoId)
-      };
-    } catch (error) {
-      this.logger.error(`Failed to get analytics for ${videoId}:`, error);
-      return this.getSimulatedAnalytics(videoId);
+    const requests = {
+      views: () => this.getViewsAnalytics(videoId, startDate, endDate),
+      watchTime: () => this.getWatchTimeAnalytics(videoId, startDate, endDate),
+      demographics: () => this.getDemographicsAnalytics(videoId, startDate, endDate),
+      trafficSources: () => this.getTrafficSourcesAnalytics(videoId, startDate, endDate),
+      devices: () => this.getDeviceAnalytics(videoId, startDate, endDate),
+      outcomes: () => this.getOutcomeAnalytics(videoId, startDate, endDate, options.currency || 'USD'),
+      engagement: () => this.calculateEngagementMetrics(videoId)
+    };
+    const entries = Object.entries(requests);
+    const settled = await Promise.allSettled(entries.map(([, request]) => request()));
+    const results = {};
+    const unavailable = {};
+    for (let index = 0; index < entries.length; index++) {
+      const [name] = entries[index];
+      const result = settled[index];
+      if (result.status === 'fulfilled') {
+        results[name] = result.value;
+      } else {
+        unavailable[name] = String(result.reason?.message || result.reason || 'Request failed').slice(0, 240);
+        this.logger.warn(`YouTube analytics section "${name}" unavailable for ${videoId}: ${unavailable[name]}`);
+      }
     }
+
+    const hasCoreData = Boolean(results.views || results.watchTime);
+    if (!hasCoreData) {
+      this.logger.error(`Core YouTube analytics unavailable for ${videoId}; using explicitly marked simulated fallback`);
+      return {
+        ...this.getSimulatedAnalytics(videoId),
+        period: { startDate, endDate },
+        dataQuality: {
+          source: 'simulated_fallback',
+          partial: false,
+          available: [],
+          unavailable
+        }
+      };
+    }
+
+    return {
+      simulated: false,
+      period: { startDate, endDate },
+      views: results.views || { totalViews: null, totalImpressions: null, averageCTR: null, dailyData: [] },
+      watchTime: results.watchTime || {
+        totalWatchTime: null, averageViewDuration: null, averageViewPercentage: null,
+        retentionQuality: 'unknown'
+      },
+      demographics: results.demographics || { ageGroups: [], gender: [], primaryAudience: null },
+      trafficSources: results.trafficSources || { sources: [], topSource: 'unknown', organicPercentage: null },
+      devices: results.devices || { devices: [], mobilePercentage: null },
+      outcomes: results.outcomes || {
+        subscribersAvailable: false, subscribersGained: null, subscribersLost: null,
+        netSubscribers: null, revenueAvailable: false, currency: null,
+        estimatedRevenue: null, monetizedPlaybacks: null, playbackBasedCpm: null
+      },
+      engagement: results.engagement || { engagementRate: null, likeRatio: null, commentsPerView: null, engagementQuality: 'unknown' },
+      dataQuality: {
+        source: 'youtube_api',
+        partial: Object.keys(unavailable).length > 0,
+        available: Object.keys(results),
+        unavailable
+      }
+    };
   }
 
   async getViewsAnalytics(videoId, startDate, endDate) {
@@ -239,11 +268,21 @@ class AnalyticsOptimizationAgent {
       filters: `video==${videoId}`
     });
     
+    const rows = response.data.rows || [];
+    const totalViews = rows.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
+    const totalImpressions = rows.reduce((sum, row) => sum + (Number(row[2]) || 0), 0);
+    const ctrRows = rows.filter(row => Number.isFinite(Number(row[2])) && Number(row[2]) > 0 &&
+      Number.isFinite(Number(row[3])));
+    const ctrImpressions = ctrRows.reduce((sum, row) => sum + Number(row[2]), 0);
+    const weightedCTR = ctrImpressions > 0
+      ? ctrRows.reduce((sum, row) => sum + (Number(row[2]) * Number(row[3])), 0) / ctrImpressions
+      : null;
+
     return {
-      totalViews: response.data.rows?.reduce((sum, row) => sum + row[1], 0) || 0,
-      totalImpressions: response.data.rows?.reduce((sum, row) => sum + row[2], 0) || 0,
-      averageCTR: this.calculateAverage(response.data.rows?.map(row => row[3]) || []),
-      dailyData: response.data.rows || []
+      totalViews,
+      totalImpressions,
+      averageCTR: weightedCTR,
+      dailyData: rows
     };
   }
 
@@ -553,39 +592,31 @@ class AnalyticsOptimizationAgent {
   }
 
   calculatePerformanceScore(analytics) {
+    const components = [
+      ['views', analytics.views?.totalViews, 30, value => Math.min(30, (value / 10000) * 30)],
+      ['retention', analytics.watchTime?.averageViewPercentage, 25, value => (value / 100) * 25],
+      ['engagement', analytics.engagement?.engagementRate, 25, value => Math.min(25, value * 5)],
+      ['ctr', analytics.views?.averageCTR, 20, value => Math.min(20, value * 2)]
+    ];
     let score = 0;
     let maxScore = 0;
-    
-    // Views score (30 points max)
-    const viewsScore = Math.min(30, (analytics.views.totalViews / 10000) * 30);
-    score += viewsScore;
-    maxScore += 30;
-    
-    // Retention score (25 points max)
-    const retentionScore = (analytics.watchTime.averageViewPercentage / 100) * 25;
-    score += retentionScore;
-    maxScore += 25;
-    
-    // Engagement score (25 points max)
-    const engagementScore = Math.min(25, analytics.engagement.engagementRate * 5);
-    score += engagementScore;
-    maxScore += 25;
-    
-    // CTR score (20 points max)
-    const ctrScore = Math.min(20, analytics.views.averageCTR * 2);
-    score += ctrScore;
-    maxScore += 20;
-    
-    const finalScore = Math.round((score / maxScore) * 100);
-    
+    const breakdown = {};
+    for (const [name, rawValue, weight, calculate] of components) {
+      const value = rawValue === null || rawValue === undefined ? NaN : Number(rawValue);
+      if (!Number.isFinite(value)) {
+        breakdown[name] = null;
+        continue;
+      }
+      const points = calculate(value);
+      score += points;
+      maxScore += weight;
+      breakdown[name] = Math.round(points);
+    }
+    const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
     return {
       score: finalScore,
-      breakdown: {
-        views: Math.round(viewsScore),
-        retention: Math.round(retentionScore),
-        engagement: Math.round(engagementScore),
-        ctr: Math.round(ctrScore)
-      },
+      breakdown,
+      availableWeight: maxScore,
       grade: this.getPerformanceGrade(finalScore)
     };
   }
