@@ -137,6 +137,7 @@ function renderDashboard() {
   renderSchedule(state.schedule.slice(0, 5), '#next-schedule');
   renderNotifications(state.notifications, state.events);
   renderPipeline(state.pipeline);
+  renderScriptQualityReviews(state.scriptQualityReviews || []);
   renderCalendar(state.schedule);
   renderIdeas(state.ideas);
   renderAnalytics(state.analytics, state.learning);
@@ -255,6 +256,37 @@ function renderNotifications(notifications, events) {
 
 function currentPipelineFilter() {
   return $('#pipeline-filter').value || 'all';
+}
+
+function renderScriptQualityReviews(reviews) {
+  const container = $('#script-quality-review-list');
+  const count = $('#quality-review-count');
+  count.textContent = `${reviews.length} pending`;
+  if (!reviews.length) {
+    container.innerHTML = empty('No rejected scripts are waiting for a human decision.');
+    return;
+  }
+  container.innerHTML = reviews.map(review => {
+    const report = review.quality_report || {};
+    const attempts = Array.isArray(report.attempts) ? report.attempts : [];
+    const latest = attempts[attempts.length - 1] || {};
+    const reviewerResults = Object.values(latest.reviewers || {});
+    const blockers = reviewerResults.flatMap(item => Array.isArray(item.blockers) ? item.blockers : []);
+    const revisions = reviewerResults.flatMap(item => Array.isArray(item.revision_instructions) ? item.revision_instructions : []);
+    return `<article class="script-quality-review-card">
+      <div class="script-quality-review-heading"><div><strong>${escapeHTML(review.topic || 'Untitled script')}</strong><small>${escapeHTML(timeAgo(review.created_at))} · ${escapeHTML(report.revisions ?? 0)} revisions</small></div><span class="status needs_attention">${escapeHTML(report.score ?? 0)}/100 · human review</span></div>
+      <div class="script-quality-review-columns">
+        <div><strong>Blockers</strong>${blockers.length ? `<ul>${blockers.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No structured blockers returned.</p>'}</div>
+        <div><strong>Revision guidance</strong>${revisions.length ? `<ul>${revisions.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No revision guidance returned.</p>'}</div>
+      </div>
+      <details><summary>Show saved draft</summary><pre>${escapeHTML(review.draft || '')}</pre></details>
+      <div class="script-quality-review-actions">
+        <button class="button secondary small" data-quality-decision="revision_requested" data-quality-review-id="${escapeHTML(review.id)}">Request revision</button>
+        <button class="button secondary small" data-quality-decision="rejected" data-quality-review-id="${escapeHTML(review.id)}">Reject</button>
+        <button class="button primary small" data-quality-decision="human_approved" data-quality-review-id="${escapeHTML(review.id)}">Human approve</button>
+      </div>
+    </article>`;
+  }).join('');
 }
 
 function renderPipeline(items) {
@@ -1449,6 +1481,32 @@ document.addEventListener('click', async event => {
       await refreshDashboard(true);
       switchView('pipeline');
     } catch (error) { showToast(error.message, 'error'); }
+    return;
+  }
+
+  const qualityDecision = event.target.closest('[data-quality-decision]');
+  if (qualityDecision) {
+    const decision = qualityDecision.dataset.qualityDecision;
+    const message = decision === 'human_approved'
+      ? 'Human approval records your editorial decision only. It will not launch production or publish.'
+      : decision === 'rejected'
+        ? 'Reject this saved script draft?'
+        : 'Request a revision. The draft will remain in the review queue.';
+    if (!confirm(message)) return;
+    const notes = prompt('Optional review notes / revision instructions:', '') ;
+    if (notes === null) return;
+    qualityDecision.disabled = true;
+    try {
+      await api('/api/script-quality-reviews/' + encodeURIComponent(qualityDecision.dataset.qualityReviewId) + '/decision', {
+        method: 'POST',
+        body: JSON.stringify({ decision, notes })
+      });
+      showToast(decision === 'human_approved' ? 'Human decision saved. No production was started.' : 'Review decision saved.');
+      await refreshDashboard(true);
+    } catch (error) {
+      showToast(error.message, 'error');
+      qualityDecision.disabled = false;
+    }
     return;
   }
 
