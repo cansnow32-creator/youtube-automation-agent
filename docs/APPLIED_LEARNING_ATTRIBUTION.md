@@ -37,3 +37,15 @@ The current packaging experiment runner rotates title/thumbnail packages sequent
 - A causal winner requires a future integration that provides verifiable randomized assignment and arm-level exposure/outcome metrics. Until then, human review may inspect observations, but the system must not label them an A/B winner.
 
 This safeguard intentionally favors honest evidence over a misleading statistical result.
+
+
+## Automated experiment safety pause
+
+Automated packaging experiment creation and start are disabled while the integration lacks randomized viewer assignment and verified arm-level exposure. This prevents the application from rotating public titles and thumbnails in sequential time windows while presenting the result as a test.
+
+- New experiment creation and activation return `EXPERIMENT_RANDOMIZATION_UNAVAILABLE`.
+- Existing legacy running experiments are stopped on their next refresh attempt. The service restores the saved control title/thumbnail, clears any winner, and marks the experiment `inconclusive`.
+- If restoring the control package fails, the experiment is marked `action_required` with the restore error; it is not silently treated as completed.
+- Existing draft/approved experiments cannot be activated through the service.
+- Use YouTube Studio's native Test & Compare manually where available. The current application does not claim to import or verify native experiment assignments/results.
+- Re-enable automation only after an integration can prove randomized assignment, per-arm exposure and outcome metrics, and a supported measurement window.
