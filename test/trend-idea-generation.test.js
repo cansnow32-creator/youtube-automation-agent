@@ -250,6 +250,17 @@ async function run() {
     assert.ok(complexRequirements.visuals < 90, 'visual asset and animation workload should be scored separately');
     assert.ok(complexRequirements.narration < 90, 'interview and narration workload should be scored separately');
     assert.ok(complexRequirements.editing < 90, 'complex editing workload should be scored separately');
+    const { buildProductionPlan } = require('../utils/trend-idea-ranker');
+    const productionPlan = buildProductionPlan(complexRequirements);
+    assert.deepEqual(productionPlan.stages.map(stage => stage.key),
+      ['research', 'visuals', 'narration', 'editing'],
+      'production plan should provide a stable, actionable stage order');
+    assert.ok(productionPlan.stages.every(stage =>
+      ['low', 'medium', 'high'].includes(stage.effort) &&
+      Number.isFinite(stage.readinessScore)),
+    'each production stage should expose a bounded effort label and score');
+    assert.ok(productionPlan.highestEffortStage,
+      'production plan should identify the stage that needs the most attention');
     assert.ok(scoreProductionEffort({
       topic: 'A documentary investigation with interviews, original animation and archival footage'
     }) < scoreProductionEffort({ topic: 'A simple beginner checklist' }),
