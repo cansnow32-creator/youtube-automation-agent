@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const sharp = require('sharp');
 const { ProductionManagementAgent } = require('../agents/production-management-agent');
 
 async function run() {
@@ -9,6 +10,7 @@ async function run() {
   try {
     const agent = Object.create(ProductionManagementAgent.prototype);
     const persisted = [];
+  const createImage = filePath => sharp({ create: { width: 24, height: 24, channels: 3, background: '#456789' } }).png().toFile(filePath);
     let generationCalls = 0;
     agent.logger = { info() {}, warn() {}, error() {} };
     agent.db = {
@@ -19,7 +21,7 @@ async function run() {
     const priorScenes = [];
     for (let i = 0; i < 9; i++) {
       const filePath = path.join(tempDir, `scene-${i}.png`);
-      await fs.writeFile(filePath, Buffer.from('image'));
+      await createImage(filePath);
       priorScenes.push({
         sceneIndex: i,
         promptHash: require('crypto').createHash('sha256')
@@ -33,7 +35,7 @@ async function run() {
         generationCalls++;
         const index = Number(prompt.match(/(\d+)$/)[1]);
         const filePath = path.join(tempDir, `generated-${index}.png`);
-        await fs.writeFile(filePath, Buffer.from('image'));
+        await createImage(filePath);
         return [filePath];
       }
     };
@@ -65,6 +67,13 @@ async function run() {
     const callsBeforeMissing = generationCalls;
     await agent.generateVideoContent(production);
     assert.strictEqual(generationCalls - callsBeforeMissing, 1, 'a missing image should be regenerated');
+
+    // Non-empty but corrupt image files must not be treated as reusable scenes.
+    const corruptIndex = 3;
+    await fs.writeFile(production.assets.video.visualSceneAssets[corruptIndex].path, Buffer.from('corrupt-image'));
+    const callsBeforeCorrupt = generationCalls;
+    await agent.generateVideoContent(production);
+    assert.strictEqual(generationCalls - callsBeforeCorrupt, 1, 'a corrupt image should be regenerated');
     console.log('Production scene asset retry tests passed.');
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
