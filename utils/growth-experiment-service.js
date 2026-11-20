@@ -266,7 +266,7 @@ class GrowthExperimentService {
       candidates,
       activeCount: experiments.filter(item => item.status === 'running').length,
       awaitingDecisionCount: experiments.filter(item => item.status === 'awaiting_winner').length,
-      evidencePolicy: 'Current same-video sequential rotations are observational only because YouTube Analytics does not expose randomized arm-level impressions/clicks. They cannot select or adopt a causal winner.'
+      evidencePolicy: 'Automated packaging experiments are paused. The current integration cannot randomize viewers or verify arm-level exposure; legacy running experiments are restored to control and marked inconclusive.'
     };
   }
 
