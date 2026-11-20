@@ -2041,7 +2041,7 @@ class YouTubeAutomationAgent {
       52,
       async stageAssertLease => {
         await stageAssertLease();
-        const result = await this.agents.seoOptimizer.optimize(script, strategy);
+        const result = await this.agents.seoOptimizer.optimize(script, strategy, stageAssertLease);
         await stageAssertLease();
         return result;
       },
@@ -2086,7 +2086,16 @@ class YouTubeAutomationAgent {
       const packagingExperiment = approvalRequired
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script, stageAssertLease)
         : null;
-      await stageAssertLease();
+      try {
+        await stageAssertLease();
+      } catch (error) {
+        for (const variant of packagingExperiment?.thumbnailVariants || []) {
+          if (variant.path && variant.path !== productionData.assets?.thumbnail?.path) {
+            await fs.unlink(variant.path).catch(() => {});
+          }
+        }
+        throw error;
+      }
       const quality = await this.operator.runQualityChecks(productionData, profile);
       await stageAssertLease();
       const reviewStatus = quality.passed
