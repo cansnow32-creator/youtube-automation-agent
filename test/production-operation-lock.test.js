@@ -287,6 +287,40 @@ async function run() {
     fs.mkdir = originalMkdir;
   }
 
+  // Lease loss after a failed TTS provider call must not be converted into
+  // a simulated narration artifact by the catch/fallback path.
+  const audioAgent = Object.create(ProductionManagementAgent.prototype);
+  audioAgent.logger = { info() {}, error() {} };
+  audioAgent.aiVideoGenerator = {
+    lastNarrationResult: {},
+    generateTTSAudio: async () => { throw new Error('provider unavailable'); }
+  };
+  const originalReadFile = fs.readFile;
+  const audioWrites = [];
+  fs.readFile = async () => 'narration text';
+  fs.writeFile = async (...args) => { audioWrites.push(args); };
+  try {
+    let audioLeaseChecks = 0;
+    await assert.rejects(
+      audioAgent.generateAudioNarration({
+        id: 'lease-lost-audio',
+        assets: { script: { ttsPath: '/tmp/narration.txt' } },
+        strategy: {},
+        estimatedDuration: 10
+      }, async () => {
+        audioLeaseChecks += 1;
+        if (audioLeaseChecks === 2) {
+          throw Object.assign(new Error('job lease lost during TTS fallback'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
+    );
+    assert.equal(audioWrites.length, 0, 'lease loss prevents simulated narration fallback writes');
+  } finally {
+    fs.readFile = originalReadFile;
+    fs.writeFile = originalWriteFile;
+  }
+
     process.stdout.write('Production operation lock tests passed\\n');
 }
 
