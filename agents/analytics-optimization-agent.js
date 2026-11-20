@@ -252,7 +252,7 @@ class AnalyticsOptimizationAgent {
       dataQuality: {
         source: 'youtube_api',
         partial: Object.keys(unavailable).length > 0 ||
-          Object.values(results).some(result => result?.dataQuality?.partial),
+          Object.values(results).some(result => result?.dataQuality?.partial || result?.available === false),
         available: Object.keys(results),
         unavailable,
         sections: Object.fromEntries(Object.entries(results)
@@ -377,8 +377,8 @@ class AnalyticsOptimizationAgent {
     return {
       sources: sources.map(row => ({
         source: row[0],
-        views: row[1],
-        percentage: totalViews > 0 ? ((row[1] / totalViews) * 100).toFixed(1) : '0.0'
+        views: Number(row[1]) || 0,
+        percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
       })),
       topSource: sources.length > 0 ? sources[0][0] : 'unknown',
       organicPercentage: this.calculateOrganicPercentage(sources)
@@ -402,7 +402,7 @@ class AnalyticsOptimizationAgent {
       devices: devices.map(row => ({
         device: row[0],
         views: row[1],
-        percentage: ((row[1] / totalViews) * 100).toFixed(1)
+        percentage: totalViews > 0 ? Number(((Number(row[1]) / totalViews) * 100).toFixed(1)) : null
       })),
       mobilePercentage: this.calculateMobilePercentage(devices)
     };
@@ -776,14 +776,15 @@ class AnalyticsOptimizationAgent {
   }
 
   analyzeSearchPerformance(trafficSources) {
-    const searchSources = trafficSources.sources.filter(source => 
-      ['SEARCH', 'YOUTUBE_SEARCH'].includes(source.source)
+    const sources = trafficSources?.sources || [];
+    if (!sources.length || !sources.some(source => Number.isFinite(Number(source.percentage)))) {
+      return { searchPercentage: null, searchQuality: 'unknown', organicDiscovery: null };
+    }
+    const searchSources = sources.filter(source =>
+      ['SEARCH', 'YOUTUBE_SEARCH'].includes(source.source) &&
+      Number.isFinite(Number(source.percentage))
     );
-    
-    const searchPercentage = searchSources.reduce((sum, source) => 
-      sum + parseFloat(source.percentage), 0
-    );
-    
+    const searchPercentage = searchSources.reduce((sum, source) => sum + Number(source.percentage), 0);
     return {
       searchPercentage,
       searchQuality: searchPercentage > 20 ? 'good' : searchPercentage > 10 ? 'average' : 'poor',
@@ -813,7 +814,7 @@ class AnalyticsOptimizationAgent {
       recommendations.push('Use more relevant tags and long-tail keywords');
     }
     
-    if (searchPerformance.searchPercentage < 15) {
+    if (Number.isFinite(searchPerformance.searchPercentage) && searchPerformance.searchPercentage < 15) {
       recommendations.push('Focus on search optimization to improve organic discovery');
     }
     
@@ -870,7 +871,7 @@ class AnalyticsOptimizationAgent {
     const total = devices.reduce((sum, row) => sum + row[1], 0);
     const mobile = mobileDevices.reduce((sum, row) => sum + row[1], 0);
     
-    return total > 0 ? ((mobile / total) * 100).toFixed(1) : '0';
+    return total > 0 ? Number(((mobile / total) * 100).toFixed(1)) : null;
   }
 
   async getRecentAnalytics(days = 7) {
