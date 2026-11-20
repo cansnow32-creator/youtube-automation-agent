@@ -185,6 +185,29 @@ function scoreProductionRequirements(idea = {}, channelStrategy = {}) {
   return { ...scores, capabilityPenalty };
 }
 
+function buildProductionPlan(requirements = {}) {
+  const stages = [
+    { key: 'research', label: 'Research and fact-checking', order: 1 },
+    { key: 'visuals', label: 'Visual assets and animation', order: 2 },
+    { key: 'narration', label: 'Script, narration and interviews', order: 3 },
+    { key: 'editing', label: 'Editing, captions and assembly', order: 4 }
+  ].map(stage => {
+    const score = clamp(requirements[stage.key] ?? 75);
+    return {
+      key: stage.key,
+      label: stage.label,
+      effort: score >= 80 ? 'low' : score >= 60 ? 'medium' : 'high',
+      readinessScore: score,
+      sequence: stage.order
+    };
+  });
+  return {
+    stages,
+    highestEffortStage: [...stages].sort((a, b) => a.readinessScore - b.readinessScore)[0]?.key || null,
+    capabilityPenalty: clamp(requirements.capabilityPenalty || 0)
+  };
+}
+
 function scoreProductionEffort(idea = {}, channelStrategy = {}) {
   const requirements = scoreProductionRequirements(idea, channelStrategy);
   return clamp(Math.round(
@@ -272,6 +295,7 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
         productionFit,
         productionEffort,
         productionRequirements,
+        productionPlan: buildProductionPlan(productionRequirements),
         historicalPerformance: performance,
         historicalRawPerformance: historical?.rawScore ?? null,
         historicalSampleSize: historical?.sampleSize || 0,
@@ -361,5 +385,6 @@ module.exports = {
   scoreProductionFit,
   scoreProductionEffort,
   scoreProductionRequirements,
+  buildProductionPlan,
   filterTrendIdeasForApproval
 };
