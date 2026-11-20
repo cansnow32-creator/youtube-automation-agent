@@ -616,9 +616,13 @@ class SceneRepairService {
       }
     }
     const captions = this.buildSRT(scenes);
-    const captionsTempPath = `${captionsPath}.writing`;
-    await fs.writeFile(captionsTempPath, captions);
-    await fs.rename(captionsTempPath, captionsPath);
+    const existingCaptions = await fs.readFile(captionsPath, 'utf8').catch(() => null);
+    if (existingCaptions !== captions) {
+      const captionsTempPath = `${captionsPath}.writing`;
+      await fs.writeFile(captionsTempPath, captions);
+      await fs.unlink(captionsPath).catch(() => {});
+      await fs.rename(captionsTempPath, captionsPath);
+    }
     const stats = await fs.stat(finalPath);
     const previousPath = bundle.assets?.finalVideo?.path || null;
     const containsSyntheticMedia = scenes.some(scene => scene.containsSyntheticMedia);
@@ -696,6 +700,18 @@ class SceneRepairService {
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
     if (!hasSceneAudio && allCurrentWithoutSegments) return fallbackAudioPath;
     const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}.m4a`);
+    try {
+      const stat = await fs.stat(outputPath);
+      if (stat.isFile() && stat.size > 0) {
+        const duration = await this.getMediaDuration(outputPath);
+        if (Number.isFinite(duration) && duration > 0) {
+          await runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+          return outputPath;
+        }
+      }
+    } catch (_error) {
+      // Missing or corrupt cached narration mix is rebuilt below.
+    }
     const args = ['-y'];
     for (const scene of scenes) {
       if (scene.narrationStatus === 'intentional_silence') {
