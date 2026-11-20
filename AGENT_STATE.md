@@ -11,7 +11,7 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `96ac8f7c27be5009c981576650dd93c365cd160e`; 0 check-runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `5c346c23f75aa240c083371a8de42decdd80fed2`; 0 check-runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `8034dd2bfcb0559ac63a6e8657fab36791033249`; 0 check-runs |
 
 PR #2 intentionally stacks on PR #1. PR #1's base-branch CI workflow now accepts pull requests targeting any branch (commit `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`), so the stacked PR can be checked. Connector-authored commits did not trigger Actions; current PR #1, #2, and #3 heads all have zero check-runs. PR #3 is independent. Never merge any PR without explicit user approval.
@@ -20,6 +20,7 @@ PR #2 intentionally stacks on PR #1. PR #1's base-branch CI workflow now accepts
 
 - CI workflow commit `96ac8f7c27be5009c981576650dd93c365cd160e` now runs `npm ci` against the committed lockfile before generating a separate, reviewable dependency remediation candidate. It no longer silently rewrites the lockfile before tests.
 - Static review inspected job-scoped production locking in `ProductionManagementAgent.processContent`, production-scoped resume leases, scene-repair lease heartbeats/loss guards, and temporary-output replacement with rollback.
+- Tightened a weak SQL assertion in `test/production-operation-lock.test.js` so it requires the literal `?` placeholder in the lease-renewal predicate; commit `5c346c23f75aa240c083371a8de42decdd80fed2`.
 - Existing lock tests mock database calls. Real SQLite multi-process contention and end-to-end production recovery have not been verified.
 - GitHub reports zero check-runs on the current PR #2 head. No PR #2 application tests or lint have been run in the current session. PR #1's base workflow filter was broadened to include stacked PR targets, but the connector-authored commit did not trigger Actions.
 - Continue deeper review; add database-backed concurrency regression coverage where appropriate.
