@@ -963,4 +963,4 @@ class SceneRepairService {
   }
 }
 
-module.exports = { SceneRepairService, buildInitialSceneManifest, scriptScenes };
+module.exports = { SceneRepairService, buildInitialSceneManifest, scriptScenes, replaceFileWithRollback };
