@@ -175,6 +175,35 @@ async function run() {
     await nestedService.regenerateUnlocked('production-1', 'scene-1', { regenerateNarration: true }, async () => {});
     assert.equal(visualLeasePassed, true);
     assert.equal(narrationLeasePassed, true);
+
+    const standaloneBundle = editableBundle();
+    let standaloneNarrationLeasePassed = false;
+    const standaloneService = new SceneRepairService({
+      updateProductionScene: async (_productionId, _sceneId, changes) => ({ ...standaloneBundle.scenes[0], ...changes }),
+      updateProductionData: async () => true,
+      saveProductionSceneRevision: async () => true
+    }, {}, { dataRoot: nestedRoot });
+    standaloneService.getEditableBundle = async (_id, assertLease) => {
+      assert.equal(typeof assertLease, 'function');
+      await assertLease();
+      return standaloneBundle;
+    };
+    standaloneService.narrationDuration = async () => 8;
+    standaloneService.videoGenerator = {
+      lastNarrationResult: { provider: 'test-tts', model: 'test-model' },
+      async generateTTSAudio(_text, outputPath, options = {}) {
+        assert.equal(typeof options.assertLease, 'function', 'standalone narration regeneration must pass the lease into TTS');
+        standaloneNarrationLeasePassed = true;
+        await options.assertLease();
+        await fs.writeFile(outputPath, 'standalone narration');
+        return outputPath;
+      },
+      async isUsableAudioFile() { return true; }
+    };
+    await standaloneService.regenerateNarrationUnlocked(
+      'production-1', 'scene-1', { confirmCost: true }, async () => {}
+    );
+    assert.equal(standaloneNarrationLeasePassed, true);
   } finally {
     await fs.rm(nestedRoot, { recursive: true, force: true });
   }
