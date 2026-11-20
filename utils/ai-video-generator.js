@@ -586,6 +586,13 @@ class AIVideoGenerator {
       segments: sourceFingerprint,
       renderOptions: { width: renderOptions.width || 1920, height: renderOptions.height || 1080, fps: 30, codec: 'libx264', pixelFormat: 'yuv420p' }
     })).digest('hex');
+    const audioBuffer = await fs.readFile(audioPath);
+    const assemblyFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+      visualFingerprint,
+      audioSha256: crypto.createHash('sha256').update(audioBuffer).digest('hex'),
+      mux: { loopVideo: true, videoCodec: 'copy', audioCodec: 'aac', shortest: true }
+    })).digest('hex');
+    const assemblyManifestPath = outputPath + '.assembly.json';
 
     try {
       let visualCached = false;
@@ -620,10 +627,36 @@ class AIVideoGenerator {
         await fs.rename(manifestTempPath, visualManifestPath);
       }
 
+      let finalCached = false;
+      try {
+        const [manifest, stats] = await Promise.all([
+          fs.readFile(assemblyManifestPath, 'utf8').then(JSON.parse),
+          fs.stat(outputPath)
+        ]);
+        if (manifest.fingerprint === assemblyFingerprint && stats.isFile() && stats.size > 0) {
+          await this.validateRenderedVideo(outputPath);
+          finalCached = true;
+          this.logger.info('Reusing completed hybrid video and audio mux.');
+        }
+      } catch (_cacheError) {
+        finalCached = false;
+      }
+      if (finalCached) return outputPath;
+
       await this.addAudioToVideo(visualPath, audioPath, finalTempPath, { loopVideo: true });
       await this.validateRenderedVideo(finalTempPath);
       await fs.rm(outputPath, { force: true });
       await fs.rename(finalTempPath, outputPath);
+      const assemblyManifestTempPath = assemblyManifestPath + '.tmp';
+      await fs.writeFile(assemblyManifestTempPath, JSON.stringify({
+        version: 1,
+        fingerprint: assemblyFingerprint,
+        visualFingerprint,
+        audioSha256: crypto.createHash('sha256').update(audioBuffer).digest('hex'),
+        assembledAt: new Date().toISOString()
+      }, null, 2));
+      await fs.rm(assemblyManifestPath, { force: true });
+      await fs.rename(assemblyManifestTempPath, assemblyManifestPath);
       return outputPath;
     } finally {
       // Keep the completed visual-only timeline and its manifest: a failed audio
