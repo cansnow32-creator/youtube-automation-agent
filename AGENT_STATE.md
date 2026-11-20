@@ -482,3 +482,11 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Organic traffic share now reports a percentage of total views (or null when no views exist), rather than returning an absolute view count. Device/traffic percentages are guarded against division by zero.
 - Follow-up PR #2 commits: `fa72d7fe9ac7dfae6b194bd9afbfeeef748e489e`, `12641146e1a93ff2b35c979f192e12882ba96095`.
 - Latest PR #2 head at this checkpoint: `12641146e1a93ff2b35c979f192e12882ba96095`; open/draft/unmerged, base unchanged, mergeable false, no workflow runs. Static JS syntax and package JSON checks passed; runtime tests/lint not run.
+
+### Post-upload caption recovery — 2026-11-20
+- YouTube captions are now treated as an independent post-upload asset, matching thumbnail behavior. Caption API/file errors are no longer silently swallowed: metadata.captionUpload records uploaded/failed state, timestamp, bounded error details, and retryRequired.
+- Added PublishingSchedulingAgent.retryCaptionUpload(contentId) and protected POST /api/content/:productionId/retry-captions. It requires an already-recorded YouTube ID and a recorded failed caption state, reuses that ID, and never calls videos.insert.
+- Added test/post-upload-assets.test.js: simulates successful video insertion followed by thumbnail and caption failures, then repairs both assets and asserts exactly one videos.insert call.
+- Added the regression test to the npm test script and documented both retry endpoints in docs/PUBLISHING_RECONCILIATION.md.
+- PR #2 commits: 7c3043a754201fffbb6f354bb0b8c9c86750b5aa, f794729381d97432db4eec45c76afae6309cf0a5, 6c3034243042a395e3f5eb23e1e64f243571160e, 17702f00f6445c919dcbaaa31c90408f3e9e90cc, 78ad061bb95f18448e82c68943c562eb4cefcbd6.
+- Static JavaScript syntax checks passed for the publishing agent, route file, and regression test; package JSON parsed and test-chain wiring was confirmed. Runtime tests/lint were not run in this session. PR #2 head: 78ad061bb95f18448e82c68943c562eb4cefcbd6, open/draft/unmerged, base unchanged, no workflow runs. No merge, rebase, or base change performed.
