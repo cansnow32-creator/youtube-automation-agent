@@ -53,6 +53,10 @@ function getVideoAttemptSidecarPaths(videoPath) {
     stem + '_visual.mp4',
     stem + '_slides'
   ];
+  for (let index = 1; index <= 20; index++) {
+    const scenePath = `${stem}_cinecode_scene_${String(index).padStart(2, '0')}.mp4`;
+    paths.push(scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp');
+  }
 }
 
 async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
@@ -1195,10 +1199,23 @@ class ProductionManagementAgent {
           jobId: productionData.jobId,
           productionId: productionData.id,
           estimatedDuration: productionData.estimatedDuration,
-          approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
+          approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null,
+          attemptId,
+          assertLease
         }
       );
       if (producedPath && typeof producedPath === 'string') generatedPaths.push(...getVideoAttemptSidecarPaths(producedPath));
+      const providerScenes = this.aiVideoGenerator.lastVideoResult?.scenes || [];
+      for (const scene of providerScenes) {
+        if (scene.path) {
+          generatedPaths.push(
+            scene.path,
+            scene.path + '.rendering.mp4',
+            scene.path + '.render.json',
+            scene.path + '.render.json.tmp'
+          );
+        }
+      }
       await assertLease();
 
       // The generator falls back to a placeholder .info file when it cannot render.
