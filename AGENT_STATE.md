@@ -332,3 +332,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added a regression to `test/scene-edit-lease.test.js`: simulated lease loss after upload write leaves the scene-assets directory empty. Test is wired into `npm test`.
 - Commits: `9b445a7841e2df0015c9f5bab00d88f868ae0fa6`, `2f2e9b9df5fea658cdd443bb1ecfe104c8a9ebb2`, `d5e8dac847a45473210a45ade55b894184d3c45a`.
 - Static JS syntax checks passed; runtime tests/lint not executed. PR #2 remains open/draft; no merge or base changes.
+
+
+## Latest image-generation lease fencing — 2026-11-20
+
+- Found that `generateVisualAssets()` swallowed every image-provider error and wrote simulated `.info` artifacts, even when the production lease had been lost. A late image provider response could also be atomically renamed to the published path without an internal lease assertion. `generateThumbnail()` similarly used a millisecond-only shared output name and fell back to simulation for any error.
+- The production agent now passes its `assertLease` callback to `generateVisualAssets()` and `generateThumbnail()`. `generateImage()` checks ownership before starting, after provider completion, and immediately before rename; on lease loss it removes the provider attempt file and rethrows without trying another provider. Visual and thumbnail fallback handlers recheck lease ownership before simulation. Simulated artifact writers check before/after writes and clean up on failure. Thumbnail output names include a UUID to prevent same-millisecond collisions.
+- Regression coverage added for late provider output being discarded and simulated fallback being blocked after lease loss. Existing fallback cleanup test now writes to and verifies the actual attempt path. Both tests are already included in `npm test`.
+- Commits: `963df9d6886807a0544923212191aa5e109639c5`, `a09716ad5e089f1855d7ad5cc1c2bdb7c049e636`, `3afde4bf1c61fe1c12ddc4c6afafdce0df851680`, `e98e5e8039c8a409f9e64f73b1ac73140a2bb549`.
+- Static JS syntax checks and package JSON parsing passed. Runtime tests/lint were not executed. PR #2 remains open/draft; no merge or base changes.
