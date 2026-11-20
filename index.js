@@ -682,7 +682,7 @@ class YouTubeAutomationAgent {
 
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, engagement, experiments, scriptQualityReviews] = await Promise.all([
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, engagement, experiments] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -716,13 +716,12 @@ class YouTubeAutomationAgent {
               }),
           this.experiments
             ? this.experiments.getSummary()
-            : Promise.resolve({ experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0, evidencePolicy: 'Finish setup to create a controlled growth experiment.' }),
-          this.db.listScriptQualityReviews('pending', 50)
+            : Promise.resolve({ experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0, evidencePolicy: 'Finish setup to create a controlled growth experiment.' })
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
           stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation,
-          channelStrategy, operatorRuns, readiness, engagement, experiments, scriptQualityReviews,
+          channelStrategy, operatorRuns, readiness, engagement, experiments,
           system: {
             version,
             initialized: this.isInitialized,
