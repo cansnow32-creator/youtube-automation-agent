@@ -475,3 +475,12 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added a SQLite/service regression suite and npm test wiring, plus `docs/PUBLISHING_RECONCILIATION.md`.
 - Commits on PR #2: `d15acbc6b57baedf7adddd73c3f8d3498b0cfe8c`, `9a013c22fc39bae4e724b6c28765cdcdb8166260`, `63ec8e24e7fde6afbb1485c42bc41c97f7f64e79`, `418414f727266220241b145cb225d66837d30c25`, `fa614bdc38aa38a49c2bb0f093fa6a68c57fc8d1`, `7a2483b5a198d7c249fb41b81a5d9ebc51983201`, `a1b367f96c61d060196f0c7812932febbda8a8da`.
 - Static syntax/package wiring checks passed. Runtime tests and lint were not run. PR #2 remains draft/open/unmerged, and no GitHub Actions workflow run was returned for the latest head.
+
+
+## 2026-11-20 — Add dashboard controls and an upload-in-flight grace period
+
+- Added an overview dashboard panel for unresolved YouTube uploads, including refresh, video ID entry, verified attach, and explicit absence confirmation. The UI uses the existing API helper, so API-key handling remains consistent.
+- Identified a safety race: an `uploading` row could still represent a live request, so an operator must not immediately mark it absent just because the video is not yet visible. Added `upload_started_at`, set at the atomic upload claim, and enforce a ten-minute minimum grace period in the SQLite CAS for absence decisions. Existing unresolved rows start their grace period at migration time.
+- Added tests for fresh upload rejection and updated the upload claim/reconciliation SQLite schemas. Dashboard displays the attempt start time and the 10-minute rule; API reports `UPLOAD_GRACE_PERIOD_ACTIVE` when appropriate.
+- Commits on PR #2: `75a55e9c91ff5bf243809ab758cd59a36ceafa9a`, `a47cc78dc16a59dac5a13701d31bf9bfd0e90659`, `34717cbcac4035d85ec00cee0fc59f1d98f264b6`, `62eee1750d5086d09825ea05039318f015ad25f6`, `726d4bae72ff2832d2363796dd4e4cfd912f1e10`, `a5b93e5ed253741a46e403765e85dd26e203fda2`, `aa35097b6c3415e9a0d4c28c1d532ef86519e6a5`, `14b1f6b1047e42173ad5c0723878d415f1a059d3`, `114425e57c02b2e11e61e2c2d1437512925cbc93`, `27e292d77db23ea1bef1b057147bbbebff038511`, `4407b33b1148d2289d9723188a3a52e6941b24bf`.
+- Static syntax checks passed; runtime tests/lint were not executed.
