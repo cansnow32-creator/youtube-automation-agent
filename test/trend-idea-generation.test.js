@@ -178,7 +178,7 @@ async function run() {
       'a moderate trend with independent source and evidence support should outrank a high score backed by one item');
     assert.equal(lowEvidence.scoreBreakdown.trendSourceCount, 1);
     assert.equal(lowEvidence.scoreBreakdown.trendEvidenceCount, 1);
-    assert.equal(lowEvidence.scoreBreakdown.trendEvidenceConfidence, 0.75);
+    assert.equal(lowEvidence.scoreBreakdown.trendEvidenceConfidence, 0.6);
     assert.equal(wellSupported.scoreBreakdown.trendEvidenceConfidence, 0.95);
     assert.equal(lowEvidence.scoreBreakdown.rawTrend, 100);
     assert.ok(lowEvidence.scoreBreakdown.trend < lowEvidence.scoreBreakdown.rawTrend,
