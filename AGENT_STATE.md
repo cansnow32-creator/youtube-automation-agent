@@ -352,3 +352,13 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added regression coverage for an active real FFmpeg process being aborted on lease loss (runs when FFmpeg is available), audio mixer receiving the lease guard, production assembly passing the guard, and post-publication mix cleanup. Existing CineCode/audio tests are wired into `npm test`.
 - Commits: `028cf9a9fa55646c43d6ef6833d43d8d05dc9a56`, `e97f317a784dbc62937a24b16d0edcdfd6162bda`, `0a00d5511bd969560766b9a28244f19e6a3d40dd`, `5c5d80e901dde39e14fc43f155c80cdb901279bf`, `c50bbb5bf42cbb216d5c62a1e905bb49852ba193`, `7bfd7738f447ef30a4cde6b7a404abb25476bfb3`, `2d8b979362851db3d46352772f83f660330e46f5`, `6e397e3b90b4924c9909574da746f9841b27acca`, `38a5fdd8cc08a1c377fcf6ecd44402bc92a63c9f`, `d451ad7fad6cfce18af34cb2df8f102c2c5b1b00`, `b11ec6b07315385aebaf34519808982cd2180c68`.
 - Static JS syntax checks and package JSON parsing passed. Runtime tests/lint were not executed in this environment. PR #2 remains open/draft; no merge or base changes.
+
+
+## Latest final video assembly / thumbnail lease hardening — 2026-11-20
+
+- Audit found the subtitle render and subtitle decode-validation FFmpeg calls in `agents/production-management-agent.js` were not passing `assertLease`, despite the earlier shared FFmpeg cancellation implementation. Both now pass `{ assertLease }`.
+- Cached subtitle output validation now checks the lease before/after FFmpeg decode and explicitly rethrows lease failures instead of converting them into cache misses. Hashing, final media metadata reads, and assignment of finalVideo metadata are also lease guarded.
+- Thumbnail fallback output previously used a timestamp-only path and returned immediately after writing. It now uses a UUID-scoped path, verifies lease after the write, and removes the attempt file if lease ownership is lost. Both copied-thumbnail and placeholder fallback paths use this cleanup behavior.
+- Added regression coverage for a thumbnail fallback write followed by lease loss; `production-attempt-artifact-cleanup.test.js` is already wired into `npm test`.
+- Commits: `535d37bd5c68368e925c5669e01516d75b85fac2`, `9c04a8cb43c59ac85ac032102f3f4e9bbe763750`, `e0370bf71252b9f938c2b426048a2595b2b6ac60`, `2eee7d4091d50cdc66125bbe439bd06de78f1b24`.
+- Static JavaScript syntax and package/test wiring checks passed. Runtime tests/lint were not executed. PR #2 remains open/draft; no merge or base changes.
