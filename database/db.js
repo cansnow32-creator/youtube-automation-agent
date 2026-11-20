@@ -1029,6 +1029,17 @@ class Database {
     return result.changes === 1;
   }
 
+  async renewProductionOperationLock(productionId, owner, leaseMs = 2 * 60 * 60 * 1000) {
+    const now = Date.now();
+    const result = await this.executeQuery(
+      `UPDATE production_operation_locks
+       SET expires_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE production_id = ? AND owner = ? AND expires_at > ?`,
+      [now + leaseMs, productionId, owner, now]
+    );
+    return result.changes === 1;
+  }
+
   async releaseProductionOperationLock(productionId, owner) {
     await this.executeQuery(
       'DELETE FROM production_operation_locks WHERE production_id = ? AND owner = ?',
