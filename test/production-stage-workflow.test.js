@@ -5,6 +5,7 @@ const {
   startProductionStage,
   completeProductionStage,
   failProductionStage,
+  prepareProductionWorkflowForResume,
   runProductionStage
 } = require('../utils/production-stage-workflow');
 
@@ -42,6 +43,23 @@ async function run() {
   assert.equal(workflow.stages.editing.status, 'completed');
   assert.equal(workflow.stages.editing.details.output, 'final.mp4');
 
+  const interrupted = createProductionWorkflow('approved-concept-3', now);
+  startProductionStage(interrupted, 'visuals', now);
+  const resumeStage = prepareProductionWorkflowForResume(interrupted, now);
+  assert.equal(resumeStage, 'visuals');
+  assert.equal(interrupted.currentStage, null);
+  assert.equal(interrupted.stages.visuals.status, 'pending');
+  assert.match(interrupted.stages.visuals.lastError, /stopped before the stage completed/);
+  startProductionStage(interrupted, 'visuals', now);
+  assert.equal(interrupted.stages.visuals.attemptCount, 2);
+
+  const retry = createProductionWorkflow('approved-concept-4', now);
+  startProductionStage(retry, 'visuals', now);
+  failProductionStage(retry, 'visuals', new Error('temporary provider error'), now);
+  assert.equal(prepareProductionWorkflowForResume(retry, now), 'visuals');
+  assert.equal(retry.stages.visuals.status, 'pending');
+  assert.match(retry.stages.visuals.lastError, /temporary provider error/);
+
   const invalid = createProductionWorkflow('approved-concept-2', now);
   startProductionStage(invalid, 'visuals', now);
   assert.throws(() => startProductionStage(invalid, 'visuals', now), /still active/);
@@ -49,10 +67,10 @@ async function run() {
   assert.equal(invalid.stages.visuals.status, 'failed');
   assert.equal(invalid.currentStage, null);
 
-  process.stdout.write('Production stage workflow tests passed\\n');
+  process.stdout.write('Production stage workflow tests passed\n');
 }
 
 run().catch(error => {
-  process.stderr.write(`Production stage workflow tests failed: ${error.stack || error.message}\\n`);
+  process.stderr.write(`Production stage workflow tests failed: ${error.stack || error.message}\n`);
   process.exitCode = 1;
 });
