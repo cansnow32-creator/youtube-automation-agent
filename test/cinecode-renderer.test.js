@@ -156,10 +156,14 @@ async function run() {
       logger: { info() {}, error() {} },
       mediaGeneration: { settings: async () => ({ provider: 'cinecode', resolution: '720p', aspectRatio: '16:9' }) },
       filterLocalImageAssets: async assets => assets,
-      cineCodeRenderer: { renderScenes: async () => ({
-        clips: [{ index: 1, label: 'Opening', prompt: 'Camera push', duration: 30, path: 'scene.mp4', provider: 'cinecode', model: 'local' }],
-        totalDuration: 30, model: 'local', resolution: '1280x720', colorGrade: 'warm'
-      }) },
+      cineCodeRenderer: { renderScenes: async options => {
+        assert.equal(typeof options.assertLease, 'function', 'the job lease must reach CineCode rendering');
+        assert.equal(options.outputPrefix, 'final');
+        return {
+          clips: [{ index: 1, label: 'Opening', prompt: 'Camera push', duration: 30, path: 'scene.mp4', provider: 'cinecode', model: 'local' }],
+          totalDuration: 30, model: 'local', resolution: '1280x720', colorGrade: 'warm'
+        };
+      } },
       generateHybridVideo: async () => 'final.mp4',
       generateSlideshowVideo: async () => { slideshowCalls++; return 'fallback.mp4'; }
     };
