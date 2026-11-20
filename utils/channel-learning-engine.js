@@ -103,13 +103,18 @@ class ChannelLearningEngine {
     const thumbnail = context.thumbnail || {};
     const title = report.videoDetails?.title || context.title || script.title || '';
     const hook = this.text(script.hook || script.introduction || '');
+    const surface = this.normalizeSurface(
+      context.surface || context.contentFormat || strategy.surface || strategy.contentFormat
+    );
     return {
       topic: strategy.topic || '',
       pillar: strategy.contentPillar || strategy.pillar || 'unknown',
-      surface: context.contentFormat === 'short' ? 'shorts' : 'long_form',
-      format: context.contentFormat === 'short'
+      surface,
+      format: surface === 'shorts'
         ? 'shorts'
-        : this.slug(strategy.requestedStyle || strategy.contentType || 'unknown'),
+        : surface === 'long_form'
+          ? this.slug(strategy.requestedStyle || strategy.contentType || 'unknown')
+          : 'unknown',
       length: this.slug(strategy.requestedLengthKey || strategy.requestedLength || 'unknown'),
       durationBucket: this.durationBucket(report.videoDetails?.duration),
       hookLength: hook ? (this.wordCount(hook) <= 40 ? 'concise' : 'extended') : 'unknown',
@@ -139,6 +144,17 @@ class ChannelLearningEngine {
         };
       })()
     };
+  }
+
+  normalizeSurface(value) {
+    const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (['short', 'shorts', 'short_form', 'youtube_shorts'].includes(normalized)) return 'shorts';
+    if (['long', 'long_form', 'video', 'standard', 'longform'].includes(normalized)) return 'long_form';
+    return 'unknown';
+  }
+
+  snapshotSurface(snapshot) {
+    return this.normalizeSurface(snapshot?.contentAttributes?.surface);
   }
 
   extractAppliedLearnings(strategy = {}, appliedLearnings = []) {
@@ -260,11 +276,12 @@ class ChannelLearningEngine {
 
     // Shorts and long-form have different exposure and retention distributions.
     // Build each recommendation cohort independently instead of averaging surfaces together.
-    const surfaces = [...new Set(snapshots.map(snapshot => snapshot.contentAttributes?.surface || 'long_form'))];
+    // Unknown legacy surface labels are not assumed to be long-form and cannot steer plans.
+    const surfaces = [...new Set(snapshots
+      .map(snapshot => this.snapshotSurface(snapshot))
+      .filter(surface => surface !== 'unknown'))];
     const candidates = surfaces.flatMap(surface => {
-      const cohort = snapshots.filter(snapshot =>
-        (snapshot.contentAttributes?.surface || 'long_form') === surface
-      );
+      const cohort = snapshots.filter(snapshot => this.snapshotSurface(snapshot) === surface);
       return [
         ...this.buildDimensionRecommendations(cohort),
         ...this.buildChannelRecommendations(cohort),
@@ -317,7 +334,7 @@ class ChannelLearningEngine {
         groups.get(value).push(metric);
       }
       const ranked = [...groups.entries()]
-        .filter(([, values]) => values.length >= 2)
+        .filter(([, values]) => values.length >= 3)
         .map(([value, values]) => ({ value, count: values.length, average: this.average(values) }))
         .sort((a, b) => b.average - a.average);
       if (ranked.length < 2 || ranked[0].average - ranked.at(-1).average < dimension.minimumDifference) continue;
@@ -331,7 +348,7 @@ class ChannelLearningEngine {
         rationale: `${this.readable(best.value)} ${dimension.label} averaged ${this.metric(best.average, dimension.metric)} ${metricLabel} across ${best.count} videos versus ${this.metric(weakest.average, dimension.metric)} across ${weakest.count}.`,
         evidence: { dimension: dimension.key, metric: dimension.metric, best, weakest },
         proposedChange: { target: 'future_plans', dimension: dimension.key, prefer: best.value, deprioritize: weakest.value },
-        confidence: best.count >= 4 && weakest.count >= 4 ? 'high' : 'medium'
+        confidence: best.count >= 5 && weakest.count >= 5 ? 'high' : 'moderate'
       });
     }
     return recommendations;
@@ -352,7 +369,7 @@ class ChannelLearningEngine {
       .filter(value => value !== null);
     const recommendations = [];
 
-    if (measuredCTR.length >= 2) {
+    if (measuredCTR.length >= 3) {
       const averageCTR = this.average(measuredCTR);
       if (averageCTR < 4) {
         recommendations.push({
@@ -365,7 +382,7 @@ class ChannelLearningEngine {
         });
       }
     }
-    if (measuredRetention.length >= 2) {
+    if (measuredRetention.length >= 3) {
       const averageRetention = this.average(measuredRetention);
       if (averageRetention < 35) {
         recommendations.push({
@@ -383,9 +400,9 @@ class ChannelLearningEngine {
 
   buildOutcomeRecommendations(snapshots, strategy = {}) {
     const goal = this.outcomeGoal(strategy);
-    if (!goal || snapshots.length < 4) return [];
+    if (!goal || snapshots.length < 6) return [];
     const eligible = snapshots.filter(snapshot => this.outcomeMetricValue(snapshot, goal) !== null);
-    if (eligible.length < 4) return [];
+    if (eligible.length < 6) return [];
     const candidates = [];
     for (const dimension of ['pillar', 'format']) {
       const groups = new Map();
@@ -397,7 +414,7 @@ class ChannelLearningEngine {
         groups.get(value).push(metric);
       }
       const ranked = [...groups.entries()]
-        .filter(([, values]) => values.length >= 2)
+        .filter(([, values]) => values.length >= 3)
         .map(([value, values]) => ({ value, count: values.length, average: this.average(values) }))
         .sort((a, b) => b.average - a.average);
       if (ranked.length < 2) continue;
@@ -436,7 +453,7 @@ class ChannelLearningEngine {
     return '15m_plus';
   }
 
-  buildPerformanceInsights(snapshots, minimumSamples = 3, measurementWindow = '7d') {
+  buildPerformanceInsights(snapshots, minimumSamples = 3, measurementWindow = '7d', options = {}) {
     const comparableSnapshots = this.preferredSnapshotPerVideo(snapshots, measurementWindow);
     const dimensions = [
       { key: 'pillar', label: 'content pillar' },
@@ -444,52 +461,77 @@ class ChannelLearningEngine {
       { key: 'durationBucket', label: 'actual video duration' }
     ];
     const metricKeys = ['views', 'performanceScore', 'ctr', 'retention', 'engagementRate'];
-    const breakdowns = {};
-
-    for (const dimension of dimensions) {
-      const groups = new Map();
-      for (const snapshot of comparableSnapshots) {
-        const name = snapshot.contentAttributes?.[dimension.key];
-        if (!name || ['unknown', 'mixed_or_unknown'].includes(name)) continue;
-        if (!groups.has(name)) groups.set(name, []);
-        groups.get(name).push(snapshot);
-      }
-
-      const cohorts = [...groups.entries()].map(([name, videos]) => {
-        const metrics = {};
-        for (const key of metricKeys) {
-          const values = videos
-            .map(video => this.optionalNumber(video.metrics?.[key]))
-            .filter(value => value !== null);
-          metrics[key] = {
-            average: values.length ? Number(this.average(values).toFixed(2)) : null,
-            median: values.length ? Number(this.median(values).toFixed(2)) : null,
-            measuredVideos: values.length
-          };
+    const recognizedSurfaces = [...new Set(comparableSnapshots
+      .map(snapshot => this.snapshotSurface(snapshot))
+      .filter(surface => surface !== 'unknown'))];
+    const crossSurface = recognizedSurfaces.length > 1;
+    const buildBreakdowns = cohortSnapshots => {
+      const breakdowns = {};
+      for (const dimension of dimensions) {
+        const groups = new Map();
+        for (const snapshot of cohortSnapshots) {
+          const name = snapshot.contentAttributes?.[dimension.key];
+          if (!name || ['unknown', 'mixed_or_unknown'].includes(name)) continue;
+          if (!groups.has(name)) groups.set(name, []);
+          groups.get(name).push(snapshot);
         }
-        const sampleSize = videos.length;
-        return {
-          name,
-          videoCount: sampleSize,
-          confidence: sampleSize >= 5 ? 'high' : sampleSize >= minimumSamples ? 'moderate' : 'exploratory',
-          sufficientlySampled: sampleSize >= minimumSamples,
-          metrics
+        const cohorts = [...groups.entries()].map(([name, videos]) => {
+          const metrics = {};
+          for (const key of metricKeys) {
+            const values = videos
+              .map(video => this.optionalNumber(video.metrics?.[key]))
+              .filter(value => value !== null);
+            metrics[key] = {
+              average: values.length ? Number(this.average(values).toFixed(2)) : null,
+              median: values.length ? Number(this.median(values).toFixed(2)) : null,
+              measuredVideos: values.length
+            };
+          }
+          const sampleSize = videos.length;
+          const rankable = metrics.performanceScore.average !== null || metrics.views.average !== null;
+          return {
+            name,
+            videoCount: sampleSize,
+            confidence: sampleSize >= 5 ? 'high' : sampleSize >= minimumSamples ? 'moderate' : 'exploratory',
+            sufficientlySampled: sampleSize >= minimumSamples,
+            rankable,
+            metrics
+          };
+        }).sort((a, b) => {
+          const scoreA = a.metrics.performanceScore.average;
+          const scoreB = b.metrics.performanceScore.average;
+          if (scoreA !== null && scoreB !== null) return scoreB - scoreA;
+          return (b.metrics.views.average ?? -1) - (a.metrics.views.average ?? -1);
+        });
+        const reliable = cohorts.filter(cohort => cohort.sufficientlySampled && cohort.rankable);
+        breakdowns[dimension.key] = {
+          label: dimension.label,
+          minimumSamples,
+          cohorts,
+          leader: reliable[0] || null,
+          evidenceStatus: reliable.length ? 'sufficient' : 'insufficient'
         };
-      }).sort((a, b) => {
-        const scoreA = a.metrics.performanceScore.average;
-        const scoreB = b.metrics.performanceScore.average;
-        if (scoreA !== null && scoreB !== null) return scoreB - scoreA;
-        return (b.metrics.views.average ?? -1) - (a.metrics.views.average ?? -1);
-      });
+      }
+      return breakdowns;
+    };
 
-      const reliable = cohorts.filter(cohort => cohort.sufficientlySampled);
-      breakdowns[dimension.key] = {
-        label: dimension.label,
-        minimumSamples,
-        cohorts,
-        leader: reliable[0] || null,
-        evidenceStatus: reliable.length ? 'sufficient' : 'insufficient'
-      };
+    const surfaceBreakdowns = {};
+    if (options.includeSurfaceBreakdowns !== false) {
+      for (const surface of ['long_form', 'shorts']) {
+        const surfaceSnapshots = comparableSnapshots.filter(snapshot => this.snapshotSurface(snapshot) === surface);
+        if (surfaceSnapshots.length) {
+          surfaceBreakdowns[surface] = this.buildPerformanceInsights(
+            surfaceSnapshots, minimumSamples, measurementWindow, { includeSurfaceBreakdowns: false }
+          ).dimensions;
+        }
+      }
+    }
+    const breakdowns = buildBreakdowns(comparableSnapshots);
+    if (crossSurface) {
+      for (const breakdown of Object.values(breakdowns)) {
+        breakdown.leader = null;
+        breakdown.evidenceStatus = 'cross_surface_not_comparable';
+      }
     }
 
     return {
@@ -498,7 +540,11 @@ class ChannelLearningEngine {
       measurementWindow,
       minimumSamplesPerCohort: minimumSamples,
       dimensions: breakdowns,
-      rankingPolicy: 'Cohorts are ordered by average performance score when available, otherwise by average views. Metrics with missing values are omitted from that metric average.',
+      surfaceBreakdowns,
+      comparedSurfaces: recognizedSurfaces,
+      rankingPolicy: crossSurface
+        ? 'Combined descriptive cohorts are shown for continuity, but no pooled leader is declared across Shorts and long-form. Compare the separate surfaceBreakdowns instead.'
+        : 'Cohorts are ordered by average performance score when available, otherwise by average views. A cohort without measured ranking metrics cannot be declared a leader.',
       evidencePolicy: 'Only non-simulated YouTube analytics are included. Each video counts once using the exact requested measurement window; shorter or rolling windows are not substituted. Cohorts below the minimum sample size are exploratory and are not declared winners.'
     };
   }
