@@ -362,6 +362,143 @@ class PublishingSchedulingAgent {
     return !status || status >= 500;
   }
 
+  async reconcileUnresolvedUpload(scheduleId, videoId) {
+    if (!this.youtube) {
+      const error = new Error('YouTube API is not initialized');
+      error.status = 503;
+      throw error;
+    }
+    if (typeof this.db.getScheduleEntry !== 'function' ||
+        typeof this.db.reconcileScheduleEntryUpload !== 'function') {
+      const error = new Error('Atomic YouTube upload reconciliation support is unavailable');
+      error.status = 503;
+      error.code = 'PUBLISH_RECONCILIATION_UNAVAILABLE';
+      throw error;
+    }
+    const entry = await this.db.getScheduleEntry(scheduleId);
+    if (!entry) {
+      const error = new Error('Publish schedule entry not found');
+      error.status = 404;
+      throw error;
+    }
+    if (!['uploading', 'reconciliation_required'].includes(entry.status) || entry.youtubeId) {
+      const error = new Error('Only unresolved uploads without a recorded YouTube ID can be reconciled');
+      error.status = 409;
+      error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
+      throw error;
+    }
+    const candidateId = String(videoId || '').trim();
+    if (!/^[A-Za-z0-9_-]{11}$/.test(candidateId)) {
+      const error = new Error('A valid 11-character YouTube video ID is required');
+      error.status = 400;
+      error.code = 'INVALID_YOUTUBE_VIDEO_ID';
+      throw error;
+    }
+
+    const [videoResponse, channelResponse] = await Promise.all([
+      this.youtube.videos.list({ part: 'id,snippet,status', id: candidateId }),
+      this.youtube.channels.list({ part: 'id', mine: true })
+    ]);
+    const video = (videoResponse.data.items || []).find(item => item.id === candidateId);
+    if (!video?.snippet?.channelId) {
+      const error = new Error('YouTube could not verify this video ID');
+      error.status = 404;
+      error.code = 'YOUTUBE_VIDEO_NOT_FOUND';
+      throw error;
+    }
+    const channelId = channelResponse.data.items?.[0]?.id;
+    if (!channelId || video.snippet.channelId !== channelId) {
+      const error = new Error('The supplied video does not belong to the authenticated YouTube channel');
+      error.status = 403;
+      error.code = 'YOUTUBE_CHANNEL_MISMATCH';
+      throw error;
+    }
+    const expectedTitle = String(entry.metadata?.seo?.title || entry.title || '').trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
+    const actualTitle = String(video.snippet.title || '').trim().replace(/\\s+/g, ' ').toLocaleLowerCase();
+    if (!expectedTitle || actualTitle !== expectedTitle) {
+      const error = new Error('The verified YouTube video title does not match this scheduled content');
+      error.status = 409;
+      error.code = 'YOUTUBE_TITLE_MISMATCH';
+      throw error;
+    }
+
+    const metadata = {
+      ...(entry.metadata || {}),
+      uploadReconciliation: {
+        action: 'video_attached',
+        videoId: candidateId,
+        channelId,
+        verifiedTitle: video.snippet.title,
+        verifiedAt: new Date().toISOString()
+      }
+    };
+    const reconciled = await this.db.reconcileScheduleEntryUpload(scheduleId, candidateId, metadata);
+    if (!reconciled) {
+      const latest = await this.db.getScheduleEntry(scheduleId);
+      if (latest?.status === 'published' && latest.youtubeId === candidateId) return latest;
+      const error = new Error('The publish entry changed while YouTube verification was running; reload and reconcile the current state');
+      error.status = 409;
+      error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
+      throw error;
+    }
+    await this.syncShortStatus(reconciled, 'published');
+    this.publishQueue = this.publishQueue.filter(item => item.id !== scheduleId);
+    this.logger.success(`Operator reconciled existing YouTube upload: ${reconciled.youtubeUrl}`);
+    return reconciled;
+  }
+
+  async resolveUnresolvedUploadAsAbsent(scheduleId, confirmedAbsent) {
+    if (confirmedAbsent !== true) {
+      const error = new Error('Explicit confirmation that no video exists in the channel is required');
+      error.status = 400;
+      error.code = 'UPLOAD_ABSENCE_CONFIRMATION_REQUIRED';
+      throw error;
+    }
+    if (typeof this.db.getScheduleEntry !== 'function' ||
+        typeof this.db.resolveScheduleEntryUploadAbsent !== 'function') {
+      const error = new Error('Atomic YouTube upload reconciliation support is unavailable');
+      error.status = 503;
+      error.code = 'PUBLISH_RECONCILIATION_UNAVAILABLE';
+      throw error;
+    }
+    const entry = await this.db.getScheduleEntry(scheduleId);
+    if (!entry) {
+      const error = new Error('Publish schedule entry not found');
+      error.status = 404;
+      throw error;
+    }
+    if (!['uploading', 'reconciliation_required'].includes(entry.status) || entry.youtubeId) {
+      const error = new Error('Only unresolved uploads without a recorded YouTube ID can be resolved as absent');
+      error.status = 409;
+      error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
+      throw error;
+    }
+    const confirmedAt = new Date().toISOString();
+    const metadata = {
+      ...(entry.metadata || {}),
+      uploadReconciliation: {
+        action: 'operator_confirmed_absent',
+        confirmedAt,
+        warning: 'Operator checked the authenticated channel and confirmed no matching upload was found'
+      }
+    };
+    const resolved = await this.db.resolveScheduleEntryUploadAbsent(
+      scheduleId,
+      metadata,
+      'Operator confirmed that no matching YouTube upload exists; a manual retry is now permitted'
+    );
+    if (!resolved) {
+      const error = new Error('The publish entry changed during reconciliation; reload before retrying');
+      error.status = 409;
+      error.code = 'PUBLISH_RECONCILIATION_CONFLICT';
+      throw error;
+    }
+    await this.syncShortStatus(resolved, 'failed', resolved.error);
+    const queued = this.publishQueue.find(item => item.id === scheduleId);
+    if (queued) Object.assign(queued, resolved);
+    return resolved;
+  }
+
   async reconcileUploadedVideo(scheduleEntry) {
     const response = await this.youtube.videos.list({ part: 'id,status', id: scheduleEntry.youtubeId });
     if (!response.data.items?.some(video => video.id === scheduleEntry.youtubeId)) {
