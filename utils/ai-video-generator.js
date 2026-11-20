@@ -282,9 +282,12 @@ class AIVideoGenerator {
 
     // Gemini returns raw PCM (24kHz, mono, 16-bit); encode to the requested container via FFmpeg
     const pcmPath = outputPath + '.pcm';
-    await fs.writeFile(pcmPath, Buffer.from(audioData, 'base64'));
-    await runFFmpeg(['-y', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath, outputPath]);
-    await fs.unlink(pcmPath).catch(() => {});
+    try {
+      await fs.writeFile(pcmPath, Buffer.from(audioData, 'base64'));
+      await this.runFFmpeg(['-y', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath, outputPath]);
+    } finally {
+      await fs.unlink(pcmPath).catch(() => {});
+    }
 
     this.logger.info('Gemini TTS generation complete');
     return outputPath;
