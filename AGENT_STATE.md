@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20 (live PR metadata and check-runs refreshed immediately before this update)
+Last reconciled: 2026-11-20 (PR metadata and PR #2 workflow runs refreshed during the latest session)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
@@ -11,10 +11,10 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`; 0 workflow runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `5e07fa496bdba00dac7c54b77e1dedd81b13f790`; 0 workflow runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `152e6eb3ce4c31646f98e524d2ef5e536ced85d3` before this state refresh |
 
-PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `322cd1f0aff871dd09720c46dfdf20a3c71038ac`; compare against the live base branch before attempting synchronization. PR #2 remains open/draft/unmerged and GitHub reports zero workflow runs on its current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
+PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `5e07fa496bdba00dac7c54b77e1dedd81b13f790`; base remains `feat/local-first-quality-gate` at `9438d3d6e9015684cc074f832188e05ecbf3ab51`. PR #2 remains open/draft/unmerged, GitHub reports `mergeable: false`, and the PR-triggered workflow query returns zero runs for the current head. PR #1 and PR #3 also remain open/draft/unmerged with zero check-runs on their current heads. Connector-authored commits have not triggered Actions. Preserve the stacked PR relationship; do not retarget or rewrite history without a full dependency review. Never merge any PR without explicit user approval.
 
 ## PR #2 current audit notes
 
@@ -120,3 +120,14 @@ PR #2 intentionally stacks on PR #1. Its live head at this reconciliation is `32
 - Commits: `e74ca1fe07c1b07d1e75dc11cb454b139b6dd381`, `17a7256203722d237bd34d1dcac4de8da2d23f8d`, `0c41484dd6f0e6f36f8e9c33f4f8e48cb6db43d4`, `cc9d60ec4baf35c6ebe8d89f6596bb2dd8fc9c50`, `b528f75dc2082af417e17c28d791a088df1e5fdf`, `9722a7b55560a4019c81c7ffcdde51af7bff696c`.
 - Static review only. Tests/lint not executed; GitHub Actions still needs an actual run. A remote provider task can still be created in the narrow interval between a successful lease check and the external API request; the post-response lease check prevents stale local persistence/publication but cannot atomically fence the external provider.
 - Next: review visual-image and TTS regeneration for attempt-scoped output cleanup and stale writes; then trigger CI through an authorized GitHub UI/workflow dispatch. Do not merge.
+
+
+## Latest PR #2 regeneration artifact cleanup — 2026-11-20
+
+- Audited SceneRepairService.regenerateNarrationUnlocked() and regenerateUnlocked(). Narration output paths now include a per-attempt UUID; if the lease is lost or generation fails before scene metadata is committed, partial/generated audio and Gemini PCM sidecars are removed.
+- Visual regeneration tracks generated image/simulation files and removes them on pre-commit failure or lease loss. Visual generator output names now include UUIDs to avoid same-millisecond collisions.
+- Added test/scene-regeneration-lease-cleanup.test.js to simulate lease loss after TTS output creation and assert that no attempt audio remains. Added it to npm test.
+- Commits on PR #2: bad06f3af3c0d21db406224b25fc1f865b9a6281, 77de4fad8751796d5c7efaa6a6eb34fc5b585c49, 86a2480fcad9a70eaba23aabc93f75b5375dd317, b938b5582ecfb72c1db30649d643c65918cde184, dcc5433c223a46df953196105a0fb408896d1fe1, 5e07fa496bdba00dac7c54b77e1dedd81b13f790.
+- Static review and GitHub re-fetch only; test/lint have not run. Current head has zero PR-triggered workflow runs.
+- CI workflow supports workflow_dispatch, but connected GitHub actions exposed in this session provide read/rerun operations only; no workflow-dispatch action is available. Connector file commits have not triggered push workflows. Manual dispatch through the GitHub Actions UI remains required.
+- Remaining: add a corresponding lease-loss cleanup regression for visual image generation, inspect all partial provider-write paths, then obtain real CI execution. Do not merge.
