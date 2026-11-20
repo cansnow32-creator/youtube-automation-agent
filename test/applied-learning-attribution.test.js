@@ -111,21 +111,23 @@ assert.ok(feedback.every(item => item.measuredProductions === 1),
   'one long-form and one Shorts production must not combine into a two-video signal');
 
 const duplicateProduction = [
-  snapshot('a', 'dedupe-1', 'format', 2),
-  { ...snapshot('z', 'dedupe-1', 'format', 10), videoId: 'video-a', productionId: 'production-a' },
-  { ...snapshot('b', 'dedupe-1', 'format', 6) }
+  { ...snapshot('a', 'dedupe-1', 'format', 2), measuredAt: '2026-11-18T00:00:00.000Z' },
+  { ...snapshot('z', 'dedupe-1', 'format', 10), videoId: 'video-a', productionId: 'production-a', measuredAt: '2026-11-19T00:00:00.000Z' },
+  { ...snapshot('b', 'dedupe-1', 'format', 6), measuredAt: '2026-11-17T00:00:00.000Z' }
 ];
 feedback = engine.buildAppliedLearningFeedback(duplicateProduction);
 assert.equal(feedback[0].measuredProductions, 2, 'multiple snapshots for one production count once');
 assert.equal(feedback[0].medianBaselineDeltaPercent, 8,
   'the latest snapshot for a production is used for feedback');
 
-const oldSnapshot = snapshot('c', 'old-1', 'format', 12);
-oldSnapshot.measuredAt = '2026-01-01T00:00:00.000Z';
-feedback = engine.buildAppliedLearningFeedback([oldSnapshot], { now: new Date('2026-11-20T12:00:00.000Z') });
+const oldSnapshots = [
+  { ...snapshot('c', 'old-1', 'format', 12), measuredAt: '2026-01-01T00:00:00.000Z' },
+  { ...snapshot('d', 'old-1', 'format', 10), measuredAt: '2026-01-02T00:00:00.000Z' }
+];
+feedback = engine.buildAppliedLearningFeedback(oldSnapshots, { now: new Date('2026-11-20T12:00:00.000Z') });
 assert.equal(feedback[0].freshnessStatus, 'stale');
-assert.equal(feedback[0].status, 'insufficient_data',
-  'stale single-sample evidence cannot produce a positive signal');
+assert.equal(feedback[0].status, 'inconclusive',
+  'stale multi-sample evidence cannot retain a positive or negative signal');
 
 const missingIdentity = snapshot('d', 'no-id', 'format', 20);
 delete missingIdentity.videoId;
