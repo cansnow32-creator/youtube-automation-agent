@@ -99,8 +99,10 @@ function prepareProductionWorkflowForResume(workflow, now = () => new Date()) {
 
 async function runProductionStage(workflow, stage, task, persist = async () => {}, now = () => new Date()) {
   startProductionStage(workflow, stage, now);
-  await persist(workflow);
   try {
+    // The initial in_progress write is part of the stage attempt. If persistence
+    // fails, record the failure in memory and make a best-effort durable write.
+    await persist(workflow);
     const result = await task();
     completeProductionStage(workflow, stage, result && typeof result === 'object' ? result : { result: result ?? null }, now);
     await persist(workflow);
