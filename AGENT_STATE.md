@@ -62,3 +62,12 @@ PR #2 intentionally stacks on PR #1. Its live head is `48def2c871f779dc0722c995a
 - User's Windows PC may be offline. Cloud GitHub work must not depend on local Node, Ollama, FFmpeg, or local files.
 - Local Ollama, FFmpeg on the user's PC, YouTube OAuth, and full end-to-end production have not been verified from cloud.
 - No secrets belong in Git-tracked files.
+
+
+## Latest PR #2 lease audit — 2026-11-20
+
+- Extended lease assertions through visual generation, narration, captions, and final video assembly. Stage-scoped assertions flow through initial production and resume paths; checks guard provider boundaries, scene DB checkpoints, caption writes/FFmpeg replacement, audio mixing, and simulation fallbacks.
+- Added regression coverage for TTS fallback suppression and visual metadata persistence suppression after lease loss. Script and thumbnail lease-loss tests remain in `test/production-operation-lock.test.js`.
+- Commits: `2bf343dce295143df441fc3f61b9f50c976dfbc1`, `8c82636fcf070631e16e427c56c82653735a25d2`, `683c3c45298df8216851464a700269eb8543fe70`, `b9ef6fd2229d8f89cb1f032072cc3a9347c930eb`.
+- Static review only; tests and lint have not been executed. PR #2 current head reports zero workflow runs. Cooperative checks are not atomic fencing and cannot prevent a race after a check or file writes internal to provider implementations.
+- Next: inspect remaining production side effects, especially `sceneRepair.initializeProduction()` and DB writes; then obtain CI execution. Do not merge.
