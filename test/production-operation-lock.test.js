@@ -226,6 +226,41 @@ async function run() {
     global.clearInterval = resumeClearInterval;
   }
 
+  // A generation worker that loses its lease must not write either script
+  // artifact. If ownership is lost between the two writes, the TTS file must
+  // remain unpublished as well.
+  const scriptAgent = Object.create(ProductionManagementAgent.prototype);
+  scriptAgent.formatScriptForTTS = () => 'tts narration';
+  const originalWriteFile = fs.writeFile;
+  const attemptedWrites = [];
+  fs.writeFile = async (filePath, content) => {
+    attemptedWrites.push({ filePath, content });
+  };
+  try {
+    await assert.rejects(
+      scriptAgent.processScript({ duration: 12, mainContent: { sections: [] } }, async () => {
+        throw Object.assign(new Error('job lease lost'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
+      }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
+    );
+    assert.equal(attemptedWrites.length, 0, 'a lost job lease prevents the first script file write');
+
+    let leaseChecks = 0;
+    await assert.rejects(
+      scriptAgent.processScript({ duration: 12, mainContent: { sections: [] } }, async () => {
+        leaseChecks += 1;
+        if (leaseChecks === 2) {
+          throw Object.assign(new Error('job lease lost between script writes'), { code: 'PRODUCTION_JOB_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST'
+    );
+    assert.equal(attemptedWrites.length, 1, 'lease loss between writes prevents publishing the TTS companion file');
+    assert.match(String(attemptedWrites[0].filePath), /_script\\.json$/);
+  } finally {
+    fs.writeFile = originalWriteFile;
+  }
+
     process.stdout.write('Production operation lock tests passed\\n');
 }
 
