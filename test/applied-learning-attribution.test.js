@@ -125,6 +125,40 @@ assert.equal(appliedLengthAttributes.learningGuidance.find(item => item.recommen
   'verified_applied');
 assert.equal(appliedLengthAttributes.learningGuidance.find(item => item.recommendationId === 'format-not-verified').status,
   'provided_to_generation_not_verified_as_applied');
+
+const formatLearnings = ['tutorial', 'list', 'review', 'story', 'explainer'].map(format => ({
+  recommendationId: `format-${format}`,
+  category: 'format',
+  proposedChange: { prefer: format, target: 'future_scripts' }
+}));
+const apparentlyStructuredScript = {
+  hook: { text: 'A short opening.' },
+  introduction: { greeting: 'Welcome.', topicIntro: 'Today is the topic.', valueProposition: 'Learn the basics.', credibility: 'We use evidence.' },
+  mainContent: { sections: [
+    { title: 'Step 1', steps: [{ title: 'Do this', description: 'A clear explanation.' }] },
+    { title: 'Top item', items: [{ number: 1, title: 'First', description: 'An item.' }] },
+    { title: 'Explanation', points: ['Point one', 'Point two', 'Point three'] }
+  ] },
+  conclusion: { recap: ['Summary.'], finalThought: 'Closing thought.' },
+  callToAction: 'Subscribe.',
+  metadata: { verifiedAppliedLearnings: formatLearnings.map(item => ({
+    recommendationId: item.recommendationId,
+    category: 'format',
+    status: 'verified_applied',
+    verificationMethod: 'model_self_reported_format'
+  })) }
+};
+assert.deepEqual(verifyAppliedScriptLearnings(formatLearnings, apparentlyStructuredScript), [],
+  'format labels and loosely structured sections are not sufficient independent proof of format application');
+const formatAttributes = engine.extractAttributes(
+  { videoDetails: { title: 'A Sample Title' } },
+  { strategy: { approvedScriptLearnings: formatLearnings }, script: apparentlyStructuredScript }
+);
+assert.deepEqual(formatAttributes.appliedLearnings, [],
+  'format recommendations must not be attributed from self-reported or forged verification metadata');
+assert.ok(formatAttributes.learningGuidance.every(item =>
+  item.status === 'provided_to_generation_not_verified_as_applied'),
+  'all unsupported format categories remain guidance-only');
 assert.deepEqual(engine.extractAppliedLearnings(
   { approvedScriptLearnings: [] },
   [],
