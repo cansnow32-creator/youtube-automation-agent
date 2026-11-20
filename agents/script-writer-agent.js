@@ -47,28 +47,35 @@ class ScriptWriterAgent {
     };
   }
 
-  async generateScript(strategy) {
+  async generateScript(strategy, assertLease = async () => {}) {
     try {
+      await assertLease();
       this.logger.info(`Generating script for: ${strategy.topic}`);
-      
+
       const template = this.templates[strategy.contentType.toLowerCase()] || this.templates.explainer;
-      const aiScript = await this.generateScriptWithAI(strategy, template);
+      const aiScript = await this.generateScriptWithAI(strategy, template, assertLease);
+      await assertLease();
       if (aiScript) {
         aiScript.fullScript = this.formatFullScript(aiScript);
+        await assertLease();
         await this.db.saveScript(aiScript);
+        await assertLease();
         this.logger.info(`Script generated with AI provider: ${aiScript.title}`);
         return aiScript;
       }
-      
-      this.logger.info('Using template script generation');
-      // Generate script components
-      const hook = await this.generateHook(strategy);
-      const introduction = await this.generateIntroduction(strategy);
-      const mainContent = await this.generateMainContent(strategy, template);
-      const conclusion = await this.generateConclusion(strategy);
-      const cta = await this.generateCTA(strategy);
 
-      // Assemble complete script
+      this.logger.info('Using template script generation');
+      const hook = await this.generateHook(strategy);
+      await assertLease();
+      const introduction = await this.generateIntroduction(strategy);
+      await assertLease();
+      const mainContent = await this.generateMainContent(strategy, template);
+      await assertLease();
+      const conclusion = await this.generateConclusion(strategy);
+      await assertLease();
+      const cta = await this.generateCTA(strategy);
+      await assertLease();
+
       const script = {
         title: await this.generateTitle(strategy),
         hook,
@@ -88,12 +95,11 @@ class ScriptWriterAgent {
         }
       };
 
-      // Format for readability
       script.fullScript = this.formatFullScript(script);
-      
-      // Save to database
+      await assertLease();
       await this.db.saveScript(script);
-      
+      await assertLease();
+
       this.logger.info(`Script generated: ${script.title}`);
       return script;
     } catch (error) {
@@ -102,7 +108,8 @@ class ScriptWriterAgent {
     }
   }
 
-  async generateScriptWithAI(strategy, template) {
+  async generateScriptWithAI(strategy, template, assertLease = async () => {}) {
+    await assertLease();
     if (!this.aiTextService.isAvailable() && !this.qualityPipeline.enabled) {
       this.logger.info('Using template script generation because no AI text provider is configured');
       return null;
@@ -152,9 +159,11 @@ Research sources: ${JSON.stringify(strategy.researchSources || [])}
 Avoid fabricated statistics, unsupported claims, and fake urgency. List every externally verifiable factual claim in claims. Use only exact URLs from Research sources; use an empty sourceUrls array when the supplied sources do not support a claim.`;
 
     try {
+      await assertLease();
       const response = this.qualityPipeline.enabled
         ? await this.qualityPipeline.generateAndReview(prompt)
         : await this.aiTextService.generateText(prompt, { maxTokens: 1800, temperature: 0.7 });
+      await assertLease();
       const parsed = this.parseAIJsonResponse(response);
       const sections = this.normalizeAISections(parsed.sections, strategy);
       if (this.qualityPipeline.enabled && (!parsed.introduction || !parsed.conclusion)) {
@@ -203,6 +212,7 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
         this.logger.error(`Local-first quality pipeline blocked generation: ${error.message}`);
         if (error.code === 'QUALITY_REVIEW_REQUIRED' && this.db?.saveScriptQualityReview) {
           try {
+            await assertLease();
             const review = await this.db.saveScriptQualityReview({
               topic: strategy.topic,
               strategy,
@@ -210,8 +220,12 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
               draft: error.draft,
               qualityReport: error.qualityReport || this.qualityPipeline.lastReport
             });
+            await assertLease();
             error.qualityReviewId = review?.id || null;
           } catch (persistError) {
+            if (/LEASE_(LOST|UNVERIFIED)|LOCK_(LOST|UNVERIFIED)/.test(String(persistError.code || ''))) {
+              throw persistError;
+            }
             error.qualityReviewPersistenceError = persistError.message;
             this.logger.error('Could not persist rejected script draft:', persistError);
           }
