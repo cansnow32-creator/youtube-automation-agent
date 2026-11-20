@@ -125,6 +125,7 @@ class ChannelLearningEngine {
       provider: context.productionCost?.providers?.length === 1 ? this.slug(context.productionCost.providers[0]) : 'mixed_or_unknown',
       source: strategy.planRationale ? 'autonomous_operator' : 'manual',
       appliedLearnings: this.extractAppliedLearnings(strategy, context.appliedLearnings),
+      learningGuidance: this.extractLearningGuidance(strategy.approvedScriptLearnings),
       packagingChangeHistory: (Array.isArray(context.packagingChangeHistory) ? context.packagingChangeHistory : [])
         .slice(-20)
         .map(change => ({
@@ -167,19 +168,23 @@ class ChannelLearningEngine {
         source: item.source || 'unknown'
       }))
       .filter(item => item.appliedTo.length > 0);
-    for (const item of Array.isArray(strategy.approvedScriptLearnings) ? strategy.approvedScriptLearnings : []) {
-      if (!item?.recommendationId) continue;
-      candidates.push({
-        recommendationId: String(item.recommendationId),
-        category: String(item.category || 'unknown'),
-        appliedTo: ['script']
-      });
-    }
     const unique = new Map();
     for (const item of candidates) {
       if (!unique.has(item.recommendationId)) unique.set(item.recommendationId, item);
     }
     return [...unique.values()].slice(0, 12);
+  }
+
+  extractLearningGuidance(approvedScriptLearnings = []) {
+    return (Array.isArray(approvedScriptLearnings) ? approvedScriptLearnings : [])
+      .filter(item => item?.recommendationId)
+      .map(item => ({
+        recommendationId: String(item.recommendationId).slice(0, 120),
+        category: String(item.category || 'unknown').slice(0, 40),
+        target: String(item.proposedChange?.target || 'future_scripts').slice(0, 40),
+        status: 'provided_to_generation_not_verified_as_applied'
+      }))
+      .slice(0, 12);
   }
 
   buildAppliedLearningFeedback(snapshots = [], options = {}) {
