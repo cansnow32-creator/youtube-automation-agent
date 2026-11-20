@@ -286,3 +286,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Commits: `9111b79aa624592b48322fe3a0dbf19392bace27`, `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`.
 - Static JS syntax and package JSON checks passed; scene repair tests are wired into npm test but runtime tests/lint have not run. Current PR #2 head `b8abf3a09a6ef20ffd3722dd7a7e6116eec74d1e`; no PR-triggered workflow run observed.
 - Next: obtain full CI and test lease-loss paths; do not merge.
+
+
+## Latest PR #2 scene-edit lease regression coverage — 2026-11-20
+
+- Removed the unused `withProductionEditLock()` helper, eliminating its unsafe lock-optional fallback from the scene repair service.
+- Added `test/scene-edit-lease.test.js`: verifies update and reorder abort before DB writes after lease assertion failure; public methods fail closed with 503 when lock support is absent; lock contention returns 409.
+- Added the new test to `npm test`.
+- Commits: `79348283424180f5113b95e75860007983291307`, `ea647cb6f5165d6644ef1cd04e0adfe4f0a39d71`, `e1d02341c8830d2124647ab165314e65fea1fb43`.
+- Static JS syntax and package JSON checks passed. Runtime tests/lint not executed. PR #2 head is expected to be `e1d02341c8830d2124647ab165314e65fea1fb43`; verify metadata and CI before further work. Keep PR open/draft; do not merge or retarget.
