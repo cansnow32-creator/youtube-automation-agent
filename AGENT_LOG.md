@@ -1,3 +1,10 @@
+## 2026-11-20 — Record remaining stable final-media output paths
+
+- During the follow-on production side-effect audit, confirmed that audio narration, caption SRT, final video, background-music mix, captioned MP4, caption render temp/manifest, and simulation metadata still use deterministic production-ID paths.
+- Existing lease assertions guard many write boundaries, but long TTS/FFmpeg operations can leave files at those shared names if the generation lease is lost while work is running. No change to these paths was made in this session; next task is to scope each attempt's temp/output paths and clean uncommitted outputs without deleting already-persisted reusable assets.
+- Current production stage output code was inspected in `agents/production-management-agent.js`. This is a static finding; runtime reproduction and test coverage are pending.
+- PR #2 current head at the time of this log entry: `bce6c2c718f81754ac99013a997fc62c620d69d0`, 0 workflow runs. Do not merge.
+ 
 ## 2026-11-20 — Guard early-stage DB writes and thumbnail artifacts against generation lease loss
 
 - Continued side-effect audit after adding the generation-wide lock. Found several early pipeline producers persisted internally before returning: content strategy, script, rejected script-review draft, thumbnail, and SEO. The stage wrapper's post-producer assertion alone could not prevent these writes after a long provider call.
