@@ -87,8 +87,85 @@ async function testAttemptScopedClipOutputsAndLeaseLossCleanup() {
   }
 }
 
+async function testPartialAttemptCleanupPreservesReusedClips() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-reuse-'));
+  const reusedPath = path.join(directory, 'previously-persisted.mp4');
+  await fs.writeFile(reusedPath, Buffer.alloc(1200, 3));
+  const service = new MediaGenerationService({}, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.settings = async () => ({
+    provider: 'test-provider',
+    order: ['test-provider'],
+    mode: 'hybrid',
+    clipDuration: 4,
+    maxGeneratedSeconds: 8,
+    generateAudio: false,
+    resolution: '720p',
+    aspectRatio: '16:9'
+  });
+  service.registry = {
+    select: () => ({
+      id: 'test-provider',
+      describe: () => ({ model: 'test-model' }),
+      normalizeRequest: request => ({ ...request, duration: 4 })
+    })
+  };
+  service.buildScenePlan = () => [
+    { index: 0, duration: 4, prompt: 'Cached scene' },
+    { index: 1, duration: 4, prompt: 'New scene' }
+  ];
+  let newPath = null;
+  service.generateClip = async ({ outputPath, scene }) => {
+    if (scene.index === 0) {
+      return {
+        task: { model: 'test-model', external_task_id: 'old-task' },
+        outputPath: reusedPath,
+        reused: true
+      };
+    }
+    newPath = outputPath;
+    await fs.writeFile(outputPath, Buffer.alloc(1200, 4));
+    return {
+      task: { model: 'test-model', external_task_id: 'new-task' },
+      outputPath,
+      reused: false
+    };
+  };
+
+  try {
+    let checks = 0;
+    await assert.rejects(
+      service.generateClips({
+        jobId: 'job-2',
+        productionId: 'production-2',
+        script: {},
+        outputDir: directory,
+        attemptId: 'attempt-reuse',
+        assertLease: async () => {
+          checks += 1;
+          if (checks >= 7) {
+            throw Object.assign(new Error('generation lease lost after a new clip'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(await fs.access(reusedPath).then(() => true, () => false), true,
+      'a clip reused from a persisted task must not be deleted');
+    assert.ok(newPath);
+    assert.equal(await fs.access(newPath).then(() => true, () => false), false,
+      'new attempt output must be removed after lease loss');
+    assert.deepEqual((await fs.readdir(directory)).sort(), ['previously-persisted.mp4']);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
+  await testPartialAttemptCleanupPreservesReusedClips();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-fence-'));
   const outputPath = path.join(directory, 'scene.mp4');
   const updates = [];
