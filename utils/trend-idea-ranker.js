@@ -153,7 +153,7 @@ function scoreProductionRequirements(idea = {}, channelStrategy = {}) {
     narration: has(/interview|multiple speakers|voice actors|dialogue|on location|röportaj|birden fazla konuşmacı|seslendirmen|diyalog|saha çekimi/)
       ? 40 : has(/voiceover|narration|scripted story|storytelling|seslendirme|anlatım|hikâye anlatımı/)
         ? 70 : 90,
-    editing: has(/frame-by-frame|multi-location|rapid cuts|complex transitions|synchronized|çoklu mekân|hızlı kurgu|karmaşık geçiş|eşzamanlı/)
+    editing: has(/frame-by-frame|multi-location|rapid cuts|complex transitions|synchronized|documentary|archival footage|çoklu mekân|hızlı kurgu|karmaşık geçiş|eşzamanlı|belgesel/)
       ? 40 : has(/shorts|captions|subtitles|b-roll|screen recording|short video|altyazı|ekran kaydı/)
         ? 70 : 90
   };
