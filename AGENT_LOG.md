@@ -430,3 +430,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added a final lease assertion immediately before the production-ready DB write.
 - Commits: `46bd3d07d6e747b19b9c00951cf65dd4c7c02e8b`, `c9d67d71a689a7a844613c88194580e45ee903c8`, `9f94c71a733d9642af406db80c7a8f483d8faa86`, `7f30f11537b78ed1d9943e18bf46fde53c215fcb`.
 - Static syntax/package/test wiring checks passed; runtime tests/lint not run. PR #2 remains open/draft/unmerged; latest head `7f30f11537b78ed1d9943e18bf46fde53c215fcb`; no workflow run found.
+
+## 2026-11-20 — Fence Shorts rendering against stale workers
+
+- Added optional lease assertions to Shorts rendering and passed them to FFmpeg render and decode validation.
+- Made MP4, temporary MP4, and captions paths UUID-attempt-specific. Added lease checks before/after rendering, validation, metadata inspection, rename, and DB result persistence.
+- Lease-loss cleanup removes only the current attempt's files and does not let the stale worker write a failed status. Added regression coverage in the existing Shorts test suite.
+- Commits: `81290bfc53539307587e013af41e31b78ba50783`, `1061a6a9357b11f8de602e774f705b0e59627006`.
+- Static syntax/package/test wiring checks passed; runtime tests/lint not run.
