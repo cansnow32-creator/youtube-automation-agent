@@ -2,6 +2,16 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Guard scene-manifest initialization against production lease loss
+
+- Static review found `sceneRepair.initializeProduction()` was called after final video assembly but did not receive the generation-job/resume lease assertion. It could split narration into per-scene files with FFmpeg and write scene rows after the parent worker lost ownership.
+- Added an optional lease assertion to `initializeProduction()` and `initializeAudioSegments()`. Ownership is checked before manifest persistence, before audio directory creation and each FFmpeg segment, after each FFmpeg operation, and in the FFmpeg error path so lease loss cannot be swallowed as a segment failure.
+- Passed the active production lease assertion from both initial production and resume editing paths.
+- Added regression coverage simulating lease loss after an FFmpeg scene-audio split and asserting that `replaceProductionScenes()` is not called.
+- Commits on `feat/video-concept-approval`: `50a9e2fcf1002dbf8dbfb4d03d451f3b7574dec1`, `547c91c4a04c979e84f1c28f7d45a67bccd5d9a1`, `17f6c5c179a2b83c46b660507a470cf357eac16a`.
+- GitHub re-fetch confirms PR #2 remains open/draft/unmerged at `17f6c5c179a2b83c46b660507a470cf357eac16a`, still stacked on PR #1. It remains marked not mergeable because its base is behind PR #1. GitHub reports zero workflow runs on this head. Tests and lint have not been executed; no pass is claimed.
+- Next: continue auditing remaining filesystem/database side effects and confirm all stage helpers consistently receive the lease; then obtain CI execution. Do not merge.
+
 ## 2026-11-20 — Extend production lease guards across visual, narration and editing stages
 
 - Continued PR #2 audit after script/thumbnail protections. Found stage helpers could continue after a job/resume lease was lost: visual generation could persist scene metadata, failed TTS could fall back to a simulated audio file, and captions/video editing could write or publish outputs without checking ownership.
