@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs').promises;
+const fsStreams = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const { getMediaDuration, runFFmpeg } = require('./ffmpeg');
@@ -556,21 +557,68 @@ class SceneRepairService {
     }
     if (missing.length) throw this.error(`Cannot rebuild: ${missing.join('; ')}`, 409, 'SCENE_REBUILD_BLOCKED', { blockers: missing });
 
-    const timestamp = Date.now();
-    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${timestamp}_visual.mp4`);
-    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${timestamp}.mp4`);
-    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${timestamp}.srt`);
+    const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path);
+    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
+    const visualTempPath = `${visualPath}.rendering.mp4`;
+    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}.mp4`);
+    const finalTempPath = `${finalPath}.rendering.mp4`;
+    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${fingerprint}.srt`);
     await fs.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
-    await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
-      type: scene.assetType, path: scene.assetPath, duration: scene.duration
-    })), visualPath);
 
-    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, timestamp);
+    const validateVideo = async filePath => {
+      if (typeof this.videoGenerator.validateRenderedVideo !== 'function') {
+        throw this.error('Video generator cannot validate rendered repair output', 503, 'VIDEO_VALIDATION_UNAVAILABLE');
+      }
+      return this.videoGenerator.validateRenderedVideo(filePath);
+    };
+    let visualReady = false;
+    try {
+      await validateVideo(visualPath);
+      visualReady = true;
+    } catch (_error) {
+      await fs.unlink(visualPath).catch(() => {});
+    }
+    if (!visualReady) {
+      await fs.unlink(visualTempPath).catch(() => {});
+      try {
+        await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
+          type: scene.assetType, path: scene.assetPath, duration: scene.duration
+        })), visualTempPath);
+        await validateVideo(visualTempPath);
+        await fs.unlink(visualPath).catch(() => {});
+        await fs.rename(visualTempPath, visualPath);
+      } catch (error) {
+        await fs.unlink(visualTempPath).catch(() => {});
+        throw error;
+      }
+    }
+
+    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint);
     const allIntentionalSilence = scenes.every(scene => scene.narrationStatus === 'intentional_silence');
-    await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalPath, { allowSilent: allIntentionalSilence });
-    await fs.unlink(visualPath).catch(() => {});
-    await fs.writeFile(captionsPath, this.buildSRT(scenes));
+    let finalReady = false;
+    try {
+      await validateVideo(finalPath);
+      finalReady = true;
+    } catch (_error) {
+      await fs.unlink(finalPath).catch(() => {});
+    }
+    if (!finalReady) {
+      await fs.unlink(finalTempPath).catch(() => {});
+      try {
+        await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
+        await validateVideo(finalTempPath);
+        await fs.unlink(finalPath).catch(() => {});
+        await fs.rename(finalTempPath, finalPath);
+      } catch (error) {
+        await fs.unlink(finalTempPath).catch(() => {});
+        throw error;
+      }
+    }
+    const captions = this.buildSRT(scenes);
+    const captionsTempPath = `${captionsPath}.writing`;
+    await fs.writeFile(captionsTempPath, captions);
+    await fs.rename(captionsTempPath, captionsPath);
     const stats = await fs.stat(finalPath);
     const previousPath = bundle.assets?.finalVideo?.path || null;
     const containsSyntheticMedia = scenes.some(scene => scene.containsSyntheticMedia);
@@ -614,11 +662,40 @@ class SceneRepairService {
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
   }
 
-  async rebuildNarration(productionId, scenes, fallbackAudioPath, timestamp) {
+  async buildRebuildFingerprint(scenes, fallbackAudioPath) {
+    const hash = crypto.createHash('sha256');
+    const inputs = [];
+    for (const scene of scenes) {
+      const entry = {
+        id: scene.id, revision: scene.revision, assetType: scene.assetType,
+        duration: Number(scene.duration), narrationStatus: scene.narrationStatus,
+        scriptText: scene.scriptText || ''
+      };
+      if (scene.assetPath) entry.assetSha256 = await this.hashFile(scene.assetPath);
+      if (scene.audioPath && scene.narrationStatus === 'current') entry.audioSha256 = await this.hashFile(scene.audioPath);
+      inputs.push(entry);
+    }
+    const fallback = fallbackAudioPath && !scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current')
+      ? await this.hashFile(fallbackAudioPath) : null;
+    hash.update(JSON.stringify({ version: 2, inputs, fallback }));
+    return hash.digest('hex').slice(0, 24);
+  }
+
+  async hashFile(filePath) {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fsStreams.createReadStream(filePath);
+      stream.on('error', reject);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.on('end', () => resolve(hash.digest('hex')));
+    });
+  }
+
+  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint) {
     const hasSceneAudio = scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current');
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
     if (!hasSceneAudio && allCurrentWithoutSegments) return fallbackAudioPath;
-    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${timestamp}.m4a`);
+    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}.m4a`);
     const args = ['-y'];
     for (const scene of scenes) {
       if (scene.narrationStatus === 'intentional_silence') {
