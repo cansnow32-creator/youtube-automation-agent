@@ -276,7 +276,7 @@ function renderScriptQualityReviews(reviews) {
     const blockers = reviewerResults.flatMap(item => Array.isArray(item.blockers) ? item.blockers : []);
     const revisions = reviewerResults.flatMap(item => Array.isArray(item.revision_instructions) ? item.revision_instructions : []);
     return `<article class="script-quality-review-card">
-      <div class="script-quality-review-heading"><div><strong>${escapeHTML(review.topic || 'Untitled script')}</strong><small>${escapeHTML(timeAgo(review.created_at))} · ${escapeHTML(report.revisions ?? 0)} revisions</small></div><span class="status needs_attention">${escapeHTML(report.score ?? 0)}/100 · human review</span></div>
+      <div class="script-quality-review-heading"><div><strong>${escapeHTML(review.topic || 'Untitled script')}</strong><small>${escapeHTML(timeAgo(review.created_at))} · ${escapeHTML(report.revisions ?? 0)} revisions${review.job_id ? ' · Job ' + escapeHTML(review.job_id) : ''}</small></div><span class="status needs_attention">${escapeHTML(report.score ?? 0)}/100 · human review</span></div>
       <div class="script-quality-review-columns">
         <div><strong>Blockers</strong>${blockers.length ? `<ul>${blockers.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No structured blockers returned.</p>'}</div>
         <div><strong>Revision guidance</strong>${revisions.length ? `<ul>${revisions.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No revision guidance returned.</p>'}</div>
