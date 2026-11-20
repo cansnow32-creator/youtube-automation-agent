@@ -857,7 +857,7 @@ class AIVideoGenerator {
       throw new Error('FFmpeg final video has no valid media duration');
     }
     await assertLease();
-    await this.runFFmpeg(['-v', 'error', '-i', filePath, '-f', 'null', '-']);
+    await this.runFFmpeg(['-v', 'error', '-i', filePath, '-f', 'null', '-'], { assertLease });
     await assertLease();
     return { path: filePath, size: stats.size, duration };
   }
@@ -881,7 +881,7 @@ class AIVideoGenerator {
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);
     await assertLease();
-    await runFFmpeg(args);
+    await runFFmpeg(args, { assertLease });
     await assertLease();
     return outputPath;
   }
@@ -1038,7 +1038,7 @@ class AIVideoGenerator {
     }
 
     await assertLease();
-    await runFFmpeg(args);
+    await runFFmpeg(args, { assertLease });
     await assertLease();
     return videoPath;
   }
@@ -1341,7 +1341,7 @@ class AIVideoGenerator {
     let outputPublished = false;
     try {
       await assertLease();
-      await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath]);
+      await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath], { assertLease });
       await assertLease();
       if (muxPath !== outputPath) {
         await fs.rename(muxPath, outputPath);
