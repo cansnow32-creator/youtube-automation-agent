@@ -56,7 +56,22 @@ async function main() {
     });
     assert.equal(second.status, 'failed');
     assert.equal(second.renderAttemptId, 'attempt-2');
-    process.stdout.write('Shorts render attempt CAS tests passed\\n');
+
+    await database.updateShortClip('short-1', { status: 'scheduled', scheduleId: 'schedule-current' });
+    const synced = await database.updateShortClipForSchedule('short-1', 'schedule-current', {
+      status: 'uploading',
+      youtubeId: null,
+      youtubeUrl: null
+    });
+    assert.equal(synced.status, 'uploading');
+    assert.equal(synced.scheduleId, 'schedule-current');
+    const staleScheduleSync = await database.updateShortClipForSchedule('short-1', 'schedule-old', {
+      status: 'failed',
+      error: 'stale publisher'
+    });
+    assert.equal(staleScheduleSync, null, 'an old schedule cannot overwrite the current Short status');
+    assert.equal((await database.getShortClip('short-1')).status, 'uploading');
+    process.stdout.write('Shorts render and schedule CAS tests passed\\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
