@@ -151,7 +151,7 @@ class MediaGenerationService {
       }
       await assertLease();
       task = await this.updateTask(task, {
-        status: remote.status,
+        status: remote.status === 'succeeded' ? 'running' : remote.status,
         model: remote.model || task.model,
         externalTaskId: remote.externalTaskId,
         providerData: this.providerData(remote),
@@ -172,7 +172,7 @@ class MediaGenerationService {
         remote = await provider.getTask(remote.externalTaskId, task.providerData || {});
         await assertLease();
         task = await this.updateTask(task, {
-          status: remote.status,
+          status: remote.status === 'succeeded' ? 'running' : remote.status,
           providerData: this.providerData(remote),
           error: remote.error || null
         });
