@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { ProductionManagementAgent } = require('../agents/production-management-agent');
+const { Database } = require('../database/db');
 
 async function run() {
   const agent = Object.create(ProductionManagementAgent.prototype);
@@ -40,6 +41,24 @@ async function run() {
     }),
     /script\/job identity does not match/
   );
+  const database = Object.create(Database.prototype);
+  let queriedJobId = null;
+  let fetchedProductionId = null;
+  database.getRow = async (sql, params) => {
+    assert.match(sql, /json_extract\(timeline, '\$\.jobId'\)/);
+    queriedJobId = params[0];
+    return { id: 'production_from_db' };
+  };
+  database.getProductionBundle = async id => {
+    fetchedProductionId = id;
+    return { id };
+  };
+  const bundle = await database.getProductionBundleByJobId('job_lookup');
+  assert.equal(queriedJobId, 'job_lookup');
+  assert.equal(fetchedProductionId, 'production_from_db');
+  assert.equal(bundle.id, 'production_from_db');
+  assert.equal(await database.getProductionBundleByJobId(null), null);
+
   process.stdout.write('Persisted production reuse tests passed\\n');
 }
 
