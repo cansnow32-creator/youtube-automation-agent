@@ -69,7 +69,7 @@ async function run() {
   const database = new Database();
   let inserted = null;
   database.generateId = prefix => `${prefix}_fixed`;
-  database.executeQuery = async (sql, params) => { inserted = { sql, params }; };
+  database.executeQuery = async (sql, params) => { inserted = { sql, params }; return { changes: 1 }; };
   database.getRow = async () => ({
     id: 'quality_review_fixed',
     status: 'pending',
@@ -101,6 +101,19 @@ async function run() {
   assert.match(listQuery.sql, /revision_requested/);
   assert.deepEqual(listQuery.params, ['pending', 'pending', 'pending', 25]);
   assert.equal(pendingReviews[0].quality_report.score, 55);
+
+  const revised = await database.updateScriptQualityReviewDraft(
+    'quality_review_fixed',
+    '{"title":"Edited draft"}',
+    { status: 'awaiting_human_approval', score: 88 }
+  );
+  assert.match(inserted.sql, /SET status = 'pending', draft = \?/);
+  assert.deepEqual(inserted.params, [
+    '{"title":"Edited draft"}',
+    '{"status":"awaiting_human_approval","score":88}',
+    'quality_review_fixed'
+  ]);
+  assert.equal(revised.id, 'quality_review_fixed');
 
   await database.decideScriptQualityReview('quality_review_fixed', 'human_approved', 'Reviewed manually');
   assert.match(inserted.sql, /SET status = \?, decision_notes = \?/);
