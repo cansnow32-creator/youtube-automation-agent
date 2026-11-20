@@ -25,7 +25,7 @@ The learning scheduler records separate publication-anchored windows:
 - `7d`: seven UTC calendar-day buckets beginning on the publication date
 - `28d`: 28 UTC calendar-day buckets beginning on the publication date
 
-YouTube Analytics reports daily buckets rather than exact publication-hour slices. The scheduler waits until the corresponding full elapsed age (24 hours, 7 days, or 28 days) before requesting the window, then queries exactly the corresponding number of date buckets. Therefore these are daily-bucket approximations, not exact intraday 24-hour/7-day/28-day exposure intervals. Each window is stored independently for the same video.
+YouTube Analytics reports daily buckets rather than exact publication-hour slices. The scheduler waits until the corresponding full elapsed age (24 hours, 7 days, or 28 days) before requesting the window, then queries exactly the corresponding number of date buckets. Therefore these are daily-bucket approximations, not exact intraday 24-hour/7-day/28-day exposure intervals. Each window is stored independently for the same video. The snapshot also retains its requested measurement-window name, exact start/end dates, day count, and `utc_calendar_days` precision marker so later reports can audit which source period produced the metrics.
 
 Channel-wide recommendations and cohort insights use the exact `7d` window as their comparable baseline. A video that has only a 24-hour or 28-day snapshot is not substituted into the 7-day cohort. This avoids comparing early launch performance with longer cumulative totals. The 24-hour and 28-day snapshots remain available for their own reporting and longitudinal analysis; they do not silently influence the fixed 7-day recommendation cohort.
 
