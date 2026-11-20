@@ -7,6 +7,7 @@ const { runFFmpeg, getMediaInfo, getAudioInfo } = require('../utils/ffmpeg');
 const { mixBackgroundMusic } = require('../utils/audio-mixer');
 const { buildSubtitleFilter, describeSubtitleApplication, validateSrtContent } = require('../utils/subtitle-renderer');
 const { requireApprovedVideoConcept } = require('../utils/approved-video-concept-gate');
+const { createProductionWorkflow, runProductionStage } = require('../utils/production-stage-workflow');
 
 class ProductionManagementAgent {
   constructor(db, credentials, options = {}) {
@@ -103,6 +104,8 @@ class ProductionManagementAgent {
         createdAt: new Date().toISOString()
       };
       productionData.jobId = jobId;
+      productionData.timeline.productionWorkflow = createProductionWorkflow(approvedConcept.id);
+      const persistWorkflow = async () => this.db.updateProductionData(productionData);
       
       // Add to pipeline
       this.pipeline.push(productionData);
@@ -110,20 +113,34 @@ class ProductionManagementAgent {
       // Save to database
       await this.db.saveProductionData(productionData);
       
-      // Generate video content
-      await this.generateVideoContent(productionData);
-      
-      // Generate audio narration
-      await this.generateAudioNarration(productionData);
-      
-      // Generate captions
-      await this.generateCaptions(productionData);
-      
-      // Final assembly
-      await this.assembleVideo(productionData);
-
-      // Persist a scene-addressable production manifest for selective review and repair.
-      await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+      // Persist stage transitions so interrupted or failed work is visible in the production record.
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'visuals',
+        () => this.generateVideoContent(productionData),
+        persistWorkflow
+      );
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'narration',
+        () => this.generateAudioNarration(productionData),
+        persistWorkflow
+      );
+      await runProductionStage(
+        productionData.timeline.productionWorkflow,
+        'editing',
+        async () => {
+          await this.generateCaptions(productionData);
+          await this.assembleVideo(productionData);
+          await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
+          return {
+            captionsGenerated: Boolean(productionData.assets.captions?.path),
+            finalVideoGenerated: Boolean(productionData.assets.finalVideo?.path),
+            simulated: Boolean(productionData.assets.finalVideo?.simulated)
+          };
+        },
+        persistWorkflow
+      );
 
       // Mark as ready — or simulated, when no real video could be produced
       const simulated = Boolean(productionData.assets.finalVideo?.simulated);
