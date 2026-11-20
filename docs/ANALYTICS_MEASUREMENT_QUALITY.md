@@ -32,6 +32,12 @@ Channel-wide recommendations and cohort insights use the exact `7d` window as th
 All these windows are cumulative since publication, not rolling periods. Comparisons remain observational and do not establish that a format, title, or script choice caused the measured outcome.
 
 
+## Longitudinal window interpretation
+
+The summary exposes a separate longitudinal view for the reliable 24h, 7d, and 28d snapshots. These are nested cumulative windows anchored to publication, not disjoint periods. Views, watch hours, net subscribers, and estimated revenue are additive totals and are shown as per-day averages (window total divided by its calendar-bucket count) to make window lengths more comparable. These averages remain descriptive and do not establish that performance accelerated or declined in the later, non-overlapping days.
+
+CTR, retention, and engagement rate are reported independently for each window. They are not subtracted across windows or described as period-over-period changes because the snapshots are cumulative and their rate denominators/measurement populations may differ. Missing values remain unavailable; simulated snapshots are excluded; each video contributes at most once to each window.
+
 ## Content-surface boundaries
 
 Learning recommendations are built separately for Shorts and long-form videos. Their reach, retention, and viewing behavior are not pooled into one cohort. Recommendation evidence and proposed changes retain the originating surface so an observed pattern in one surface cannot silently steer the other.
