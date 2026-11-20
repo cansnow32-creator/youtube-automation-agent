@@ -724,13 +724,20 @@ class Database {
       render_attempt_id: 'TEXT',
       render_metadata: 'TEXT'
     });
+    await this.ensureColumns('publish_schedule', {
+      upload_started_at: 'TEXT'
+    });
+    // Existing in-flight rows get a fresh conservative grace period after migration.
+    await this.executeQuery(
+      "UPDATE publish_schedule SET upload_started_at = CURRENT_TIMESTAMP WHERE status IN ('uploading', 'reconciliation_required') AND upload_started_at IS NULL"
+    );
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews', 'shorts_clips']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews', 'shorts_clips', 'publish_schedule']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -2380,9 +2387,9 @@ class Database {
   async claimScheduleEntryForUpload(id) {
     const result = await this.executeQuery(
       `UPDATE publish_schedule
-       SET status = 'uploading', error_message = NULL
+       SET status = 'uploading', error_message = NULL, upload_started_at = ?
        WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL`,
-      [id]
+      [new Date().toISOString(), id]
     );
     if (result.changes !== 1) return null;
     const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
@@ -2422,7 +2429,9 @@ class Database {
     const result = await this.executeQuery(
       `UPDATE publish_schedule
        SET status = 'failed', error_message = ?, metadata = ?
-       WHERE id = ? AND status IN ('uploading', 'reconciliation_required') AND youtube_id IS NULL`,
+       WHERE id = ? AND status IN ('uploading', 'reconciliation_required') AND youtube_id IS NULL
+         AND upload_started_at IS NOT NULL
+         AND julianday(upload_started_at) <= julianday('now', '-10 minutes')`,
       [reason, JSON.stringify(metadata || {}), id]
     );
     if (result.changes !== 1) return null;
@@ -2470,6 +2479,7 @@ class Database {
       publishTime: row.publish_time,
       youtubeId: row.youtube_id,
       youtubeUrl: row.youtube_url,
+      uploadStartedAt: row.upload_started_at || null,
       publishedAt: row.published_at,
       error: row.error_message,
       metadata: JSON.parse(row.metadata || '{}')
