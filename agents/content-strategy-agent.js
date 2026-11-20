@@ -319,17 +319,54 @@ class ContentStrategyAgent {
   mergeTrendData(trends, competitors) {
     const mergedTopics = new Map();
 
-    // Add trending topics
-    trends.forEach(trend => {
-      const keywords = this.extractKeywords(trend.title);
-      keywords.forEach(keyword => {
-        if (!mergedTopics.has(keyword)) {
-          mergedTopics.set(keyword, { score: 0, sources: [], evidence: [] });
+    const normalizeTopic = value => String(value || '')
+      .normalize('NFKC')
+      .trim()
+      .replace(/\\s+/g, ' ')
+      .toLowerCase();
+
+    const getTopic = (label, displayLabel = label) => {
+      const key = normalizeTopic(label);
+      if (!key) return null;
+      if (!mergedTopics.has(key)) {
+        mergedTopics.set(key, {
+          topic: String(displayLabel || label).trim(),
+          score: 0,
+          sources: [],
+          evidence: [],
+          contributionKeys: new Set(),
+          evidenceUrls: new Set()
+        });
+      }
+      return mergedTopics.get(key);
+    };
+
+    const addEvidence = (topic, evidence) => {
+      if (!evidence || typeof evidence.url !== 'string' || !evidence.url.trim()) return;
+      const url = evidence.url.trim();
+      if (topic.evidenceUrls.has(url)) return;
+      topic.evidenceUrls.add(url);
+      topic.evidence.push(evidence);
+    };
+
+    // A repeated API item must not add the same video's views more than once.
+    const seenTrendingVideos = new Set();
+    (Array.isArray(trends) ? trends : []).forEach(trend => {
+      const videoIdentity = String(trend.videoId || trend.url || trend.title || '').trim();
+      if (!videoIdentity || seenTrendingVideos.has(videoIdentity)) return;
+      seenTrendingVideos.add(videoIdentity);
+
+      const viewCount = Math.max(0, Number(trend.viewCount) || 0);
+      this.extractKeywords(trend.title).forEach(keyword => {
+        const topic = getTopic(keyword, keyword);
+        if (!topic) return;
+        const contributionKey = `trending:${videoIdentity}`;
+        if (!topic.contributionKeys.has(contributionKey)) {
+          topic.contributionKeys.add(contributionKey);
+          topic.score += viewCount / 1000000;
         }
-        const topic = mergedTopics.get(keyword);
-        topic.score += trend.viewCount / 1000000; // Normalize by millions
-        topic.sources.push('trending');
-        topic.evidence.push({
+        if (!topic.sources.includes('trending')) topic.sources.push('trending');
+        addEvidence(topic, {
           url: trend.url,
           title: trend.title,
           publisher: trend.publisher,
@@ -339,27 +376,34 @@ class ContentStrategyAgent {
       });
     });
 
-    // Add competitor topics
-    competitors.forEach(competitor => {
-      if (competitor.topPerformingTopics) {
-        competitor.topPerformingTopics.forEach(({ topic, avgViews, evidence = [] }) => {
-          if (!mergedTopics.has(topic)) {
-            mergedTopics.set(topic, { score: 0, sources: [], evidence: [] });
+    // Normalize competitor topic labels and deduplicate repeated channel/topic
+    // records. Distinct channels remain independent contributors.
+    (Array.isArray(competitors) ? competitors : []).forEach(competitor => {
+      const channelId = String(competitor.channelId || '').trim();
+      (Array.isArray(competitor.topPerformingTopics) ? competitor.topPerformingTopics : [])
+        .forEach(({ topic: label, avgViews, evidence = [] }) => {
+          const topic = getTopic(label, String(label || '').trim());
+          if (!topic) return;
+          const evidenceItems = Array.isArray(evidence) ? evidence : [];
+          const evidenceUrls = [...new Set(evidenceItems
+            .map(item => typeof item?.url === 'string' ? item.url.trim() : '')
+            .filter(Boolean))].sort();
+          const identity = channelId
+            ? `competitor:${channelId}:${normalizeTopic(label)}`
+            : `competitor:${normalizeTopic(label)}:${evidenceUrls.join('|') || Number(avgViews) || 0}`;
+          if (!topic.contributionKeys.has(identity)) {
+            topic.contributionKeys.add(identity);
+            topic.score += Math.max(0, Number(avgViews) || 0) / 100000;
           }
-          const topicData = mergedTopics.get(topic);
-          topicData.score += avgViews / 100000; // Normalize
-          topicData.sources.push('competitor');
-          topicData.evidence.push(...evidence);
+          if (!topic.sources.includes('competitor')) topic.sources.push('competitor');
+          evidenceItems.forEach(item => addEvidence(topic, item));
         });
-      }
     });
 
-    // Convert to array and sort by score
-    return Array.from(mergedTopics.entries())
-      .map(([topic, data]) => ({ topic, ...data }))
-      .map(item => ({
+    return Array.from(mergedTopics.values())
+      .map(({ contributionKeys, evidenceUrls, ...item }) => ({
         ...item,
-        evidence: [...new Map(item.evidence.filter(source => source.url).map(source => [source.url, source])).values()].slice(0, 5)
+        evidence: item.evidence.slice(0, 5)
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 50);
