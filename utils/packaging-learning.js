@@ -29,6 +29,30 @@ function getApprovedPackagingLearning(recommendations = []) {
   };
 }
 
+function getAppliedPackagingLearning(experiment, selectedTitleVariant, selectedThumbnailVariant, manualTitleOverride = false) {
+  const recommendationId = experiment?.sourceRecommendationId;
+  if (!recommendationId) return null;
+  const appliedTo = [];
+  const titleIndex = Number(selectedTitleVariant);
+  const thumbnailIndex = Number(selectedThumbnailVariant);
+  if (!manualTitleOverride && Number.isInteger(titleIndex) && titleIndex > 0 && experiment.titleVariants?.[titleIndex]) {
+    appliedTo.push('title');
+  }
+  if (Number.isInteger(thumbnailIndex) && thumbnailIndex > 0 && experiment.thumbnailVariants?.[thumbnailIndex]) {
+    appliedTo.push('thumbnail');
+  }
+  if (!appliedTo.length) return null;
+  return {
+    recommendationId: String(recommendationId),
+    category: 'packaging_experiment',
+    appliedTo,
+    titleVariant: appliedTo.includes('title') ? String(experiment.titleVariants[titleIndex].label || '').slice(0, 100) : null,
+    thumbnailVariant: appliedTo.includes('thumbnail') ? String(experiment.thumbnailVariants[thumbnailIndex].label || '').slice(0, 100) : null,
+    appliedAt: new Date().toISOString(),
+    source: 'human_approved_pre_publish_selection'
+  };
+}
+
 function getApprovedScriptLearnings(recommendations = []) {
   const allowedCategories = new Set(['format', 'length', 'hookLength', 'retention']);
   return (Array.isArray(recommendations) ? recommendations : [])
@@ -57,4 +81,4 @@ function getApprovedScriptLearnings(recommendations = []) {
     .filter(item => item.proposedChange.prefer || item.rationale);
 }
 
-module.exports = { isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings };
+module.exports = { isApprovedPackagingLearning, getApprovedPackagingLearning, getApprovedScriptLearnings, getAppliedPackagingLearning };
