@@ -2571,7 +2571,7 @@ class YouTubeAutomationAgent {
       packagingExperiment,
       editorData.selectedTitleVariant,
       editorData.selectedThumbnailVariant,
-      input.title !== undefined
+      input.title !== undefined && String(input.title).trim() !== String(titleVariant?.title || '').trim()
     );
     editorData.appliedLearnings = appliedPackagingLearning ? [appliedPackagingLearning] : [];
     if (!editorData.factChecked || !editorData.rightsConfirmed) {
