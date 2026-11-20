@@ -407,6 +407,117 @@ async function testNonOwningTaskClaimCannotSubmitRemoteProviderJob() {
   assert.equal(createCalls, 0, 'only the database task-row claimant may start a remote provider job');
 }
 
+async function testManualReconciliationVerifiesAndResumesRemoteTask() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-manual-reconcile-'));
+  let row = {
+    id: 'media-manual-reconcile',
+    job_id: 'job-manual-reconcile',
+    production_id: 'production-manual-reconcile',
+    scene_index: 0,
+    provider: 'test-provider',
+    model: 'test-model',
+    status: 'submission_unknown',
+    external_task_id: null,
+    providerData: { previousTasks: [] },
+    output_path: null,
+    error: 'submission response was lost',
+    completed_at: new Date().toISOString()
+  };
+  let reconciledTaskType = null;
+  let createCalls = 0;
+  let getCalls = 0;
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    getTask: async (id, context = {}) => {
+      getCalls++;
+      assert.equal(id, 'remote-found-in-provider-dashboard');
+      if (getCalls === 1) {
+        reconciledTaskType = context.taskType;
+        return {
+          status: 'running',
+          externalTaskId: id,
+          model: 'test-model',
+          taskType: context.taskType
+        };
+      }
+      return {
+        status: 'succeeded',
+        externalTaskId: id,
+        model: 'test-model',
+        outputUrl: 'https://provider.invalid/reconciled.mp4',
+        taskType: context.taskType
+      };
+    },
+    createTask: async () => {
+      createCalls++;
+      throw new Error('manual reconciliation must resume, not create');
+    },
+    downloadResult: async (_remote, destination) => {
+      await fs.writeFile(destination, Buffer.alloc(1200, 9));
+    }
+  };
+  const db = {
+    async getMediaGenerationTaskById(taskId) {
+      return taskId === row.id ? { ...row, providerData: { ...row.providerData } } : null;
+    },
+    async updateMediaGenerationTask(taskId, changes) {
+      assert.equal(taskId, row.id);
+      row = { ...row };
+      if (changes.externalTaskId !== undefined) row.external_task_id = changes.externalTaskId;
+      if (changes.status !== undefined) row.status = changes.status;
+      if (changes.providerData !== undefined) row.providerData = { ...changes.providerData };
+      if (changes.outputPath !== undefined) row.output_path = changes.outputPath;
+      if (changes.error !== undefined) row.error = changes.error;
+      if (changes.completedAt !== undefined) row.completed_at = changes.completedAt;
+      return { ...row, providerData: { ...row.providerData } };
+    },
+    async findMediaGenerationTask() {
+      return { ...row, providerData: { ...row.providerData } };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.registry = { get: id => id === provider.id ? provider : null };
+  service.isValidVideo = async () => true;
+
+  try {
+    await assert.rejects(
+      service.reconcileTaskSubmission(row.id, 'remote-found-in-provider-dashboard', {
+        providerTaskType: 'unsupported-type'
+      }),
+      error => error.code === 'INVALID_PROVIDER_TASK_TYPE'
+    );
+    assert.equal(row.external_task_id, null, 'invalid reconciliation input must not modify the task row');
+
+    const reconciled = await service.reconcileTaskSubmission(
+      row.id,
+      'remote-found-in-provider-dashboard',
+      { providerTaskType: 'image2video' }
+    );
+    assert.equal(reconciled.status, 'running');
+    assert.equal(reconciled.external_task_id, 'remote-found-in-provider-dashboard');
+    assert.equal(reconciledTaskType, 'image2video');
+
+    const outputPath = path.join(directory, 'reconciled-output.mp4');
+    const resumed = await service.generateClip({
+      jobId: 'job-manual-reconcile',
+      productionId: 'production-manual-reconcile',
+      scene: { index: 0, prompt: 'resume reconciled remote task' },
+      provider,
+      outputPath,
+      request: { prompt: 'resume reconciled remote task' }
+    });
+    assert.equal(resumed.outputPath, outputPath);
+    assert.equal(row.status, 'succeeded');
+    assert.equal(row.external_task_id, 'remote-found-in-provider-dashboard');
+    assert.equal(createCalls, 0);
+    assert.equal(getCalls, 2, 'the task should be queried once for reconciliation and once for resume');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function testAmbiguousProviderSubmissionIsNotAutomaticallyRetried() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-unknown-'));
   const db = makeStatefulMediaTaskDb();
@@ -652,6 +763,7 @@ async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting
 async function main() {
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
+  await testManualReconciliationVerifiesAndResumesRemoteTask();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
