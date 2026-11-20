@@ -49,6 +49,24 @@ async function run() {
       }]
     }];
 
+    const staleSnapshot = await db.saveTrendSnapshot({
+      regionCode: 'US',
+      topics: [{ topic: 'Obsolete trend', score: 999, sources: ['trending'], evidence: [] }],
+      capturedAt: '2020-01-01T00:00:00.000Z'
+    });
+    createdIds.push(staleSnapshot.id);
+
+    const staleStrategy = new ContentStrategyAgent(db, {});
+    staleStrategy.fetchYouTubeTrends = async () => [];
+    staleStrategy.analyzeCompetitors = async () => [];
+    await staleStrategy.analyzeTrends();
+    assert.equal(staleStrategy.trendingTopics.length, 0,
+      'stale snapshots must not be presented as current live trend topics');
+    const staleIdeas = await staleStrategy.generateTrendIdeasFromSnapshot({ snapshot: staleSnapshot });
+    assert.equal(staleIdeas.status, 'skipped',
+      'idea generation must reject stale trend snapshots');
+    assert.match(staleIdeas.reason, /stale/);
+
     const refreshed = await strategy.refreshTrendSnapshot();
     createdIds.push(refreshed.id);
     assert.ok(refreshed.topicCount > 0, 'weekly trend refresh should produce topics');
