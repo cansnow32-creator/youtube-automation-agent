@@ -593,7 +593,7 @@ async function main() {
       request: {},
       assertLease: async () => {
         leaseChecks += 1;
-        if (leaseChecks >= 5) {
+        if (leaseChecks >= 7) {
           throw Object.assign(new Error('scene operation lease lost after provider download'), { code: 'SCENE_EDIT_LEASE_LOST' });
         }
       }
