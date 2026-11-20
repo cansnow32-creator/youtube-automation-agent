@@ -89,6 +89,7 @@ function getApprovedScriptLearnings(recommendations = [], options = {}) {
     .map(item => ({
       recommendationId: item.id || null,
       category: String(item.category).slice(0, 40),
+      target: String(item.proposedChange.target).slice(0, 40),
       title: String(item.title || '').slice(0, 160),
       rationale: String(item.rationale || '').slice(0, 400),
       confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'unknown',
