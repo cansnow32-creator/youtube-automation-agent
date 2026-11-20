@@ -103,7 +103,7 @@ assert.deepEqual(appliedScriptAttributes.appliedLearnings, [{
   recommendationId: 'hook-concise',
   category: 'hookLength',
   appliedTo: ['hook'],
-  source: 'script_output_deterministic_verification'
+  source: 'generated_hook_word_count_threshold_40'
 }]);
 assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-concise').status, 'verified_applied');
 assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-extended').status,
