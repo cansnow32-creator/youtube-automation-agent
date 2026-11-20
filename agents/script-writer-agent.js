@@ -113,9 +113,19 @@ Return only valid JSON with this exact shape:
 {
   "title": "compelling title under 100 characters",
   "hook": "opening hook in one sentence",
+  "introduction": {
+    "greeting": "short natural greeting",
+    "topicIntro": "introduce the topic without unsupported claims",
+    "valueProposition": "state the concrete viewer benefit",
+    "credibility": "explain the evidence basis without claiming personal experience"
+  },
   "sections": [
     { "title": "section title", "content": ["spoken script bullet"], "duration": 60 }
   ],
+  "conclusion": {
+    "recap": ["accurate summary point"],
+    "finalThought": "evidence-aligned closing thought"
+  },
   "cta": "clear call to action",
   "claims": [
     { "text": "specific factual claim a reviewer must verify", "riskLevel": "standard|high", "sourceUrls": ["exact supplied source URL"] }
@@ -147,21 +157,33 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
         : await this.aiTextService.generateText(prompt, { maxTokens: 1800, temperature: 0.7 });
       const parsed = this.parseAIJsonResponse(response);
       const sections = this.normalizeAISections(parsed.sections, strategy);
+      if (this.qualityPipeline.enabled && (!parsed.introduction || !parsed.conclusion)) {
+        throw new Error('Quality-reviewed script is missing its introduction or conclusion');
+      }
+      const introduction = parsed.introduction
+        ? this.normalizeAIIntroduction(parsed.introduction)
+        : await this.generateIntroduction(strategy);
+      const conclusion = parsed.conclusion
+        ? this.normalizeAIConclusion(parsed.conclusion)
+        : await this.generateConclusion(strategy);
 
       if (!parsed.title || !parsed.hook || sections.length === 0) {
         throw new Error('AI script response missing required fields');
       }
 
-      this.logger.info(`Using AI script generation via ${this.aiTextService.providerName}`);
+      const providerLabel = this.qualityPipeline.enabled
+        ? `local Ollama (${this.qualityPipeline.ollamaModel})`
+        : this.aiTextService.providerName;
+      this.logger.info(`Using AI script generation via ${providerLabel}`);
       return {
         title: String(parsed.title).slice(0, 100),
         hook: this.normalizeAIHook(parsed.hook),
-        introduction: await this.generateIntroduction(strategy),
+        introduction,
         mainContent: {
           sections,
           totalDuration: this.calculateSectionsDuration(sections)
         },
-        conclusion: await this.generateConclusion(strategy),
+        conclusion,
         callToAction: this.normalizeAICTA(parsed.cta, strategy),
         duration: this.estimateDuration({ sections }),
         tone: template.tone,
@@ -202,6 +224,41 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
       }
       return JSON.parse(match[0]);
     }
+  }
+
+  normalizeAIIntroduction(introduction) {
+    const required = ['greeting', 'topicIntro', 'valueProposition', 'credibility'];
+    if (!introduction || typeof introduction !== 'object' ||
+        required.some(field => typeof introduction[field] !== 'string' || !introduction[field].trim())) {
+      throw new Error('AI script introduction is incomplete');
+    }
+    return {
+      type: 'ai_generated',
+      greeting: introduction.greeting.trim(),
+      topicIntro: introduction.topicIntro.trim(),
+      valueProposition: introduction.valueProposition.trim(),
+      credibility: introduction.credibility.trim(),
+      duration: '0:05-0:20'
+    };
+  }
+
+  normalizeAIConclusion(conclusion) {
+    if (!conclusion || typeof conclusion !== 'object' ||
+        !Array.isArray(conclusion.recap) || conclusion.recap.length === 0 ||
+        typeof conclusion.finalThought !== 'string' || !conclusion.finalThought.trim()) {
+      throw new Error('AI script conclusion is incomplete');
+    }
+    const recap = conclusion.recap
+      .filter(item => typeof item === 'string' && item.trim())
+      .slice(0, 8);
+    if (!recap.length) throw new Error('AI script conclusion has no valid recap points');
+    return {
+      type: 'ai_generated',
+      title: 'Wrapping Up',
+      recap,
+      finalThought: conclusion.finalThought.trim(),
+      duration: '30 seconds'
+    };
   }
 
   normalizeAIHook(hook) {
