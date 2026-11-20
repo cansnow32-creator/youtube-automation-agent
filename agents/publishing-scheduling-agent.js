@@ -200,11 +200,29 @@ class PublishingSchedulingAgent {
         throw error;
       }
 
-      scheduleEntry.status = 'uploading';
-      scheduleEntry.error = null;
-      await this.db.updateScheduleEntry(scheduleEntry);
+      if (typeof this.db.claimScheduleEntryForUpload !== 'function') {
+        const error = new Error('Atomic publish claim support is required to prevent duplicate YouTube uploads');
+        error.status = 503;
+        error.code = 'PUBLISH_CLAIM_UNAVAILABLE';
+        throw error;
+      }
+      const claimedEntry = await this.db.claimScheduleEntryForUpload(scheduleEntry.id);
+      if (!claimedEntry) {
+        const latest = await this.db.getLatestScheduleEntry?.(scheduleEntry.productionId);
+        if (latest?.youtubeId) return this.reconcileUploadedVideo(latest);
+        if (latest?.status === 'published') return latest;
+        const error = new Error('Another publisher claimed this schedule or its state changed. Reconcile before retrying.');
+        error.status = 409;
+        error.code = ['uploading', 'reconciliation_required'].includes(latest?.status)
+          ? 'UPLOAD_OUTCOME_UNKNOWN'
+          : 'PUBLISH_CLAIM_CONFLICT';
+        throw error;
+      }
+      scheduleEntry = claimedEntry;
+      const queuedEntry = this.publishQueue.find(entry => entry.id === scheduleEntry.id);
+      if (queuedEntry) Object.assign(queuedEntry, scheduleEntry);
       await this.syncShortStatus(scheduleEntry, 'uploading');
-      
+
       let uploadResult;
       try {
         uploadResult = await this.uploadToYouTube(scheduleEntry, options);
