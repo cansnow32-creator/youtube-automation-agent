@@ -586,6 +586,8 @@ class ContentStrategyAgent {
           scoreBreakdown: idea.scoreBreakdown,
           audienceDemandEvidence: idea.scoreBreakdown.audienceEvidence,
           explanation: idea.rationale,
+          sourceTypes: [...new Set((trendTopics.find(item => item.topic === idea.sourceTopic)?.sources || [])
+            .filter(source => ['trending', 'competitor'].includes(source)))],
           evidence: trendTopics.find(item => item.topic === idea.sourceTopic)?.evidence || [],
           generatedBy: 'ollama',
           model,
