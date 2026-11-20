@@ -295,3 +295,12 @@ PR #2 intentionally stacks on PR #1 and still targets `feat/local-first-quality-
 - Added the new test to `npm test`.
 - Commits: `79348283424180f5113b95e75860007983291307`, `ea647cb6f5165d6644ef1cd04e0adfe4f0a39d71`, `e1d02341c8830d2124647ab165314e65fea1fb43`.
 - Static JS syntax and package JSON checks passed. Runtime tests/lint not executed. PR #2 head is expected to be `e1d02341c8830d2124647ab165314e65fea1fb43`; verify metadata and CI before further work. Keep PR open/draft; do not merge or retarget.
+
+
+## Latest PR #2 scene lease renewal requirement — 2026-11-20
+
+- Audit found `withProductionOperationLease()` treated `renewProductionOperationLock()` as optional. Without it, the heartbeat was silently skipped while scene edits continued under a non-renewed lease.
+- Scene operations now fail closed unless DB acquire, renew and release methods all exist; after acquisition the heartbeat renewal is always started. Renewal failure/exception continues to block subsequent writes through `assertLease()`.
+- Added a regression in `test/scene-edit-lease.test.js` proving missing renewal support returns `SCENE_EDIT_LOCK_UNAVAILABLE` / HTTP 503. Existing fixtures now provide a renewal method where required.
+- Commits: `6cfc05db9090e561e7c02ab8830ba928298c3733`, `25c0e2e47c86be8de5dc309ad2841a996a3394b5`.
+- Static JavaScript syntax and package JSON parsing passed. Runtime tests/lint not executed. Recheck PR #2 head and Actions; keep draft and do not merge.
