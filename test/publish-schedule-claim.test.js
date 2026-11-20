@@ -21,7 +21,7 @@ async function main() {
     await dbA.executeQuery(`CREATE TABLE publish_schedule (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, title TEXT NOT NULL,
       publish_time TEXT NOT NULL, status TEXT, priority INTEGER, metadata TEXT,
-      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT,
+      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
     await dbA.executeQuery(
