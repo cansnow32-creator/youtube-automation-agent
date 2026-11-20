@@ -2132,11 +2132,12 @@ class YouTubeAutomationAgent {
       await stageAssertLease();
       const generated = await this.agents.strategy.generateContentStrategy(topic, stageAssertLease);
       await stageAssertLease();
-      const { getApprovedPackagingLearning } = require('./utils/packaging-learning');
+      const { getApprovedPackagingLearning, getApprovedScriptLearnings } = require('./utils/packaging-learning');
       const approvedLearnings = this.db.listLearningRecommendations
         ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
         : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
+      generated.approvedScriptLearnings = getApprovedScriptLearnings(approvedLearnings);
       generated.jobId = jobId;
       if (strategyContext.approvedVideoConcept) {
         generated.approvedVideoConcept = strategyContext.approvedVideoConcept;
