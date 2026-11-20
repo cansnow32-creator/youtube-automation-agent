@@ -99,13 +99,16 @@ class SEOOptimizerAgent {
 
       // Generate hashtags
       const hashtags = [...new Set([...(platformMetadata?.youtube?.hashtags || []), ...(await this.generateHashtags(strategy))])].slice(0, 15);
-      
+      await assertLease();
+
       // Create chapters/timestamps
       const chapters = await this.generateChapters(script);
-      
+      await assertLease();
+
       // Generate end screen elements
       const endScreen = await this.generateEndScreenStrategy();
-      
+      await assertLease();
+
       // Calculate SEO score
       const seoScore = await this.calculateSEOScore(title, description, tags);
       await assertLease();
