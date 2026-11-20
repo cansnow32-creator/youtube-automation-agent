@@ -101,7 +101,11 @@ async function run() {
   const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-asset-lease-'));
   try {
     const uploadService = new SceneRepairService({}, {}, { dataRoot: uploadRoot });
-    uploadService.getEditableBundle = async () => editableBundle();
+    uploadService.getEditableBundle = async (_id, assertLease) => {
+      assert.equal(typeof assertLease, 'function', 'asset replacement manifest initialization must receive the active lease');
+      await assertLease();
+      return editableBundle();
+    };
     let uploadAssertions = 0;
     await assert.rejects(
       uploadService.replaceAssetUnlocked('production-1', 'scene-1', {
@@ -111,7 +115,7 @@ async function run() {
         rightsConfirmed: true
       }, async () => {
         uploadAssertions += 1;
-        if (uploadAssertions === 4) {
+        if (uploadAssertions === 5) {
           throw Object.assign(new Error('lease lost after upload write'), { code: 'SCENE_EDIT_LEASE_LOST' });
         }
       }),
