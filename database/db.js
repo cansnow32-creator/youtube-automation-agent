@@ -19,6 +19,9 @@ class Database {
       
       // Connect to database
       this.db = new sqlite3.Database(this.dbPath);
+      // Give concurrent processes a bounded window to wait for SQLite's writer lock.
+      // Without this, the default zero timeout can surface SQLITE_BUSY during lock races.
+      this.db.configure('busyTimeout', 5000);
       
       // Create tables
       await this.createTables();
