@@ -130,6 +130,23 @@ async function run() {
     'Thumbnail performance is unavailable for this measurement window'
   ]);
 
+  agent.youtubeAnalytics = {
+    reports: {
+      query: async () => ({ data: { rows: [] } })
+    }
+  };
+  const emptyOutcomes = await agent.getOutcomeAnalytics('empty-video', '2026-11-01', '2026-11-20');
+  assert.equal(emptyOutcomes.subscribersAvailable, false);
+  assert.equal(emptyOutcomes.netSubscribers, null);
+  assert.equal(emptyOutcomes.revenueAvailable, false);
+  assert.equal(emptyOutcomes.estimatedRevenue, null);
+  const emptyTraffic = await agent.getTrafficSourcesAnalytics('empty-video', '2026-11-01', '2026-11-20');
+  assert.equal(emptyTraffic.available, false);
+  assert.equal(emptyTraffic.organicPercentage, null);
+  const emptyDevices = await agent.getDeviceAnalytics('empty-video', '2026-11-01', '2026-11-20');
+  assert.equal(emptyDevices.available, false);
+  assert.equal(emptyDevices.mobilePercentage, null);
+
   const noMetricScore = agent.calculatePerformanceScore({
     views: { totalViews: null, averageCTR: null },
     watchTime: { averageViewPercentage: null },
