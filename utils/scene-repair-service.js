@@ -540,9 +540,22 @@ class SceneRepairService {
       throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
     }
     this.activeRebuilds.add(productionId);
+    const lockOwner = crypto.randomUUID();
+    let databaseLockAcquired = false;
     try {
+      if (typeof this.db.acquireProductionOperationLock === 'function') {
+        databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
+        if (!databaseLockAcquired) {
+          throw this.error('Another application process is rebuilding this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
+        }
+      }
       return await this.rebuildUnlocked(productionId);
     } finally {
+      if (databaseLockAcquired) {
+        await this.db.releaseProductionOperationLock(productionId, lockOwner).catch(error => {
+          this.logger.warn(`Could not release scene rebuild lease for ${productionId}: ${error.message}`);
+        });
+      }
       this.activeRebuilds.delete(productionId);
     }
   }
