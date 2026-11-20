@@ -93,8 +93,16 @@ async function run() {
   await database.releaseProductionOperationLock('p1', 'owner-a');
   assert.match(queries.at(-1).sql, /WHERE production_id = \? AND owner = \?/);
 
+  const missingRebuildLock = new SceneRepairService({}, {}, { dataRoot: '/tmp' });
+  await assert.rejects(
+    missingRebuildLock.rebuild('p-missing-lock'),
+    error => error.code === 'SCENE_REBUILD_LOCK_UNAVAILABLE' && error.status === 503
+  );
+  assert.equal(missingRebuildLock.activeRebuilds.has('p-missing-lock'), false);
+
   const blockedDb = {
     acquireProductionOperationLock: async () => false,
+    renewProductionOperationLock: async () => true,
     releaseProductionOperationLock: async () => { throw new Error('must not release another owner lock'); }
   };
   const blocked = new SceneRepairService(blockedDb, {}, { dataRoot: '/tmp' });
@@ -107,6 +115,7 @@ async function run() {
   let released = false;
   const ownedDb = {
     acquireProductionOperationLock: async () => true,
+    renewProductionOperationLock: async () => true,
     releaseProductionOperationLock: async (_id, owner) => { released = owner.length > 0; }
   };
   const owned = new SceneRepairService(ownedDb, {}, { dataRoot: '/tmp' });
