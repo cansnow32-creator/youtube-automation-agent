@@ -376,14 +376,16 @@ class SceneRepairService {
     }
 
     const before = scene;
-    const outputPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}.mp3`);
+    const outputPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}_${crypto.randomUUID()}.mp3`);
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    let generatedPath = null;
+    let scenePersisted = false;
     try {
       await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'generating', narrationError: null
       });
-      const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath);
+      generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath);
       await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       if (!await this.videoGenerator.isUsableAudioFile(generatedPath)) {
@@ -409,6 +411,7 @@ class SceneRepairService {
         status: scene.status === 'visual_stale' ? 'visual_stale' : 'needs_rebuild',
         revision: scene.revision + 1
       });
+      scenePersisted = true;
       await assertLease();
       await this.updateProductionAudioState(bundle, {
         status: 'partial', path: null, simulated: false, intentionalSilence: false,
@@ -420,6 +423,10 @@ class SceneRepairService {
       });
       return next;
     } catch (error) {
+      if (!scenePersisted && generatedPath) {
+        await fs.unlink(generatedPath).catch(() => {});
+        await fs.unlink(`${generatedPath}.pcm`).catch(() => {});
+      }
       await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       await this.db.updateProductionScene(productionId, sceneId, {
@@ -536,6 +543,8 @@ class SceneRepairService {
     const before = scene;
     let visual = {};
     let narration = {};
+    const attemptFiles = new Set();
+    let scenePersisted = false;
     try {
       await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, { status: 'generating' });
@@ -561,6 +570,7 @@ class SceneRepairService {
       } else {
         const profile = await this.db.getChannelProfile?.() || {};
         const assets = await this.videoGenerator.generateVisualAssets(scene.prompt, profile.visual_style || 'ethereal', 1);
+        for (const asset of assets || []) if (asset) attemptFiles.add(asset);
         await assertLease();
         const assetPath = assets[0];
         const generatedImageUsable = assetPath && IMAGE_EXTENSIONS.has(path.extname(assetPath).toLowerCase())
@@ -572,9 +582,12 @@ class SceneRepairService {
       }
 
       if (scene.narrationStatus === 'stale' || input.regenerateNarration === true) {
-        const audioPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}.mp3`);
+        const audioPath = path.join(this.dataRoot, 'audio', 'scenes', productionId, `${String(scene.position).padStart(3, '0')}_r${scene.revision + 1}_${crypto.randomUUID()}.mp3`);
         await fs.mkdir(path.dirname(audioPath), { recursive: true });
+        attemptFiles.add(audioPath);
         const generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, audioPath);
+        attemptFiles.add(generatedPath);
+        attemptFiles.add(`${generatedPath}.pcm`);
         await assertLease();
         if (!await this.videoGenerator.isUsableAudioFile(generatedPath)) {
           throw this.error('Narration regeneration returned a simulation; configure a live TTS provider before rebuilding edited narration', 422, 'NARRATION_UNAVAILABLE');
@@ -594,6 +607,7 @@ class SceneRepairService {
         estimatedCost: estimate,
         actualCost: { generatedSeconds: estimate.generatedSeconds, provider: estimate.provider, amount: null, currency: null, invoiceRequired: estimate.paid }
       });
+      scenePersisted = true;
       await assertLease();
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', before, after: next,
@@ -601,6 +615,9 @@ class SceneRepairService {
       });
       return { scene: next, estimate };
     } catch (error) {
+      if (!scenePersisted) {
+        for (const filePath of attemptFiles) await fs.unlink(filePath).catch(() => {});
+      }
       await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, { status: 'failed' }).catch(() => {});
       await this.db.saveProductionSceneRevision({
