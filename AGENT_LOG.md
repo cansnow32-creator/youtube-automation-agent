@@ -5,7 +5,7 @@
 - Added SQLite regression coverage for a winning update and a stale competing update; documented the 409 conflict behavior in `docs/MEDIA_TASK_RECONCILIATION.md`.
 - Commits on feat/video-concept-approval: `07ee9aaf8030d5553acf9774b73973e97224f367`, `7a0de7c82f4da2a3112f113136963fa77785b402`, `dc5a53764cdb3dadbd37570cc65fe3c1f679de49`, `749cb821a895e74ba8636e6b5170e564ba7723a7`.
 - Re-fetched the changed files. JavaScript syntax parsing and package JSON parsing passed; the test file still declares and invokes all 14 media regression functions. Runtime tests/lint were not executed. GitHub reports zero PR-triggered workflow runs on the current PR #2 head.
-- Live PR #2 head is `749cb821a895e74ba8636e6b5170e564ba7723a7`; PR #1 and #3 remain open/draft/unmerged. No PR was merged, retargeted or rebased.
+- Live PR #2 head is `cc53b532c2afa95f627e57d7aea58eda608f1a7b`; PR #1 and #3 remain open/draft/unmerged. PR #3 currently reports mergeable false after the continuity updates. The fresh-submission test double was aligned with the required compare-and-set capability in `cc53b532c2afa95f627e57d7aea58eda608f1a7b`. No PR was merged, retargeted or rebased.
 - Next: obtain a real CI run for PR #2, then fix any runtime failures and re-check the stacked PR relationship. Do not merge.
 
 ## 2026-11-20 — Reconcile legacy failed provider records before replacement
