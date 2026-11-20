@@ -361,3 +361,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added `test/scene-edit-lease.test.js` to cover lease assertion failure before update/reorder DB writes, fail-closed missing lock support, and lock contention. Added it to the `npm test` chain.
 - Commits: `79348283424180f5113b95e75860007983291307`, `ea647cb6f5165d6644ef1cd04e0adfe4f0a39d71`, `e1d02341c8830d2124647ab165314e65fea1fb43`.
 - Static JavaScript syntax checks passed for service and new test; `package.json` parses and includes the test. Runtime tests/lint not run. GitHub reports no workflow run for the previously checked head; recheck current head.
+
+
+## 2026-11-20 — Require heartbeat renewal for scene edit leases
+
+- Found a fail-open path: `withProductionOperationLease()` accepted acquire/release support without renew support, then skipped its heartbeat entirely. Long scene edits could therefore continue after lease expiry.
+- Updated the wrapper to require acquire + renew + release and start the heartbeat unconditionally. Added missing-renewal regression coverage and updated lease test fixtures.
+- Commits: `6cfc05db9090e561e7c02ab8830ba928298c3733`, `25c0e2e47c86be8de5dc309ad2841a996a3394b5`.
+- Static syntax checks passed for the changed service and tests; package JSON parses. Runtime test suite and lint remain unexecuted. Recheck PR #2 head and CI before proceeding.
