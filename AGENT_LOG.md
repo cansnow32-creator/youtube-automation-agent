@@ -2,6 +2,15 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Stacked PR CI trigger review
+
+- PR #1 base branch workflow originally listened only for `pull_request` events targeting `master`, while PR #2 targets `feat/local-first-quality-gate`. This meant the base-branch workflow filter did not cover the stacked PR target.
+- Updated PR #1 branch `.github/workflows/ci.yml` to accept pull requests targeting any branch and added least-privilege `contents: read`.
+- PR #1 workflow commit: `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`.
+- Refreshed live GitHub state after the commit: PR #1 is open/draft/unmerged at the new SHA; PR #2 remains open/draft/unmerged at `96ac8f7c27be5009c981576650dd93c365cd160e`, based on PR #1; PR #3 is open/draft/unmerged at `3f2e2d8753debd8c7e6d7a1a9e580fdedc2cb187`.
+- Current heads of PR #1, #2, and #3 all report zero check-runs. Connector-authored commits have not triggered GitHub Actions in this session. Earlier PR #1 head `9438d3d6e9015684cc074f832188e05ecbf3ab51` had two successful checks, but those do not validate the new head.
+- Next: trigger/observe Actions manually when available; add real SQLite concurrency coverage; continue static review without claiming tests passed.
+
 ## 2026-11-20 — PR #2 audit and CI lockfile integrity fix
 
 - Live PR #1: open/draft/unmerged, head `9438d3d6e9015684cc074f832188e05ecbf3ab51`; two GitHub check runs completed successfully.
