@@ -2136,15 +2136,21 @@ class YouTubeAutomationAgent {
       const { getApprovedPackagingLearning, getApprovedScriptLearnings } = require('./utils/packaging-learning');
       // Use the same measured application feedback shown in the learning summary.
       // A fresh negative signal blocks reuse only; it never changes operator approval.
-      const learningSummary = this.agents.analytics?.getLearningSummary
-        ? await this.agents.analytics.getLearningSummary()
-        : null;
+      let learningSummary = null;
+      try {
+        learningSummary = this.agents.analytics?.getLearningSummary
+          ? await this.agents.analytics.getLearningSummary()
+          : null;
+      } catch (error) {
+        this.logger.warn('Applied-learning feedback is unavailable; continuing generation without learned recommendations:', error.message);
+      }
       await stageAssertLease();
+      // Never fall back to raw approvals here: doing so would bypass fresh
+      // negative application feedback. Missing analytics only disables reuse;
+      // it does not block the production itself or alter approval records.
       const approvedLearnings = Array.isArray(learningSummary?.recommendations)
         ? learningSummary.recommendations.filter(item => item?.status === 'approved')
-        : this.db.listLearningRecommendations
-          ? await this.db.listLearningRecommendations({ status: 'approved', limit: 25 })
-          : [];
+        : [];
       generated.packagingLearning = getApprovedPackagingLearning(approvedLearnings);
       generated.approvedScriptLearnings = getApprovedScriptLearnings(approvedLearnings);
       generated.jobId = jobId;
