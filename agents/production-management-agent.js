@@ -42,6 +42,7 @@ function getVideoAttemptSidecarPaths(videoPath) {
   const hybridVisual = stem + '_hybrid_visual.mp4';
   return [
     resolved,
+    resolved + '.info',
     resolved + '.assembly.json',
     resolved + '.assembly.json.tmp',
     hybridVisual,
@@ -1189,7 +1190,7 @@ class ProductionManagementAgent {
     const previousBackgroundMusic = productionData.assets.backgroundMusic;
     try {
       const requestedVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_final.mp4`);
-      generatedPaths.push(requestedVideoPath);
+      generatedPaths.push(...getVideoAttemptSidecarPaths(requestedVideoPath));
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
@@ -1210,12 +1211,18 @@ class ProductionManagementAgent {
           approvedVideoConcept: productionData.strategy?.approvedVideoConcept || null
         }
       );
-      if (producedPath && typeof producedPath === 'string') generatedPaths.push(producedPath);
+      if (producedPath && typeof producedPath === 'string') generatedPaths.push(...getVideoAttemptSidecarPaths(producedPath));
       await assertLease();
 
       // The generator falls back to a placeholder .info file when it cannot render.
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
-        await removeAttemptFiles(generatedPaths);
+        await removeAttemptFiles(generatedPaths, [
+          productionData.assets.audio?.path,
+          productionData.assets.captions?.path,
+          productionData.assets.finalVideo?.path,
+          productionData.assets.finalVideo?.cleanPath,
+          previousBackgroundMusic?.path
+        ]);
         generatedPaths.length = 0;
         return await this.simulateVideoAssembly(productionData, null, assertLease);
       }
@@ -1226,15 +1233,18 @@ class ProductionManagementAgent {
       const musicAsset = audioDirection.musicAsset || approvedConcept.backgroundMusic || null;
       if (musicAsset && musicAsset.enabled !== false) {
         const mixedPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_${attemptId}_music_mixed.mp4`);
-        generatedPaths.push(
-          mixedPath,
-          mixedPath + '.mixing.mp4',
-          mixedPath + '.mix.json',
-          mixedPath + '.mix.json.tmp'
-        );
+        const previousMixWasPersisted = previousBackgroundMusic?.path === mixedPath;
+        if (!previousMixWasPersisted) {
+          generatedPaths.push(
+            mixedPath,
+            mixedPath + '.mixing.mp4',
+            mixedPath + '.mix.json',
+            mixedPath + '.mix.json.tmp'
+          );
+        }
         await assertLease();
         const mixResult = await this.audioMixer(producedPath, mixedPath, musicAsset, this.audioMixerDependencies);
-        if (mixResult?.path) generatedPaths.push(mixResult.path);
+        if (mixResult?.path && mixResult.path !== previousBackgroundMusic?.path) generatedPaths.push(mixResult.path);
         await assertLease();
         finalVideoPath = mixResult.path;
         productionData.assets.backgroundMusic = {
@@ -1375,7 +1385,13 @@ class ProductionManagementAgent {
       this.logger.info('AI video assembly complete');
       return finalVideoPath;
     } catch (error) {
-      await removeAttemptFiles(generatedPaths);
+      await removeAttemptFiles(generatedPaths, [
+        productionData.assets.audio?.path,
+        productionData.assets.captions?.path,
+        productionData.assets.finalVideo?.path,
+        productionData.assets.finalVideo?.cleanPath,
+        previousBackgroundMusic?.path
+      ]);
       productionData.assets.backgroundMusic = previousBackgroundMusic;
       // Lease loss must propagate after attempt-local files are removed; it is
       // not a normal rendering failure and must never create a fallback artifact.
