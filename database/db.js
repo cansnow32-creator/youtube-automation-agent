@@ -1278,11 +1278,11 @@ class Database {
       `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
        output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`,
       [
-        changes.model ?? current.model,
-        changes.externalTaskId ?? current.external_task_id,
-        changes.status ?? current.status,
-        JSON.stringify(changes.providerData ?? current.providerData ?? {}),
-        changes.outputPath ?? current.output_path,
+        changes.model === undefined ? current.model : changes.model,
+        changes.externalTaskId === undefined ? current.external_task_id : changes.externalTaskId,
+        changes.status === undefined ? current.status : changes.status,
+        JSON.stringify(changes.providerData === undefined ? (current.providerData ?? {}) : (changes.providerData ?? {})),
+        changes.outputPath === undefined ? current.output_path : changes.outputPath,
         changes.error === undefined ? current.error : changes.error,
         changes.completedAt === undefined ? current.completed_at : changes.completedAt,
         id
