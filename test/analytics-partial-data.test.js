@@ -81,6 +81,11 @@ async function run() {
   assert.deepEqual(demographics.gender, []);
   assert.equal(demographics.dataQuality.partial, true);
   assert.ok(demographics.dataQuality.unavailable.gender);
+  assert.equal(demographics.primaryAudience, 'Gender unavailable, 25-34',
+    'an unavailable demographic dimension must not be replaced with a guessed default');
+  assert.equal(agent.identifyPrimaryAudience([], []), null);
+  assert.equal(agent.calculateOrganicPercentage([['SEARCH', 75], ['SUGGESTED_VIDEO', 15], ['EXTERNAL', 10]]), 90);
+  assert.equal(agent.calculateOrganicPercentage([]), null, 'organic share is unknown when total views are zero');
 
   // If every core metric endpoint fails, the fallback is explicit and ineligible for learning.
   for (const method of [
