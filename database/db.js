@@ -1526,9 +1526,9 @@ class Database {
   async listScriptQualityReviews(status = 'pending', limit = 50) {
     const rows = await this.getAllRows(
       `SELECT * FROM script_quality_reviews
-       WHERE (? = 'all' OR status = ?)
+       WHERE (? = 'all' OR (? = 'pending' AND status IN ('pending', 'revision_requested')) OR status = ?)
        ORDER BY created_at DESC LIMIT ?`,
-      [status, status, Math.min(Math.max(Number(limit) || 50, 1), 200)]
+      [status, status, status, Math.min(Math.max(Number(limit) || 50, 1), 200)]
     );
     return rows.map(row => ({
       ...row,
