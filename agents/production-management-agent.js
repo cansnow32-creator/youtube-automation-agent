@@ -1,6 +1,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs').promises;
+const sharp = require('sharp');
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
@@ -499,7 +500,13 @@ class ProductionManagementAgent {
       if (!['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(filePath).toLowerCase())) return false;
       try {
         const stats = await fs.stat(filePath);
-        return stats.isFile() && stats.size > 0;
+        if (!stats.isFile() || stats.size <= 0) return false;
+        const metadata = await sharp(filePath, { failOn: 'error' }).metadata();
+        return Boolean(
+          metadata.width &&
+          metadata.height &&
+          ['png', 'jpeg', 'webp'].includes(metadata.format)
+        );
       } catch (_error) {
         return false;
       }
