@@ -713,7 +713,13 @@ class ProductionManagementAgent {
       await assertLease();
       await fs.mkdir(path.dirname(productionThumbnailPath), { recursive: true });
       await assertLease();
-      await fs.writeFile(productionThumbnailPath, originalBuffer);
+      try {
+        await fs.writeFile(productionThumbnailPath, originalBuffer);
+        await assertLease();
+      } catch (error) {
+        await fs.rm(productionThumbnailPath, { force: true }).catch(() => {});
+        throw error;
+      }
       return {
         path: productionThumbnailPath,
         originalPath: thumbnail.path,
