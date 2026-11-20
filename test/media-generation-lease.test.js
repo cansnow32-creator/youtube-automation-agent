@@ -346,6 +346,44 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
   }
 }
 
+async function testNonOwningTaskClaimCannotSubmitRemoteProviderJob() {
+  const service = new MediaGenerationService({}, {}, { logger: { info() {}, warn() {}, error() {} } });
+  let createCalls = 0;
+  const task = {
+    id: 'media-row-created-by-another-worker',
+    status: 'submitting',
+    external_task_id: null,
+    providerData: {},
+    createdByThisInvocation: false
+  };
+  service.db = {
+    findMediaGenerationTask: async () => null,
+    createMediaGenerationTask: async () => ({ ...task })
+  };
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => {
+      createCalls++;
+      return { status: 'queued', externalTaskId: 'duplicate-remote-job' };
+    }
+  };
+
+  await assert.rejects(
+    service.generateClip({
+      jobId: 'job-competing-claim',
+      productionId: 'production-competing-claim',
+      scene: { index: 0, prompt: 'claimed by another worker' },
+      provider,
+      outputPath: path.join(require('node:os').tmpdir(), 'never-created-media-clip.mp4'),
+      request: { prompt: 'claimed by another worker' }
+    }),
+    error => error.code === 'MEDIA_TASK_SUBMISSION_UNKNOWN'
+  );
+  assert.equal(createCalls, 0, 'only the database task-row claimant may start a remote provider job');
+}
+
 async function testAmbiguousProviderSubmissionIsNotAutomaticallyRetried() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-unknown-'));
   const db = makeStatefulMediaTaskDb();
@@ -590,6 +628,7 @@ async function testRemotePollingErrorReconcilesExistingTaskInsteadOfResubmitting
 
 async function main() {
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
+  await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
