@@ -154,7 +154,7 @@ class MediaGenerationService {
   async generateClip({ jobId, productionId, scene, provider, outputPath, request, assertLease = async () => {} }) {
     await assertLease();
     let task = this.db?.findMediaGenerationTask
-      ? await this.db.findMediaGenerationTask(jobId, scene.index, provider.id)
+      ? await this.db.findMediaGenerationTask(jobId, scene.index, provider.id, productionId)
       : null;
 
     if (task?.status === 'succeeded' && task.output_path) {
