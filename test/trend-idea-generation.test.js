@@ -242,6 +242,18 @@ async function run() {
     ), 'explicitly missing production capabilities should reduce production fit');
     assert.equal(scoreProductionEffort({ topic: 'A general topic' }, {}), 90,
       'simple topics should not be penalized by missing capability metadata');
+    const { scoreProductionRequirements } = require('../utils/trend-idea-ranker');
+    const complexRequirements = scoreProductionRequirements({
+      topic: 'A documentary investigation with interviews, original animation and archival footage'
+    });
+    assert.ok(complexRequirements.research < 90, 'research workload should be scored separately');
+    assert.ok(complexRequirements.visuals < 90, 'visual asset and animation workload should be scored separately');
+    assert.ok(complexRequirements.narration < 90, 'interview and narration workload should be scored separately');
+    assert.ok(complexRequirements.editing < 90, 'complex editing workload should be scored separately');
+    assert.ok(scoreProductionEffort({
+      topic: 'A documentary investigation with interviews, original animation and archival footage'
+    }) < scoreProductionEffort({ topic: 'A simple beginner checklist' }),
+    'combined production effort should rank complex concepts as harder to produce');
     assert.ok(scoreViewerValue({ angle: 'Compare three editing workflows step by step', rationale: 'A practical checklist for beginners' }) >
       scoreViewerValue({ angle: 'A general look at editing', rationale: 'An overview' }),
       'specific, actionable angles should rank above vague descriptions');
