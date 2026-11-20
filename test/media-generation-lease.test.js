@@ -480,7 +480,7 @@ async function testNonOwningTaskClaimCannotSubmitRemoteProviderJob() {
       outputPath: path.join(require('node:os').tmpdir(), 'never-created-media-clip.mp4'),
       request: { prompt: 'claimed by another worker' }
     }),
-    error => error.code === 'MEDIA_TASK_SUBMISSION_UNKNOWN'
+    error => error.code === 'MEDIA_TASK_CLAIM_UNKNOWN'
   );
   assert.equal(createCalls, 0, 'only the database task-row claimant may start a remote provider job');
 }
