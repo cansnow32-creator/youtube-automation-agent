@@ -2541,7 +2541,7 @@ class YouTubeAutomationAgent {
       error.status = 409;
       throw error;
     }
-    if (['uploading', 'uploaded', 'reconciliation_required'].includes(bundle.schedule?.status)) {
+    if (bundle.schedule?.youtubeId || ['uploading', 'uploaded', 'reconciliation_required'].includes(bundle.schedule?.status)) {
       const error = new Error(
         'This content may already have reached YouTube. Reconcile the existing upload before changing its approval or schedule state.'
       );
