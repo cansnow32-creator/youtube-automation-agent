@@ -1008,6 +1008,15 @@ class Database {
     await this.executeQuery('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
   }
 
+  async getProductionBundleByJobId(jobId) {
+    if (!jobId) return null;
+    const row = await this.getRow(
+      "SELECT id FROM productions WHERE json_extract(timeline, '$.jobId') = ? ORDER BY created_at DESC LIMIT 1",
+      [jobId]
+    );
+    return row?.id ? this.getProductionBundle(row.id) : null;
+  }
+
   async getProductionBundle(productionId) {
     const row = await this.getRow(
       `SELECT p.*, ps.strategy, ps.script, ps.thumbnail, ps.seo,
