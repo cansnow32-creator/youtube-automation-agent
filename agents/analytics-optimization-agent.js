@@ -87,7 +87,8 @@ class AnalyticsOptimizationAgent {
       // Get analytics data
       const channelStrategy = this.db.getChannelStrategy ? await this.db.getChannelStrategy() : null;
       const analytics = await this.getVideoAnalytics(videoId, period, {
-        currency: channelStrategy?.outcome_currency || 'USD'
+        currency: channelStrategy?.outcome_currency || 'USD',
+        measurementWindow
       });
       const context = await this.db.getPublishedContentContext(videoId);
 
@@ -222,7 +223,12 @@ class AnalyticsOptimizationAgent {
       this.logger.error(`Core YouTube analytics unavailable for ${videoId}; using explicitly marked simulated fallback`);
       return {
         ...this.getSimulatedAnalytics(videoId),
-        period: { startDate, endDate },
+        period: {
+          startDate, endDate,
+          measurementWindow: options.measurementWindow || 'rolling',
+          windowDays: period?.windowDays || null,
+          precision: period?.precision || 'rolling_30d'
+        },
         dataQuality: {
           source: 'simulated_fallback',
           partial: false,
@@ -234,7 +240,12 @@ class AnalyticsOptimizationAgent {
 
     return {
       simulated: false,
-      period: { startDate, endDate },
+      period: {
+        startDate, endDate,
+        measurementWindow: options.measurementWindow || 'rolling',
+        windowDays: period?.windowDays || null,
+        precision: period?.precision || 'rolling_30d'
+      },
       views: results.views || { totalViews: null, totalImpressions: null, averageCTR: null, dailyData: [] },
       watchTime: results.watchTime || {
         totalWatchTime: null, averageViewDuration: null, averageViewPercentage: null,
