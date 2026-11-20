@@ -35,3 +35,12 @@ All these windows are cumulative since publication, not rolling periods. Compari
 ## Content-surface boundaries
 
 Learning recommendations are built separately for Shorts and long-form videos. Their reach, retention, and viewing behavior are not pooled into one cohort. Recommendation evidence and proposed changes retain the originating surface so an observed pattern in one surface cannot silently steer the other.
+
+
+## Traffic-source measurement boundaries
+
+Per-video discovery reports retain YouTube's canonical `insightTrafficSourceType` identifiers (for example `YT_SEARCH`, `RELATED_VIDEO`, `VIDEO_BROWSE`, `SHORTS`, `EXT_URL`, and `NOTIFICATION`). Human-readable labels are display metadata only. Unknown and `OTHER` values remain unclassified and are not relabeled as search, suggested, or browse traffic.
+
+The report uses the requested Analytics date range and the `views` metric by traffic-source dimension. It does not claim source-level impressions or click-through rate: those values are not derived from overall video CTR. Source percentages and aggregate shares are withheld when any returned row has a missing/invalid view count, because a partial denominator can make every share misleading. A missing source row is not interpreted as zero traffic.
+
+Shorts feed, browse, suggested videos, search, external, notifications, channel pages, playlists, and other source families remain distinct. Search-quality interpretation uses only recognized search source identifiers; an unknown-only report is not described as poor search performance. These traffic-source summaries are descriptive and are not automatically converted into cross-surface recommendations.
