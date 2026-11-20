@@ -1,7 +1,30 @@
 const assert = require('node:assert/strict');
 const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
+const { getAppliedPackagingLearning } = require('../utils/packaging-learning');
 
 const engine = new ChannelLearningEngine({});
+
+const experiment = {
+  sourceRecommendationId: 'pack-1',
+  titleVariants: [{ label: 'Control' }, { label: 'Curiosity' }],
+  thumbnailVariants: [{ label: 'Control' }, { label: 'Centered' }]
+};
+assert.equal(getAppliedPackagingLearning(experiment, 0, 0), null, 'control variants must not count as applied learning');
+assert.equal(getAppliedPackagingLearning(experiment, 1, 0, true), null, 'a manual title override must not be attributed to a generated title variant');
+assert.deepEqual(
+  getAppliedPackagingLearning(experiment, 1, 0).appliedTo,
+  ['title'],
+  'only the selected non-control title variant should be attributed'
+);
+assert.deepEqual(
+  getAppliedPackagingLearning(experiment, 0, 1).appliedTo,
+  ['thumbnail'],
+  'only the selected non-control thumbnail variant should be attributed'
+);
+assert.deepEqual(
+  getAppliedPackagingLearning(experiment, 1, 1).appliedTo,
+  ['title', 'thumbnail']
+);
 
 const applied = engine.extractAppliedLearnings({
   packagingLearning: { recommendationId: 'pack-1' },
@@ -10,9 +33,9 @@ const applied = engine.extractAppliedLearnings({
     { recommendationId: 'format-1', category: 'format' },
     { recommendationId: 'hook-1', category: 'hookLength' }
   ]
-});
+}, [getAppliedPackagingLearning(experiment, 1, 0)]);
 assert.deepEqual(applied.map(item => item.recommendationId), ['pack-1', 'hook-1', 'format-1']);
-assert.deepEqual(applied[0].appliedTo, ['thumbnail', 'seo']);
+assert.deepEqual(applied[0].appliedTo, ['title']);
 assert.deepEqual(applied[1].appliedTo, ['script']);
 
 const snapshot = (id, recommendationId, category, delta, impressions = 1200, window = '7d') => ({
