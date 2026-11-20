@@ -401,7 +401,7 @@ class MediaGenerationService {
       }
       await this.updateTask(task, {
         status: recoveryStatus,
-        externalTaskId: recoveryStatus === 'submission_unknown' ? null : undefined,
+        externalTaskId: recoveryStatus === 'submission_unknown' ? null : (remoteTaskId || undefined),
         outputPath: ['submission_unknown', 'reconciliation_required', 'download_pending'].includes(recoveryStatus)
           ? null
           : undefined,
