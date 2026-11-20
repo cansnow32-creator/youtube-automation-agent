@@ -3,26 +3,26 @@ const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
 
 async function run() {
   const snapshots = [];
-  const add = (videoId, surface, titleLength, ctr) => snapshots.push({
+  const add = (videoId, surface, format, titleLength, ctr) => snapshots.push({
     videoId,
     measurementWindow: '7d',
     simulated: false,
     metrics: { impressions: 1200, views: 300, ctr, retention: null },
-    contentAttributes: { surface, titleLength, format: surface, pillar: 'education' }
+    contentAttributes: { surface, titleLength, format, pillar: 'education' }
   });
 
-  add('long-a', 'long_form', 'concise', 7);
-  add('long-b', 'long_form', 'concise', 8);
-  add('long-c', 'long_form', 'concise', 7.5);
-  add('long-d', 'long_form', 'long', 3);
-  add('long-e', 'long_form', 'long', 4);
-  add('long-f', 'long_form', 'long', 3.5);
-  add('short-a', 'shorts', 'concise', 10);
-  add('short-b', 'shorts', 'concise', 11);
-  add('short-c', 'shorts', 'concise', 10.5);
-  add('short-d', 'shorts', 'long', 10.2);
-  add('short-e', 'shorts', 'long', 11.2);
-  add('short-f', 'shorts', 'long', 10.7);
+  add('long-a', 'long_form', 'tutorial', 'concise', 7);
+  add('long-b', 'long_form', 'tutorial', 'concise', 8);
+  add('long-c', 'long_form', 'tutorial', 'concise', 7.5);
+  add('long-d', 'long_form', 'review', 'long', 3);
+  add('long-e', 'long_form', 'review', 'long', 4);
+  add('long-f', 'long_form', 'review', 'long', 3.5);
+  add('short-a', 'shorts', 'tutorial', 'concise', 10);
+  add('short-b', 'shorts', 'tutorial', 'concise', 11);
+  add('short-c', 'shorts', 'tutorial', 'concise', 10.5);
+  add('short-d', 'shorts', 'story', 'long', 10.2);
+  add('short-e', 'shorts', 'story', 'long', 11.2);
+  add('short-f', 'shorts', 'story', 'long', 10.7);
 
   const saved = [];
   const engine = new ChannelLearningEngine({
@@ -45,13 +45,13 @@ async function run() {
   assert.equal(titleRecommendations[0].evidence.surface, 'long_form');
   assert.equal(titleRecommendations[0].proposedChange.surface, 'long_form');
   const insights = engine.buildPerformanceInsights(snapshots, 3, '7d');
-  assert.equal(insights.dimensions.titleLength.leader, null,
+  assert.equal(insights.dimensions.format.leader, null,
     'pooled Shorts and long-form cohorts must not produce a cross-surface leader');
-  assert.equal(insights.dimensions.titleLength.evidenceStatus, 'cross_surface_not_comparable');
+  assert.equal(insights.dimensions.format.evidenceStatus, 'cross_surface_not_comparable');
   assert.ok(insights.surfaceBreakdowns.long_form);
   assert.ok(insights.surfaceBreakdowns.shorts);
-  assert.equal(insights.surfaceBreakdowns.long_form.titleLength.leader.name, 'concise');
-  assert.equal(insights.surfaceBreakdowns.shorts.titleLength.leader.name, 'long');
+  assert.equal(insights.surfaceBreakdowns.long_form.format.leader.name, 'tutorial');
+  assert.equal(insights.surfaceBreakdowns.shorts.format.leader.name, 'tutorial');
 
   const longForm = snapshots.filter(item => item.contentAttributes.surface === 'long_form');
   const smallGroups = [
