@@ -381,7 +381,7 @@ class SceneRepairService {
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'generating', narrationError: null
       });
-      generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath);
+      generatedPath = await this.videoGenerator.generateTTSAudio(scene.scriptText, outputPath, { assertLease });
       await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       if (!await this.videoGenerator.isUsableAudioFile(generatedPath)) {
