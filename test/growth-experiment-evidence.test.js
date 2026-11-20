@@ -194,6 +194,58 @@ async function run() {
     assert.equal(linked.armObservations[0].observedVideoCtr, 5.2);
   }
 
+  {
+    const { service } = makeService([]);
+    await assert.rejects(
+      () => service.create({ productionId: 'production-1' }),
+      error => error.code === 'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
+    );
+  }
+
+  {
+    const { service } = makeService([]);
+    service.requireExperiment = async () => ({ id: 'legacy-draft' });
+    await assert.rejects(
+      () => service.start('legacy-draft', { confirmed: true }),
+      error => error.code === 'EXPERIMENT_RANDOMIZATION_UNAVAILABLE'
+    );
+  }
+
+  {
+    const { service } = makeService([]);
+    const experiment = {
+      id: 'legacy-running',
+      status: 'running',
+      currentArmId: 'variant',
+      arms: [
+        { id: 'control', isControl: true, title: 'Original title', thumbnailPath: '/control.jpg' },
+        { id: 'variant', isControl: false, title: 'Test title', thumbnailPath: '/variant.jpg' }
+      ]
+    };
+    service.requireExperiment = async () => experiment;
+    let applied = null;
+    service.applyArm = async (...args) => { applied = args; };
+    let saved = null;
+    service.db.updateGrowthExperiment = async (id, changes) => {
+      saved = { id, changes };
+      return saved;
+    };
+    service.analytics = {
+      analyzeVideoPerformance: async () => {
+        throw new Error('legacy recovery must not compare metrics');
+      }
+    };
+    const result = await service.refreshUnlocked(experiment.id);
+    assert.equal(applied[1].id, 'control', 'legacy recovery restores the original package');
+    assert.equal(applied[2].id, 'variant', 'restore records the currently active package as previous');
+    assert.equal(saved.changes.status, 'inconclusive');
+    assert.equal(saved.changes.currentArmId, null);
+    assert.equal(saved.changes.winningArmId, null);
+    assert.equal(saved.changes.result.comparisonMethod, 'sequential_same_video_observational');
+    assert.match(saved.changes.result.reason, /original control package was restored/i);
+    assert.equal(result, saved);
+  }
+
   process.stdout.write('Growth experiment evidence tests passed\\n');
 }
 
