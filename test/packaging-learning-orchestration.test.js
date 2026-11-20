@@ -10,7 +10,7 @@ async function run() {
     confidence: 'high',
     winningTitle: 'The Hidden Cost of Fast Fashion',
     winningThumbnailPattern: 'Centered composition',
-    evidence: { liftPercent: 18, zScore: 2.4 }
+    evidence: { liftPercent: 18, zScore: 2.4, freshness: { status: 'fresh', sampleCount: 6, maxAgeDays: 90, oldestMeasuredAt: '2026-11-01T00:00:00.000Z', latestMeasuredAt: '2026-11-19T00:00:00.000Z' } }
   };
   const recommendation = {
     id: learning.recommendationId,
