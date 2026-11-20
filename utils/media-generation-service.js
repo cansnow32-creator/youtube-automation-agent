@@ -153,9 +153,15 @@ class MediaGenerationService {
 
   async generateClip({ jobId, productionId, scene, provider, outputPath, request, assertLease = async () => {} }) {
     await assertLease();
-    let task = this.db?.findMediaGenerationTask
-      ? await this.db.findMediaGenerationTask(jobId, scene.index, provider.id, productionId)
-      : null;
+    if (typeof this.db?.findMediaGenerationTask !== 'function' ||
+        typeof this.db?.createMediaGenerationTask !== 'function' ||
+        typeof this.db?.updateMediaGenerationTask !== 'function') {
+      const error = new Error('Remote video generation requires durable database task tracking to prevent duplicate provider submissions');
+      error.code = 'MEDIA_TASK_PERSISTENCE_UNAVAILABLE';
+      error.status = 503;
+      throw error;
+    }
+    let task = await this.db.findMediaGenerationTask(jobId, scene.index, provider.id, productionId);
 
     if (task?.status === 'succeeded' && task.output_path) {
       const reusableOutput = await this.isValidVideo(task.output_path);
@@ -169,16 +175,18 @@ class MediaGenerationService {
     let taskCreatedThisInvocation = !task;
     if (!task) {
       await assertLease();
-      if (this.db?.createMediaGenerationTask) {
-        task = await this.db.createMediaGenerationTask({
-          jobId, productionId, sceneIndex: scene.index, provider: provider.id, model: provider.model,
-          status: 'submitting', request: this.safeRequest(request)
-        });
-        // A concurrent claimant may have inserted the unique task row after our
-        // read. Only the caller that actually inserted it may submit the remote job.
-        taskCreatedThisInvocation = task.createdByThisInvocation !== false;
-      } else {
-        task = { id: `media_${Date.now()}_${scene.index}`, status: 'submitting' };
+      task = await this.db.createMediaGenerationTask({
+        jobId, productionId, sceneIndex: scene.index, provider: provider.id, model: provider.model,
+        status: 'submitting', request: this.safeRequest(request)
+      });
+      // A concurrent claimant may have inserted the unique task row after our
+      // read. Only an explicit database ownership result authorizes a provider call.
+      taskCreatedThisInvocation = task?.createdByThisInvocation === true;
+      if (!taskCreatedThisInvocation) {
+        const error = new Error('Database did not confirm ownership of the new media task row; remote submission is blocked');
+        error.code = 'MEDIA_TASK_CLAIM_UNKNOWN';
+        error.status = 503;
+        throw error;
       }
     }
 
