@@ -409,13 +409,17 @@ class ContentStrategyAgent {
       .slice(0, 50);
   }
 
-  async generateContentStrategy(requestedTopic = null) {
+  async generateContentStrategy(requestedTopic = null, assertLease = async () => {}) {
     try {
+      await assertLease();
       let topic, angle, targetAudience, contentType;
 
       const aiStrategy = await this.generateContentStrategyWithAI(requestedTopic);
+      await assertLease();
       if (aiStrategy) {
+        await assertLease();
         await this.db.saveContentStrategy(aiStrategy);
+        await assertLease();
         this.logger.info(`Generated AI strategy for: ${aiStrategy.topic}`);
         return aiStrategy;
       }
@@ -450,8 +454,10 @@ class ContentStrategyAgent {
         createdAt: new Date().toISOString()
       };
 
-      // Save to database
+      // Save only while this worker still owns the generation job.
+      await assertLease();
       await this.db.saveContentStrategy(strategy);
+      await assertLease();
 
       this.logger.info(`Generated strategy for: ${topic}`);
       return strategy;
