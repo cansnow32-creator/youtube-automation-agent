@@ -181,6 +181,7 @@ class ProductionManagementAgent {
       );
 
       // Mark as ready — or simulated, when no real video could be produced
+      await assertLease();
       const finalVideo = productionData.assets.finalVideo;
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         throw new Error('Production cannot be marked ready without a real MP4 final video');
@@ -206,6 +207,57 @@ class ProductionManagementAgent {
   }
 
   async resumeProduction(productionId) {
+    if (typeof this.db.acquireProductionOperationLock !== 'function') {
+      throw new Error('Production resume requires database operation-lock support');
+    }
+    const owner = `resume_${process.pid}_${crypto.randomUUID()}`;
+    const leaseMs = 2 * 60 * 60 * 1000;
+    const acquired = await this.db.acquireProductionOperationLock(productionId, owner, leaseMs);
+    if (!acquired) {
+      const error = new Error(`Production ${productionId} is already being processed by another worker`);
+      error.code = 'PRODUCTION_OPERATION_LOCKED';
+      error.status = 409;
+      throw error;
+    }
+
+    let leaseFailure = null;
+    let renewalInFlight = Promise.resolve();
+    const assertLease = async () => {
+      await renewalInFlight;
+      if (leaseFailure) throw leaseFailure;
+    };
+    const heartbeat = setInterval(() => {
+      renewalInFlight = this.db.renewProductionOperationLock(productionId, owner, leaseMs)
+        .then(renewed => {
+          if (!renewed) {
+            leaseFailure = Object.assign(
+              new Error(`Production resume lease lost for ${productionId}`),
+              { code: 'PRODUCTION_RESUME_LEASE_LOST', status: 409 }
+            );
+          }
+        })
+        .catch(cause => {
+          leaseFailure = Object.assign(
+            new Error(`Production resume lease could not be verified for ${productionId}: ${cause.message}`),
+            { code: 'PRODUCTION_RESUME_LEASE_UNVERIFIED', status: 503 }
+          );
+        });
+    }, 30_000);
+    heartbeat.unref?.();
+
+    try {
+      return await this.resumeProductionUnlocked(productionId, assertLease);
+    } finally {
+      clearInterval(heartbeat);
+      await renewalInFlight.catch(() => {});
+      await this.db.releaseProductionOperationLock(productionId, owner).catch(error => {
+        this.logger.error('Failed to release production resume lock:', error);
+      });
+    }
+  }
+
+  async resumeProductionUnlocked(productionId, assertLease = async () => {}) {
+    await assertLease();
     const stored = await this.db.getProductionBundle(productionId);
     if (!stored) throw new Error(`Production not found: ${productionId}`);
     const approvedConcept = await requireApprovedVideoConcept(
@@ -245,8 +297,9 @@ class ProductionManagementAgent {
       await this.db.updateProductionData(productionData);
       return productionData;
     }
-    const persistWorkflow = async () => this.db.updateProductionData(productionData);
+    const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
     try {
+      await assertLease();
       if (workflow.stages.visuals.status !== 'completed') {
         await runProductionStage(workflow, 'visuals', async () => {
           const assets = await this.generateVideoContent(productionData);
@@ -257,6 +310,7 @@ class ProductionManagementAgent {
           return { assetCount: realAssets.length };
         }, persistWorkflow);
       }
+      await assertLease();
       if (workflow.stages.narration.status !== 'completed') {
         await runProductionStage(workflow, 'narration', async () => {
           const audioPath = await this.generateAudioNarration(productionData);
@@ -266,6 +320,7 @@ class ProductionManagementAgent {
           return { audioPath, provider: productionData.assets.audio.provider || null };
         }, persistWorkflow);
       }
+      await assertLease();
       if (workflow.stages.editing.status !== 'completed') {
         await runProductionStage(workflow, 'editing', async () => {
           await this.generateCaptions(productionData);
@@ -288,12 +343,14 @@ class ProductionManagementAgent {
       }
       productionData.status = 'ready';
       productionData.timeline.readyForUpload = new Date().toISOString();
+      await assertLease();
       await this.db.updateProductionData(productionData);
       const index = this.pipeline.findIndex(item => item.id === productionId);
       if (index >= 0) this.pipeline[index] = productionData;
       else this.pipeline.push(productionData);
       return productionData;
     } catch (error) {
+      if (leaseFailure || ['PRODUCTION_RESUME_LEASE_LOST', 'PRODUCTION_RESUME_LEASE_UNVERIFIED'].includes(error.code)) throw (leaseFailure || error);
       productionData.status = 'failed';
       productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
       await this.db.updateProductionData(productionData);
