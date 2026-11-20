@@ -131,6 +131,7 @@ class ProductionManagementAgent {
       // this job instead of creating a duplicate production and repeating media work.
       if (jobId && typeof this.db.getProductionBundleByJobId === 'function') {
         const existing = await this.db.getProductionBundleByJobId(jobId);
+        await assertLease();
         if (existing) {
           if (existing.script?.title !== script?.title ||
               existing.timeline?.jobId !== jobId) {
@@ -183,6 +184,7 @@ class ProductionManagementAgent {
       // Save to database
       await assertLease();
       await this.db.saveProductionData(productionData);
+      await assertLease();
       await this.db.saveProductionSnapshot(productionData);
       
       // Persist stage transitions so interrupted or failed work is visible in the production record.
