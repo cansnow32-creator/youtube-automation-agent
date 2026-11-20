@@ -396,3 +396,12 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - On lease loss or other pre-persistence failure, temporary and attempt output files are removed. A persisted scene's referenced asset is retained.
 - Added a regression for lease loss immediately after writing the upload; it verifies the upload directory contains no leftover files. Static syntax checks passed; runtime tests/lint not run.
 - Commits: `9b445a7841e2df0015c9f5bab00d88f868ae0fa6`, `2f2e9b9df5fea658cdd443bb1ecfe104c8a9ebb2`, `d5e8dac847a45473210a45ade55b894184d3c45a`.
+
+
+## 2026-11-20 — Fence image provider output and thumbnail fallback
+
+- Threaded the production lease assertion into visual generation and thumbnail generation. Provider results are checked after completion and before publication; lease loss prevents fallback/provider retries and removes attempt artifacts.
+- Simulated visual/thumbnail artifact writes now check lease ownership before and after file creation and clean up on failure. Thumbnail output paths are UUID-scoped to avoid collisions.
+- Added regression coverage for late provider completion after lease loss and for suppressing simulated visual fallback after lease loss. Corrected the existing partial-output test to inspect the actual attempt path.
+- Static syntax checks passed; runtime tests/lint not executed.
+- Commits: `963df9d6886807a0544923212191aa5e109639c5`, `a09716ad5e089f1855d7ad5cc1c2bdb7c049e636`, `3afde4bf1c61fe1c12ddc4c6afafdce0df851680`, `e98e5e8039c8a409f9e64f73b1ac73140a2bb549`.
