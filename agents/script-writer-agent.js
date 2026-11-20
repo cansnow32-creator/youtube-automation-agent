@@ -1,6 +1,7 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
 const { LocalFirstQualityPipeline } = require('../utils/local-first-quality-pipeline');
+const { verifyAppliedScriptLearnings } = require('../utils/script-learning-verification');
 
 class ScriptWriterAgent {
   constructor(db, credentials) {
@@ -56,6 +57,8 @@ class ScriptWriterAgent {
       const aiScript = await this.generateScriptWithAI(strategy, template, assertLease);
       await assertLease();
       if (aiScript) {
+        aiScript.metadata = aiScript.metadata || {};
+        aiScript.metadata.verifiedAppliedLearnings = verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, aiScript);
         aiScript.fullScript = this.formatFullScript(aiScript);
         await assertLease();
         await this.db.saveScript(aiScript);
@@ -95,6 +98,7 @@ class ScriptWriterAgent {
         }
       };
 
+      script.metadata.verifiedAppliedLearnings = verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, script);
       script.fullScript = this.formatFullScript(script);
       await assertLease();
       await this.db.saveScript(script);
