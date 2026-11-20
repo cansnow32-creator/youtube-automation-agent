@@ -223,6 +223,12 @@ class MediaGenerationService {
         // remote ID, a crash at any point around provider.createTask() becomes
         // an explicit ambiguous outcome. A retry will reconcile, never resubmit.
         if (!taskCreatedThisInvocation) {
+          if (!this.db?.claimMediaGenerationTaskForSubmission) {
+            const error = new Error('Retrying a terminal media task requires atomic database submission-claim support');
+            error.code = 'MEDIA_TASK_SUBMISSION_CLAIM_UNAVAILABLE';
+            error.status = 503;
+            throw error;
+          }
           if (task.external_task_id) {
             previousTaskHistory.push({
               externalTaskId: task.external_task_id,
@@ -232,14 +238,22 @@ class MediaGenerationService {
             });
             previousTaskHistory = previousTaskHistory.slice(-10);
           }
-          task = await this.updateTask(task, {
-            status: 'submitting',
-            externalTaskId: null,
-            providerData: previousTaskHistory.length ? { previousTasks: previousTaskHistory } : {},
-            outputPath: null,
-            error: null,
-            completedAt: null
-          });
+          const claim = await this.db.claimMediaGenerationTaskForSubmission(
+            task.id,
+            task.status,
+            task.external_task_id,
+            previousTaskHistory
+          );
+          if (!claim?.claimed) {
+            const error = new Error(`Another worker already claimed media task ${task.id} for retry; refusing a second provider submission.`);
+            error.code = 'MEDIA_TASK_SUBMISSION_IN_PROGRESS';
+            error.status = 409;
+            throw error;
+          }
+          task = claim.task;
+          previousTaskHistory = Array.isArray(task?.providerData?.previousTasks)
+            ? task.providerData.previousTasks
+            : [];
           await assertLease();
         }
 
