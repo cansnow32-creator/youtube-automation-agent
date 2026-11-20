@@ -388,3 +388,11 @@ Append newest entries at the top. Include date, branch, commit SHA, files change
 - Added/updated regression tests for missing lock support and asset replacement lease routing; updated the scene-repair cache test fixture.
 - Commits: `0d544b2`, `5a0bfce`, `879881d`, `e7969ed`, `9fcb8ca`, `424252c`, `094e7c8`, `7b1f5ae`.
 - Static syntax checks passed; runtime tests/lint remain unexecuted.
+
+
+## 2026-11-20 — Fence uploaded scene asset publication
+
+- Replaced direct deterministic scene-asset writes with unique temporary uploads and unique revision output paths. The asset is validated before publication and lease-checked before rename.
+- On lease loss or other pre-persistence failure, temporary and attempt output files are removed. A persisted scene's referenced asset is retained.
+- Added a regression for lease loss immediately after writing the upload; it verifies the upload directory contains no leftover files. Static syntax checks passed; runtime tests/lint not run.
+- Commits: `9b445a7841e2df0015c9f5bab00d88f868ae0fa6`, `2f2e9b9df5fea658cdd443bb1ecfe104c8a9ebb2`, `d5e8dac847a45473210a45ade55b894184d3c45a`.
