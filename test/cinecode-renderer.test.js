@@ -219,12 +219,28 @@ async function run() {
       assert.equal(muxAttempts, 2, 'audio mux should be retried');
       assert.equal(await fs.access(retryOutput).then(() => true, () => false), true);
 
-      // A changed visual source invalidates only the visual cache.
+      // An identical retry reuses both the visual timeline and the validated final mux.
+      await retryGenerator.generateHybridVideo(
+        [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+      );
+      assert.equal(timelineRenders, 1);
+      assert.equal(muxAttempts, 2, 'a matching final assembly should not mux again');
+
+      // Changed narration audio remuxes the existing visual timeline only.
+      await fs.appendFile(retryAudio, Buffer.from('-new-audio'));
+      await retryGenerator.generateHybridVideo(
+        [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+      );
+      assert.equal(timelineRenders, 1, 'audio changes must not invalidate visual rendering');
+      assert.equal(muxAttempts, 3, 'changed audio must invalidate the final assembly cache');
+
+      // A changed visual source invalidates the visual cache and final assembly.
       await fs.appendFile(retrySource, Buffer.from('-changed'));
       await retryGenerator.generateHybridVideo(
         [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
       );
       assert.equal(timelineRenders, 2, 'changed visual inputs must invalidate the visual cache');
+      assert.equal(muxAttempts, 4, 'changed visual inputs require a fresh final mux');
     } else {
       process.stdout.write('FFmpeg unavailable locally; real render smoke test skipped\\n');
     }
