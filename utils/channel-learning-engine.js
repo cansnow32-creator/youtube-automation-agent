@@ -258,11 +258,23 @@ class ChannelLearningEngine {
     const snapshots = this.preferredSnapshotPerVideo(weekly, '7d');
     if (snapshots.length < 2) return [];
 
-    const candidates = [
-      ...this.buildDimensionRecommendations(snapshots),
-      ...this.buildChannelRecommendations(snapshots),
-      ...this.buildOutcomeRecommendations(snapshots, strategy)
-    ];
+    // Shorts and long-form have different exposure and retention distributions.
+    // Build each recommendation cohort independently instead of averaging surfaces together.
+    const surfaces = [...new Set(snapshots.map(snapshot => snapshot.contentAttributes?.surface || 'long_form'))];
+    const candidates = surfaces.flatMap(surface => {
+      const cohort = snapshots.filter(snapshot =>
+        (snapshot.contentAttributes?.surface || 'long_form') === surface
+      );
+      return [
+        ...this.buildDimensionRecommendations(cohort),
+        ...this.buildChannelRecommendations(cohort),
+        ...this.buildOutcomeRecommendations(cohort, strategy)
+      ].map(candidate => ({
+        ...candidate,
+        evidence: { ...(candidate.evidence || {}), surface },
+        proposedChange: { ...(candidate.proposedChange || {}), surface }
+      }));
+    });
     const saved = [];
     for (const candidate of candidates) {
       saved.push(await this.db.saveLearningRecommendation({
