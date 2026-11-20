@@ -1,3 +1,13 @@
+## 2026-11-20 — Add shared leases to scene regeneration and silence overrides
+
+- Continued PR #2 static audit. Found `regenerate()`, `regenerateNarration()`, and `setSilenceOverride()` did not acquire the production-scoped operation lock shared with rebuild and short scene edits.
+- Added `withProductionOperationLease()` with owner-scoped acquisition/release, heartbeat renewal, and fail-closed lease assertions. Wrapped all three mutation paths and checked ownership around provider returns, scene/audio metadata writes, and revision writes. Lease loss is re-thrown rather than converted into a stale-worker failure update.
+- Added tests for lock contention, heartbeat lease loss and owner release, and forwarding through all three public mutation entry points.
+- Commits on `feat/video-concept-approval`: `aada5058e501de82bcb3d71191d0591bc9e4e10d` and `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`.
+- Re-fetched the changed service and test from GitHub. PR #2 remains open/draft/unmerged; current head `77f2aa8d5b66475245ccdc6c05ba1fd64e800a9b`. GitHub reports zero workflow runs; tests and lint were not executed. No pass is claimed.
+- Limitation: provider internals may create an output file before the post-provider lease assertion; this can leave an orphan artifact, although the stale worker is blocked from publishing scene metadata. These checks are cooperative, not atomic filesystem fencing.
+- Next: inspect provider output cleanup and route-level review refresh side effects; then establish actual CI execution. Do not merge.
+
 # AgentTube — Continuity Log
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
