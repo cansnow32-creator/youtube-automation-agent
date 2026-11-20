@@ -1312,6 +1312,29 @@ class Database {
     return this.parseMediaGenerationTask(row);
   }
 
+  async claimMediaGenerationTaskForSubmission(taskId, expectedStatus, expectedExternalTaskId, previousTasks = []) {
+    if (!['failed', 'cancelled'].includes(expectedStatus)) {
+      return { claimed: false, task: await this.getMediaGenerationTaskById(taskId) };
+    }
+    const history = Array.isArray(previousTasks) ? previousTasks.slice(-10) : [];
+    const result = await this.executeQuery(
+      `UPDATE media_generation_tasks SET
+        status = 'submitting',
+        external_task_id = NULL,
+        provider_data = ?,
+        output_path = NULL,
+        error = NULL,
+        completed_at = NULL,
+        updated_at = datetime('now')
+       WHERE id = ? AND status = ? AND external_task_id IS ?`,
+      [JSON.stringify(history.length ? { previousTasks: history } : {}), taskId, expectedStatus, expectedExternalTaskId || null]
+    );
+    return {
+      claimed: result.changes === 1,
+      task: await this.getMediaGenerationTaskById(taskId)
+    };
+  }
+
   async updateMediaGenerationTask(id, changes = {}) {
     const current = this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
     if (!current) return null;
