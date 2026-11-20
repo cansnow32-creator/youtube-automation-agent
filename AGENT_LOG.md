@@ -2,6 +2,15 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Fence scene-manifest initialization after narration splitting
+
+- Continued PR #2 audit into `SceneRepairService.initializeProduction()`. It splits the narration into per-scene audio files and then replaces the production scene manifest; without a lease callback, a stale worker could finish FFmpeg splitting and still publish scene rows.
+- Threaded the production lease assertion through `initializeProduction()` and `initializeAudioSegments()`. Checks now run before directory/scene work, before each split, after each FFmpeg render, in the per-scene error path, and immediately before/after scene-manifest persistence. Lease loss is re-thrown rather than downgraded to an unavailable narration segment.
+- Switched the segment render to the constructor-injected `this.runFFmpeg` so the lease-loss path can be regression-tested without launching a real FFmpeg process. Added a test that simulates lease loss after a segment render and asserts `replaceProductionScenes()` is never called.
+- Commits on `feat/video-concept-approval`: `4f3f1d46431b5293ea6d7c642b722302991e25e5`, `0f9e51992ac30c0162438848886f0de2a71796e8`.
+- Live PR #2 is open/draft/unmerged at `0f9e51992ac30c0162438848886f0de2a71796e8`, still based on `feat/local-first-quality-gate`. GitHub reports zero workflow runs on this head. Tests/lint remain unexecuted; no pass is claimed.
+- Next: inspect scene-repair DB side effects beyond initial manifest creation and remaining media helpers; then obtain CI. Do not merge.
+
 ## 2026-11-20 — Guard scene-manifest initialization against production lease loss
 
 - Static review found `sceneRepair.initializeProduction()` was called after final video assembly but did not receive the generation-job/resume lease assertion. It could split narration into per-scene files with FFmpeg and write scene rows after the parent worker lost ownership.
