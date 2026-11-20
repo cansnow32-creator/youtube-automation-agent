@@ -48,9 +48,9 @@ class ChannelLearningEngine {
     const watchTime = analytics.watchTime || {};
     const engagement = analytics.engagement || {};
     const outcomes = analytics.outcomes || {};
-    const impressions = this.number(views.totalImpressions || report.thumbnailMetrics?.impressions);
-    const totalViews = this.number(views.totalViews);
-    const watchMinutes = this.number(watchTime.totalWatchTime);
+    const impressions = this.optionalNumber(views.totalImpressions ?? report.thumbnailMetrics?.impressions);
+    const totalViews = this.optionalNumber(views.totalViews);
+    const watchMinutes = this.optionalNumber(watchTime.totalWatchTime);
     const netSubscribers = outcomes.subscribersAvailable ? this.optionalNumber(outcomes.netSubscribers) : null;
     const estimatedRevenue = outcomes.revenueAvailable ? this.optionalNumber(outcomes.estimatedRevenue) : null;
     const cost = context.productionCost || {};
@@ -63,13 +63,13 @@ class ChannelLearningEngine {
     return {
       views: totalViews,
       impressions,
-      ctr: this.number(report.thumbnailMetrics?.clickThroughRate ?? views.averageCTR),
-      retention: this.number(watchTime.averageViewPercentage),
-      averageViewDuration: this.number(watchTime.averageViewDuration),
+      ctr: this.optionalNumber(report.thumbnailMetrics?.clickThroughRate ?? views.averageCTR),
+      retention: this.optionalNumber(watchTime.averageViewPercentage),
+      averageViewDuration: this.optionalNumber(watchTime.averageViewDuration),
       watchMinutes,
-      watchHours: Number((watchMinutes / 60).toFixed(3)),
-      engagementRate: this.number(engagement.engagementRate),
-      performanceScore: this.number(report.performance?.score),
+      watchHours: watchMinutes !== null ? Number((watchMinutes / 60).toFixed(3)) : null,
+      engagementRate: this.optionalNumber(engagement.engagementRate),
+      performanceScore: this.optionalNumber(report.performance?.score),
       subscribersGained: outcomes.subscribersAvailable ? this.optionalNumber(outcomes.subscribersGained) : null,
       subscribersLost: outcomes.subscribersAvailable ? this.optionalNumber(outcomes.subscribersLost) : null,
       netSubscribers,
@@ -77,11 +77,13 @@ class ChannelLearningEngine {
       revenueCurrency,
       monetizedPlaybacks: outcomes.revenueAvailable ? this.optionalNumber(outcomes.monetizedPlaybacks) : null,
       playbackBasedCpm: outcomes.revenueAvailable ? this.optionalNumber(outcomes.playbackBasedCpm) : null,
-      subscribersPerThousandImpressions: netSubscribers !== null && impressions > 0
+      subscribersPerThousandImpressions: netSubscribers !== null && impressions !== null && impressions > 0
         ? Number(((netSubscribers / impressions) * 1000).toFixed(3))
         : null,
-      watchHoursPerThousandViews: totalViews > 0 ? Number((((watchMinutes / 60) / totalViews) * 1000).toFixed(3)) : null,
-      revenuePerThousandViews: estimatedRevenue !== null && totalViews > 0
+      watchHoursPerThousandViews: watchMinutes !== null && totalViews !== null && totalViews > 0
+        ? Number((((watchMinutes / 60) / totalViews) * 1000).toFixed(3))
+        : null,
+      revenuePerThousandViews: estimatedRevenue !== null && totalViews !== null && totalViews > 0
         ? Number(((estimatedRevenue / totalViews) * 1000).toFixed(3))
         : null,
       productionCost,
@@ -95,7 +97,6 @@ class ChannelLearningEngine {
         : null
     };
   }
-
   extractAttributes(report, context) {
     const strategy = context.strategy || {};
     const script = context.script || {};
@@ -196,7 +197,7 @@ class ChannelLearningEngine {
       const groups = new Map();
       for (const snapshot of snapshots) {
         const value = snapshot.contentAttributes?.[dimension.key];
-        const metric = this.number(snapshot.metrics?.[dimension.metric]);
+        const metric = this.optionalNumber(snapshot.metrics?.[dimension.metric]);
         if (!value || value === 'unknown' || !Number.isFinite(metric)) continue;
         if (!groups.has(value)) groups.set(value, []);
         groups.get(value).push(metric);
@@ -223,31 +224,45 @@ class ChannelLearningEngine {
   }
 
   buildChannelRecommendations(snapshots) {
-    const sufficientlyExposed = snapshots.filter(snapshot => this.number(snapshot.metrics?.impressions) >= 100);
+    const sufficientlyExposed = snapshots.filter(snapshot => {
+      const impressions = this.optionalNumber(snapshot.metrics?.impressions);
+      return impressions !== null && impressions >= 100;
+    });
     if (sufficientlyExposed.length < 2) return [];
-    const averageCTR = this.average(sufficientlyExposed.map(item => this.number(item.metrics.ctr)));
-    const averageRetention = this.average(sufficientlyExposed.map(item => this.number(item.metrics.retention)));
+
+    const measuredCTR = sufficientlyExposed
+      .map(item => this.optionalNumber(item.metrics?.ctr))
+      .filter(value => value !== null);
+    const measuredRetention = sufficientlyExposed
+      .map(item => this.optionalNumber(item.metrics?.retention))
+      .filter(value => value !== null);
     const recommendations = [];
 
-    if (averageCTR < 4) {
-      recommendations.push({
-        category: 'packaging',
-        title: 'Test new title and thumbnail packaging',
-        rationale: `Channel CTR averaged ${averageCTR.toFixed(1)}% across ${sufficientlyExposed.length} sufficiently exposed videos.`,
-        evidence: { metric: 'ctr', average: averageCTR, sampleSize: sufficientlyExposed.length, minimumImpressions: 100 },
-        proposedChange: { target: 'review', experiment: 'title_thumbnail_variant' },
-        confidence: sufficientlyExposed.length >= 5 ? 'high' : 'medium'
-      });
+    if (measuredCTR.length >= 2) {
+      const averageCTR = this.average(measuredCTR);
+      if (averageCTR < 4) {
+        recommendations.push({
+          category: 'packaging',
+          title: 'Test new title and thumbnail packaging',
+          rationale: `Channel CTR averaged ${averageCTR.toFixed(1)}% across ${measuredCTR.length} videos with measured CTR.`,
+          evidence: { metric: 'ctr', average: averageCTR, sampleSize: measuredCTR.length, minimumImpressions: 100 },
+          proposedChange: { target: 'review', experiment: 'title_thumbnail_variant' },
+          confidence: measuredCTR.length >= 5 ? 'high' : 'medium'
+        });
+      }
     }
-    if (averageRetention < 35) {
-      recommendations.push({
-        category: 'retention',
-        title: 'Tighten hooks and early pacing',
-        rationale: `Average view percentage was ${averageRetention.toFixed(1)}% across ${sufficientlyExposed.length} sufficiently exposed videos.`,
-        evidence: { metric: 'retention', average: averageRetention, sampleSize: sufficientlyExposed.length },
-        proposedChange: { target: 'future_scripts', prefer: 'concise_hook_and_faster_opening' },
-        confidence: sufficientlyExposed.length >= 5 ? 'high' : 'medium'
-      });
+    if (measuredRetention.length >= 2) {
+      const averageRetention = this.average(measuredRetention);
+      if (averageRetention < 35) {
+        recommendations.push({
+          category: 'retention',
+          title: 'Tighten hooks and early pacing',
+          rationale: `Average view percentage was ${averageRetention.toFixed(1)}% across ${measuredRetention.length} videos with measured retention.`,
+          evidence: { metric: 'retention', average: averageRetention, sampleSize: measuredRetention.length },
+          proposedChange: { target: 'future_scripts', prefer: 'concise_hook_and_faster_opening' },
+          confidence: measuredRetention.length >= 5 ? 'high' : 'medium'
+        });
+      }
     }
     return recommendations;
   }
