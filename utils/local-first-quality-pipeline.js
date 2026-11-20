@@ -195,7 +195,12 @@ class LocalFirstQualityPipeline {
       remoteReviewEnabled: this.allowRemoteReview,
       attempts
     };
-    throw new Error(`Quality gate did not reach ${this.minimumScore}/100 after ${this.maxRevisions} revisions; content held for human review`);
+    const error = new Error(`Quality gate did not reach ${this.minimumScore}/100 after ${this.maxRevisions} revisions; content held for human review`);
+    error.code = 'QUALITY_REVIEW_REQUIRED';
+    error.status = 409;
+    error.draft = draft;
+    error.qualityReport = this.lastReport;
+    throw error;
   }
 }
 
