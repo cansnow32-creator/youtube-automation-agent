@@ -163,9 +163,74 @@ async function testPartialAttemptCleanupPreservesReusedClips() {
   }
 }
 
+async function testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-cancel-'));
+  const updates = [];
+  const cancelled = [];
+  const task = { id: 'media-cancel-task', status: 'submitting', providerData: {} };
+  const db = {
+    findMediaGenerationTask: async () => null,
+    createMediaGenerationTask: async () => ({ ...task }),
+    updateMediaGenerationTask: async (_id, changes) => {
+      updates.push(changes);
+      return { ...task, ...changes, external_task_id: changes.externalTaskId || task.external_task_id };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  const provider = {
+    id: 'seedance',
+    model: 'test-model',
+    capabilities: { cancellation: true },
+    createTask: async () => ({
+      status: 'queued',
+      model: 'test-model',
+      externalTaskId: 'remote-task-created-before-lease-loss'
+    }),
+    cancelTask: async taskId => {
+      cancelled.push(taskId);
+      return true;
+    },
+    downloadResult: async () => {
+      throw new Error('Download must not begin after lease loss');
+    }
+  };
+  let leaseChecks = 0;
+
+  try {
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-cancel',
+        productionId: 'production-cancel',
+        scene: { index: 0, prompt: 'cancel me' },
+        provider,
+        outputPath: path.join(directory, 'cancelled-scene.mp4'),
+        request: { prompt: 'cancel me' },
+        assertLease: async () => {
+          leaseChecks += 1;
+          // createTask has returned its remote ID, but no task update may persist it.
+          if (leaseChecks >= 4) {
+            throw Object.assign(new Error('generation job lease lost after remote submission'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.deepEqual(cancelled, ['remote-task-created-before-lease-loss'],
+      'a cancellable remote job is cancelled even when its ID was never persisted locally');
+    assert.equal(updates.length, 0, 'stale worker must not write the remote task ID after lease loss');
+    assert.deepEqual(await fs.readdir(directory), []);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
   await testPartialAttemptCleanupPreservesReusedClips();
+  await testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-fence-'));
   const outputPath = path.join(directory, 'scene.mp4');
   const updates = [];
