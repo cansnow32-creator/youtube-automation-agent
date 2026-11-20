@@ -662,6 +662,46 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/script-quality-reviews/:reviewId/revise', protect, async (req, res) => {
+      try {
+        const draft = typeof req.body?.draft === 'string' ? req.body.draft.trim() : '';
+        if (!draft || draft.length > 100000) {
+          return res.status(400).json({ success: false, error: 'Revised draft must contain 1 to 100000 characters' });
+        }
+        const existing = await this.db.getScriptQualityReview(req.params.reviewId);
+        if (!existing) return res.status(404).json({ success: false, error: 'Quality review not found' });
+        if (!['pending', 'revision_requested'].includes(existing.status)) {
+          return res.status(409).json({ success: false, error: 'Only open quality reviews can be revised' });
+        }
+        const pipeline = this.agents.scriptWriter?.qualityPipeline;
+        if (!pipeline?.enabled) {
+          return res.status(503).json({ success: false, error: 'Enable the local quality pipeline before re-reviewing drafts' });
+        }
+        const reviews = await pipeline.reviewDraft(draft);
+        const reviewerResults = Object.values(reviews);
+        const score = reviewerResults.length
+          ? Math.min(...reviewerResults.map(result => Number(result.score)))
+          : 0;
+        const blockers = reviewerResults.flatMap(result => result.blockers || []);
+        const approved = reviewerResults.length > 0 &&
+          reviewerResults.every(result => result.approved === true && Number(result.score) >= pipeline.minimumScore) &&
+          blockers.length === 0;
+        const qualityReport = {
+          status: approved ? 'awaiting_human_approval' : 'human_review_required',
+          score,
+          minimumScore: pipeline.minimumScore,
+          revisions: Number(existing.quality_report?.revisions || 0) + 1,
+          reviewers: Object.keys(reviews),
+          remoteReviewEnabled: pipeline.allowRemoteReview,
+          attempts: [{ revision: Number(existing.quality_report?.revisions || 0) + 1, score, reviewers: reviews, approved }]
+        };
+        const review = await this.db.updateScriptQualityReviewDraft(req.params.reviewId, draft, qualityReport);
+        return res.json({ success: true, review, automatedReviewPassed: approved, humanDecisionRequired: true });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.post('/api/script-quality-reviews/:reviewId/decision', protect, async (req, res) => {
       try {
         const decision = req.body?.decision;
