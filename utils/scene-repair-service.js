@@ -653,40 +653,55 @@ class SceneRepairService {
     if ((assetType === 'video' && !VIDEO_EXTENSIONS.has(extension)) || (assetType === 'image' && !IMAGE_EXTENSIONS.has(extension))) {
       throw this.error('Replacement asset file type is not supported', 415);
     }
-    const directory = path.join(this.dataRoot, 'scene-assets', productionId);
-    const outputPath = path.join(directory, `${scene.id}_r${scene.revision + 1}${extension}`);
-    await assertLease();
-    await fs.mkdir(directory, { recursive: true });
-    await fs.writeFile(outputPath, file.buffer);
-    await assertLease();
-    try {
-      if (assetType === 'video') {
-        if (!await this.mediaGeneration?.isValidVideo?.(outputPath)) throw new Error('Video is not a valid, decodable MP4-compatible asset');
-      } else {
-        const metadata = await sharp(outputPath, { failOn: 'error' }).metadata();
-        const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
-        if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
-          throw new Error('Image content does not match its file extension or is not a valid image');
-        }
-      }
-    } catch (error) {
-      await fs.unlink(outputPath).catch(() => {});
-      throw this.error(error.message || 'Replacement asset is invalid', 422);
-    }
 
-    await assertLease();
-    const next = await this.db.updateProductionScene(productionId, sceneId, {
-      assetType, assetOrigin: 'uploaded', assetPath: outputPath, provider: 'operator-upload', model: null,
-      externalTaskId: null, rightsConfirmed: true, containsSyntheticMedia: file.containsSyntheticMedia === true,
-      status: 'needs_rebuild', revision: scene.revision + 1,
-      estimatedCost: {}, actualCost: { billed: false }
-    });
-    await assertLease();
-    await this.db.saveProductionSceneRevision({
-      productionId, sceneId, action: 'replace_asset', before: scene, after: next,
-      costEvidence: { billed: false }
-    });
-    return next;
+    const directory = path.join(this.dataRoot, 'scene-assets', productionId);
+    const attemptId = crypto.randomUUID();
+    const outputPath = path.join(directory, `${scene.id}_r${scene.revision + 1}_${attemptId}${extension}`);
+    const tempPath = `${outputPath}.${attemptId}.upload${extension}`;
+    let scenePersisted = false;
+    try {
+      await assertLease();
+      await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(tempPath, file.buffer, { flag: 'wx' });
+      await assertLease();
+
+      try {
+        if (assetType === 'video') {
+          if (!await this.mediaGeneration?.isValidVideo?.(tempPath)) throw new Error('Video is not a valid, decodable MP4-compatible asset');
+        } else {
+          const metadata = await sharp(tempPath, { failOn: 'error' }).metadata();
+          const expectedFormat = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension.slice(1);
+          if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
+            throw new Error('Image content does not match its file extension or is not a valid image');
+          }
+        }
+      } catch (error) {
+        throw this.error(error.message || 'Replacement asset is invalid', 422);
+      }
+
+      await assertLease();
+      await fs.rename(tempPath, outputPath);
+      await assertLease();
+      const next = await this.db.updateProductionScene(productionId, sceneId, {
+        assetType, assetOrigin: 'uploaded', assetPath: outputPath, provider: 'operator-upload', model: null,
+        externalTaskId: null, rightsConfirmed: true, containsSyntheticMedia: file.containsSyntheticMedia === true,
+        status: 'needs_rebuild', revision: scene.revision + 1,
+        estimatedCost: {}, actualCost: { billed: false }
+      });
+      scenePersisted = true;
+      await assertLease();
+      await this.db.saveProductionSceneRevision({
+        productionId, sceneId, action: 'replace_asset', before: scene, after: next,
+        costEvidence: { billed: false }
+      });
+      return next;
+    } catch (error) {
+      if (!scenePersisted) {
+        await fs.unlink(tempPath).catch(() => {});
+        await fs.unlink(outputPath).catch(() => {});
+      }
+      throw error;
+    }
   }
 
   async narrationDuration(audioPath, scene) {
