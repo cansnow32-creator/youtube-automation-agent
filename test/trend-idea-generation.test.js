@@ -336,6 +336,10 @@ async function run() {
     const rationale = JSON.parse(created.rationale);
     assert.equal(rationale.generatedBy, 'ollama');
     assert.equal(rationale.snapshotId, snapshot.id);
+    assert.deepEqual(rationale.sourceTypes, ['trending', 'competitor'],
+      'saved ideas must retain the verified source types of their originating trend topic');
+    assert.ok(rationale.evidence.some(item => item.url === 'https://www.youtube.com/watch?v=trend-idea-test'),
+      'saved ideas must retain source evidence links');
     assert.ok(rationale.scoreBreakdown);
 
     global.fetch = async () => { throw new Error('Ollama is offline'); };
