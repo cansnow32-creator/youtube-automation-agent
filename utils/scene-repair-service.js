@@ -161,22 +161,6 @@ class SceneRepairService {
     this.activeRebuilds = new Set();
   }
 
-  async withProductionEditLock(productionId, operation) {
-    if (typeof this.db.acquireProductionOperationLock !== 'function') return operation();
-    const owner = crypto.randomUUID();
-    const acquired = await this.db.acquireProductionOperationLock(productionId, owner);
-    if (!acquired) {
-      throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
-    }
-    try {
-      return await operation();
-    } finally {
-      await this.db.releaseProductionOperationLock(productionId, owner).catch(error => {
-        this.logger.warn(`Could not release scene edit lock for ${productionId}: ${error.message}`);
-      });
-    }
-  }
-
   async withProductionOperationLease(productionId, operation, label = 'scene operation') {
     if (typeof this.db.acquireProductionOperationLock !== 'function' ||
         typeof this.db.releaseProductionOperationLock !== 'function') {
