@@ -66,6 +66,33 @@ async function run() {
     assert.equal(await winner.renewProductionOperationLock('shared-job', winnerOwner, 10000), false,
       'the previous owner cannot renew after lease takeover');
     await loser.releaseProductionOperationLock('shared-job', loserOwner);
+
+    // A stale owner must not update production metadata after another worker
+    // takes over an expired lease. The write itself is fenced in SQL.
+    await connectionA.executeQuery(`CREATE TABLE productions (
+      id TEXT PRIMARY KEY, status TEXT, assets TEXT, timeline TEXT,
+      scheduled_publish_time TEXT, priority INTEGER
+    )`);
+    await connectionA.executeQuery(
+      'INSERT INTO productions (id, status, assets, timeline, priority) VALUES (?, ?, ?, ?, ?)',
+      ['guarded-production', 'processing', '{}', '{}', 50]
+    );
+    assert.equal(await connectionA.acquireProductionOperationLock('guarded-production', 'old-owner', 10000), true);
+    await connectionA.executeQuery(
+      'UPDATE production_operation_locks SET expires_at = ? WHERE production_id = ?',
+      [Date.now() - 1, 'guarded-production']
+    );
+    assert.equal(await connectionB.acquireProductionOperationLock('guarded-production', 'new-owner', 10000), true);
+    await assert.rejects(
+      connectionA.updateProductionData({
+        id: 'guarded-production', status: 'ready', assets: {}, timeline: {}, priority: 1
+      }, { productionId: 'guarded-production', owner: 'old-owner' }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const unchanged = await connectionB.getRow('SELECT status, priority FROM productions WHERE id = ?', ['guarded-production']);
+    assert.deepEqual(unchanged, { status: 'processing', priority: 50 },
+      'a stale worker cannot overwrite production state after lease takeover');
+    await connectionB.releaseProductionOperationLock('guarded-production', 'new-owner');
   } finally {
     await Promise.all([
       new Promise(resolve => connectionA.db.close(() => resolve())),
