@@ -140,7 +140,7 @@ class PublishingSchedulingAgent {
         } else {
           const shortClip = this.db.getShortClip ? await this.db.getShortClip(contentId) : null;
           const approvedShort = shortClip &&
-            ['scheduled', 'uploading', 'reconciliation_required', 'published'].includes(shortClip.status) &&
+            ['scheduled', 'failed', 'uploading', 'reconciliation_required', 'published'].includes(shortClip.status) &&
             Boolean(shortClip.approvedAt) &&
             shortClip.inheritedEvidence?.ready === true;
           if (!approvedShort) {
