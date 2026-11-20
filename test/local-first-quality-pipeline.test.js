@@ -88,6 +88,28 @@ async function run() {
   }
   if (localOnly.allowRemoteReview !== false) throw new Error('Remote review must be opt-in');
 
+  const localEndToEnd = new LocalFirstQualityPipeline({}, { enabled: true, maxRevisions: 0 });
+  let localRequests = 0;
+  localEndToEnd.requestOllama = async () => {
+    localRequests++;
+    if (localRequests === 1) return '{"title":"Local draft"}';
+    return JSON.stringify({
+      score: 89, approved: true, blockers: [], findings: [],
+      revision_instructions: [], platform_metadata: completeMetadata
+    });
+  };
+  localEndToEnd.requestGemini = async () => { throw new Error('Gemini must not be called'); };
+  localEndToEnd.requestGroq = async () => { throw new Error('Groq must not be called'); };
+  const localDraft = await localEndToEnd.generateAndReview('Write a complete script');
+  if (localDraft !== '{"title":"Local draft"}' || localRequests !== 2) {
+    throw new Error('Local generation and review did not complete through Ollama');
+  }
+  if (localEndToEnd.lastReport.status !== 'approved' ||
+      localEndToEnd.lastReport.reviewers.join(',') !== 'ollama' ||
+      localEndToEnd.lastReport.remoteReviewEnabled !== false) {
+    throw new Error('Local-only quality report is incomplete or incorrectly identifies its reviewer');
+  }
+
   const order = [];
   const ordered = new LocalFirstQualityPipeline({}, { enabled: true, allowRemoteReview: true });
   ordered.requestOllama = async () => {
