@@ -8,7 +8,7 @@ const recommendation = {
   title: 'Test new title and thumbnail packaging',
   rationale: 'Recent channel CTR supports a controlled packaging test.',
   confidence: 'medium',
-  evidence: { metric: 'ctr', average: 3.2, sampleSize: 6 },
+  evidence: { metric: 'ctr', average: 3.2, sampleSize: 6, freshness: { status: 'fresh', sampleCount: 6, maxAgeDays: 90, oldestMeasuredAt: '2026-11-01T00:00:00.000Z', latestMeasuredAt: '2026-11-19T00:00:00.000Z' } },
   proposedChange: { target: 'review', experiment: 'title_thumbnail_variant' }
 };
 
