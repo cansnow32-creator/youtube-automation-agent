@@ -20,6 +20,12 @@ async function run() {
     );
     service.activeRebuilds.delete('locked-production');
 
+    const failingService = new SceneRepairService({}, {}, { dataRoot: directory });
+    failingService.rebuildUnlocked = async () => { throw new Error('simulated rebuild failure'); };
+    await assert.rejects(failingService.rebuild('retryable-production'), /simulated rebuild failure/);
+    assert.equal(failingService.activeRebuilds.has('retryable-production'), false,
+      'rebuild lock must always be released after failure');
+
     const scenes = [{
       id: 'scene-1', revision: 2, assetType: 'image', assetPath: visualPath,
       duration: 12, narrationStatus: 'current', audioPath, scriptText: 'Narration text'
