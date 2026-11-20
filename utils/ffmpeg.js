@@ -41,8 +41,47 @@ async function checkFFmpeg() {
   }
 }
 
-async function runFFmpeg(args) {
-  return execFileAsync(getFFmpegPath(), args, { maxBuffer: 32 * 1024 * 1024 });
+async function runFFmpeg(args, options = {}) {
+  const assertLease = typeof options.assertLease === 'function' ? options.assertLease : null;
+  if (!assertLease) {
+    return execFileAsync(getFFmpegPath(), args, { maxBuffer: 32 * 1024 * 1024 });
+  }
+
+  await assertLease();
+  const controller = new AbortController();
+  const intervalMs = Math.max(50, Number(options.leaseCheckIntervalMs) || 250);
+  let leaseError = null;
+  let checkInFlight = false;
+  let pendingCheck = Promise.resolve();
+  const timer = setInterval(() => {
+    if (checkInFlight || leaseError) return;
+    checkInFlight = true;
+    pendingCheck = Promise.resolve()
+      .then(assertLease)
+      .catch(error => {
+        leaseError = error;
+        controller.abort();
+      })
+      .finally(() => {
+        checkInFlight = false;
+      });
+  }, intervalMs);
+
+  try {
+    const result = await execFileAsync(getFFmpegPath(), args, {
+      maxBuffer: 32 * 1024 * 1024,
+      signal: controller.signal
+    });
+    if (checkInFlight) await pendingCheck;
+    if (leaseError) throw leaseError;
+    return result;
+  } catch (error) {
+    if (checkInFlight) await pendingCheck;
+    if (leaseError) throw leaseError;
+    throw error;
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 function getFFprobePath() {
