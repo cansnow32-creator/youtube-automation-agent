@@ -37,10 +37,14 @@ class PublishingSchedulingAgent {
   async loadPublishQueue() {
     try {
       const queue = await this.db.getPublishQueue();
-      this.publishQueue = queue || [];
+      this.publishQueue = Array.isArray(queue) ? queue : [];
       this.logger.info(`Loaded ${this.publishQueue.length} items in publish queue`);
+      return true;
     } catch (error) {
-      this.logger.warn('No existing publish queue found');
+      // Never fall back to a stale in-memory queue after a database read failure.
+      this.publishQueue = [];
+      this.logger.error('Failed to reload publish queue from database:', error);
+      return false;
     }
   }
 
@@ -756,15 +760,35 @@ class PublishingSchedulingAgent {
   }
 
   async processPublishQueue() {
-    const now = new Date();
+    // Refresh on every scheduler tick so overdue rows and schedules created by
+    // other processes are visible after restart or while this process is running.
+    if (!await this.loadPublishQueue()) return 0;
+
     const scheduled = this.publishQueue
       .filter(entry => entry.status === 'scheduled')
-      .sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
-    const readyToPublish = scheduled.filter(entry => new Date(entry.publishTime) <= now);
+      .map(entry => ({ entry, publishAt: new Date(entry.publishTime) }))
+      .sort((a, b) => a.publishAt - b.publishAt);
+
+    const validScheduled = [];
+    for (const item of scheduled) {
+      if (!Number.isFinite(item.publishAt.getTime())) {
+        item.entry.status = 'failed';
+        item.entry.error = 'Invalid publish time; set a valid schedule before retrying';
+        await this.db.updateScheduleEntry(item.entry);
+        this.logger.error(`Skipping schedule ${item.entry.id}: invalid publish time`);
+        continue;
+      }
+      validScheduled.push(item);
+    }
+
+    const now = Date.now();
+    const readyToPublish = validScheduled
+      .filter(item => item.publishAt.getTime() <= now)
+      .map(item => item.entry);
 
     if (readyToPublish.length === 0) {
-      if (scheduled.length > 0) {
-        this.logger.info(`Publish queue: ${scheduled.length} item(s) waiting, next publish at ${scheduled[0].publishTime}`);
+      if (validScheduled.length > 0) {
+        this.logger.info(`Publish queue: ${validScheduled.length} item(s) waiting, next publish at ${validScheduled[0].entry.publishTime}`);
       } else {
         this.logger.info('Publish queue is empty — nothing scheduled yet.');
       }
@@ -783,7 +807,8 @@ class PublishingSchedulingAgent {
           continue;
         }
         this.logger.error(`Failed to auto-publish ${entry.title}:`, error);
-        // Mark as failed but don't stop processing other items
+        // Mark as failed but don't stop processing other items. Unknown upload
+        // outcomes remain blocked for operator reconciliation.
         if (error.code !== 'UPLOAD_OUTCOME_UNKNOWN') {
           entry.status = 'failed';
           entry.error = error.message;
@@ -791,7 +816,7 @@ class PublishingSchedulingAgent {
         }
       }
     }
-    
+
     return readyToPublish.length;
   }
 
