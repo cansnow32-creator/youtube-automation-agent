@@ -28,6 +28,15 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Guard thumbnail side effects against job lease loss
+
+- Continued PR #2 audit and found processThumbnail() could swallow an AI-thumbnail error and continue into original-image/placeholder filesystem writes without checking the generation-job lease.
+- Passed assertLease into processThumbnail(); check ownership before and after AI generation, re-check in the catch path so lease loss cannot become fallback work, and guard directory/file writes.
+- Added regression coverage simulating lease loss during thumbnail generation and asserting the fallback directory is not created.
+- Commits on feat/video-concept-approval: 3100c57e376c98ad3a31681389ff3063b324724a and be29f94137d95eac9f49a8005779272b623ea742.
+- Re-fetched the edited code and test from GitHub. No test execution or GitHub Actions run is available; no pass is claimed.
+- Next: audit remaining production media/file side effects and obtain CI execution. Do not merge.
+
 ## 2026-11-20 — Guard initial script artifacts against generation-job lease loss
 
 - Continued PR #2 static audit. Found processScript() wrote the JSON script and TTS companion file without checking the generation-job lease.
