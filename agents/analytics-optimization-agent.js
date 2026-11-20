@@ -193,7 +193,8 @@ class AnalyticsOptimizationAgent {
 
   async getVideoAnalytics(videoId, period = null, options = {}) {
     const endDate = period?.endDate || new Date().toISOString().split('T')[0];
-    const startDate = period?.startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // The Analytics API end date is inclusive: 30 daily buckets span 29 date boundaries.
+    const startDate = period?.startDate || new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const requests = {
       views: () => this.getViewsAnalytics(videoId, startDate, endDate),
       watchTime: () => this.getWatchTimeAnalytics(videoId, startDate, endDate),
@@ -226,8 +227,8 @@ class AnalyticsOptimizationAgent {
         period: {
           startDate, endDate,
           measurementWindow: options.measurementWindow || 'rolling',
-          windowDays: period?.windowDays || null,
-          precision: period?.precision || 'rolling_30d'
+          windowDays: period?.windowDays || 30,
+          precision: period?.precision || 'utc_calendar_days'
         },
         dataQuality: {
           source: 'simulated_fallback',
@@ -243,8 +244,8 @@ class AnalyticsOptimizationAgent {
       period: {
         startDate, endDate,
         measurementWindow: options.measurementWindow || 'rolling',
-        windowDays: period?.windowDays || null,
-        precision: period?.precision || 'rolling_30d'
+        windowDays: period?.windowDays || 30,
+        precision: period?.precision || 'utc_calendar_days'
       },
       views: results.views || { totalViews: null, totalImpressions: null, averageCTR: null, dailyData: [] },
       watchTime: results.watchTime || {
