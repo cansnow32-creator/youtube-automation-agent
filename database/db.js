@@ -410,6 +410,7 @@ class Database {
       )`,
       `CREATE TABLE IF NOT EXISTS script_quality_reviews (
         id TEXT PRIMARY KEY,
+        job_id TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         topic TEXT,
         strategy TEXT NOT NULL DEFAULT '{}',
@@ -711,13 +712,16 @@ class Database {
     await this.ensureColumns('discoverability_audits', {
       error_code: 'TEXT'
     });
+    await this.ensureColumns('script_quality_reviews', {
+      job_id: 'TEXT'
+    });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'script_quality_reviews']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -1510,10 +1514,11 @@ class Database {
     const id = this.generateId('quality_review');
     await this.executeQuery(
       `INSERT INTO script_quality_reviews
-       (id, status, topic, strategy, draft, quality_report)
-       VALUES (?, 'pending', ?, ?, ?, ?)`,
+       (id, job_id, status, topic, strategy, draft, quality_report)
+       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
       [
         id,
+        review.jobId || null,
         review.topic || null,
         JSON.stringify(review.strategy || {}),
         String(review.draft || ''),
@@ -1535,6 +1540,18 @@ class Database {
       strategy: JSON.parse(row.strategy || '{}'),
       quality_report: JSON.parse(row.quality_report || '{}')
     }));
+  }
+
+  async getScriptQualityReviewByJobId(jobId) {
+    const row = await this.getRow(
+      'SELECT * FROM script_quality_reviews WHERE job_id = ? ORDER BY created_at DESC LIMIT 1',
+      [jobId]
+    );
+    return row ? {
+      ...row,
+      strategy: JSON.parse(row.strategy || '{}'),
+      quality_report: JSON.parse(row.quality_report || '{}')
+    } : null;
   }
 
   async getScriptQualityReview(reviewId) {
