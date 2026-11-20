@@ -293,7 +293,9 @@ class ShortsRepurposingService {
     }).join('\n');
   }
 
-  async approve(productionId, clipId, input = {}) {
+  async approve(productionId, clipId, input = {}, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    await assertLease();
     if (input.confirmed !== true) {
       const error = new Error('Confirm the inherited evidence and Short schedule before approval');
       error.status = 409;
@@ -302,6 +304,7 @@ class ShortsRepurposingService {
     }
     const bundle = await this.requireSource(productionId);
     const clip = await this.requireClip(productionId, clipId);
+    await assertLease();
     if (bundle.review_status !== 'approved') {
       const error = new Error('Approve the source production before scheduling its Shorts');
       error.status = 409;
@@ -328,6 +331,7 @@ class ShortsRepurposingService {
       ? `${clip.description}\n\nWatch the full video: ${parentUrl}`.slice(0, 5000)
       : clip.description;
     const audio = bundle.assets?.audio || {};
+    await assertLease();
     const schedule = await this.publishing.scheduleContent({
       id: clip.id,
       script: { title: clip.title },
@@ -350,11 +354,13 @@ class ShortsRepurposingService {
       sourceProductionId: productionId,
       shortClipId: clip.id
     });
+    await assertLease();
     if (!schedule) {
       const error = new Error('The Short could not be scheduled because its rendered media or narration evidence is incomplete');
       error.status = 409;
       throw error;
     }
+    await assertLease();
     return this.db.updateShortClip(clip.id, {
       status: 'scheduled', publishTime: publishTime.toISOString(), privacyStatus,
       inheritedEvidence: evidence, approvedAt: new Date().toISOString(), scheduleId: schedule.id,
