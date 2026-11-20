@@ -598,7 +598,7 @@ class AIVideoGenerator {
             tasks: generated.clips.map(clip => ({ scene: clip.index, taskId: clip.taskId, provider: clip.provider, model: clip.model })),
             scenes: generated.clips.map(clip => ({
               index: clip.index, label: clip.label, prompt: clip.prompt, duration: clip.duration,
-              path: clip.path, taskId: clip.taskId, provider: clip.provider, model: clip.model
+              path: clip.path, taskId: clip.taskId, provider: clip.provider, model: clip.model, reused: clip.reused === true
             }))
           };
           return produced;
@@ -820,8 +820,12 @@ class AIVideoGenerator {
       await fs.rename(assemblyManifestTempPath, assemblyManifestPath);
       await assertLease();
       return outputPath;
+    } catch (error) {
+      if (isLeaseFailure(error)) {
+        await removeAttemptFiles([visualPath, visualManifestPath, outputPath, assemblyManifestPath]);
+      }
+      throw error;
     } finally {
-      // A lease-loss caller removes the whole attempt through generateVideo().
       // These per-process temps are always safe to delete here.
       await removeAttemptFiles([visualTempPath, finalTempPath, visualManifestTempPath, assemblyManifestTempPath]);
     }
@@ -1321,18 +1325,20 @@ class AIVideoGenerator {
       ? outputPath.replace(/\.mp4$/i, '_muxed.mp4')
       : outputPath;
     const videoInput = options.loopVideo ? ['-stream_loop', '-1', '-i', videoPath] : ['-i', videoPath];
+    let outputPublished = false;
     try {
       await assertLease();
       await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath]);
       await assertLease();
       if (muxPath !== outputPath) {
         await fs.rename(muxPath, outputPath);
+        outputPublished = true;
         await assertLease();
       }
       this.logger.info('Audio added to video successfully');
       return outputPath;
     } catch (error) {
-      await removeAttemptFiles([muxPath, outputPath === videoPath ? null : outputPath]);
+      await removeAttemptFiles([muxPath, outputPublished ? outputPath : null]);
       throw error;
     }
   }
