@@ -548,6 +548,7 @@ class Database {
         youtube_url TEXT,
         error TEXT,
         render_attempt_id TEXT,
+        render_metadata TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(production_id, position),
@@ -720,7 +721,8 @@ class Database {
       job_id: 'TEXT'
     });
     await this.ensureColumns('shorts_clips', {
-      render_attempt_id: 'TEXT'
+      render_attempt_id: 'TEXT',
+      render_metadata: 'TEXT'
     });
 
     // Insert default settings
@@ -1643,7 +1645,7 @@ class Database {
         title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
         duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
         publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
-        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_attempt_id = ?, updated_at = datetime('now')
+        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_attempt_id = ?, render_metadata = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
         next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
@@ -1651,7 +1653,7 @@ class Database {
         next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
         next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
         next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
-        next.error || null, next.renderAttemptId || null, id
+        next.error || null, next.renderAttemptId || null, next.renderMetadata ? JSON.stringify(next.renderMetadata) : null, id
       ]
     );
     return this.getShortClip(id);
@@ -1666,7 +1668,7 @@ class Database {
         title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
         duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
         publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
-        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, updated_at = datetime('now')
+        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_metadata = ?, updated_at = datetime('now')
        WHERE id = ? AND status = 'rendering' AND render_attempt_id = ?`,
       [
         next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
@@ -1674,7 +1676,7 @@ class Database {
         next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
         next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
         next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
-        next.error || null, id, attemptId
+        next.error || null, next.renderMetadata ? JSON.stringify(next.renderMetadata) : null, id, attemptId
       ]
     );
     const saved = await this.getShortClip(id);
@@ -1701,7 +1703,8 @@ class Database {
       scheduleId: row.schedule_id || null,
       youtubeId: row.youtube_id || null,
       youtubeUrl: row.youtube_url || null,
-      renderAttemptId: row.render_attempt_id || null
+      renderAttemptId: row.render_attempt_id || null,
+      renderMetadata: row.render_metadata ? JSON.parse(row.render_metadata) : null
     };
   }
 
