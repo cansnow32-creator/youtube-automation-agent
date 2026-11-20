@@ -121,8 +121,11 @@ async function run() {
     assert.ok(completed28d, 'a mature 28d period should be available');
     assert.equal(
       (new Date(completed28d.endDate) - new Date(completed28d.startDate)) / 86400000,
-      28
+      27,
+      '28 daily buckets span 27 date boundaries'
     );
+    assert.equal(completed28d.windowDays, 28);
+    assert.equal(completed28d.precision, 'utc_calendar_days');
     assert.equal(
       dueEngine.measurementPeriod(tenDaysAgo, '28d'),
       null,
