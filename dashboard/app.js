@@ -98,7 +98,7 @@ async function refreshDashboard(silent = false) {
   if (!silent) $('#loading').classList.add('active');
   try {
     ui.state = await api('/api/dashboard');
-    const qualityQueue = await api('/api/script-quality-reviews?status=pending&limit=50');
+    const qualityQueue = await api('/api/script-quality-reviews?status=all&limit=50');
     ui.state.scriptQualityReviews = qualityQueue.reviews || [];
     renderDashboard();
   } catch (error) {
@@ -266,7 +266,8 @@ function currentPipelineFilter() {
 function renderScriptQualityReviews(reviews) {
   const container = $('#script-quality-review-list');
   const count = $('#quality-review-count');
-  count.textContent = `${reviews.length} pending`;
+  const pendingCount = reviews.filter(review => ['pending', 'revision_requested'].includes(review.status)).length;
+  count.textContent = `${pendingCount} pending · ${reviews.length} total`;
   if (!reviews.length) {
     container.innerHTML = empty('No rejected scripts are waiting for a human decision.');
     return;
@@ -285,11 +286,11 @@ function renderScriptQualityReviews(reviews) {
         <div><strong>Revision guidance</strong>${revisions.length ? `<ul>${revisions.slice(0, 8).map(item => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>No revision guidance returned.</p>'}</div>
       </div>
       <details><summary>Review and edit saved draft</summary><textarea class="quality-review-draft-editor" data-quality-draft spellcheck="false">${escapeHTML(review.draft || '')}</textarea><button class="button secondary small" data-quality-resubmit="${escapeHTML(review.id)}">Save changes &amp; run local re-review</button></details>
-      <div class="script-quality-review-actions">
+      ${['pending', 'revision_requested'].includes(review.status) ? `<div class="script-quality-review-actions">
         <button class="button secondary small" data-quality-decision="revision_requested" data-quality-review-id="${escapeHTML(review.id)}">Request revision</button>
         <button class="button secondary small" data-quality-decision="rejected" data-quality-review-id="${escapeHTML(review.id)}">Reject</button>
         <button class="button primary small" data-quality-decision="human_approved" data-quality-review-id="${escapeHTML(review.id)}">Human approve</button>
-      </div>
+      </div>` : `<p class="quality-review-final-note">Final human decision: ${escapeHTML(label(review.status))}${review.decision_notes ? ' · ' + escapeHTML(review.decision_notes) : ''}</p>`}
     </article>`;
   }).join('');
 }
