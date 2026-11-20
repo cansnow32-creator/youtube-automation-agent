@@ -542,15 +542,31 @@ class SceneRepairService {
     this.activeRebuilds.add(productionId);
     const lockOwner = crypto.randomUUID();
     let databaseLockAcquired = false;
+    let leaseHeartbeat = null;
+    let renewalInFlight = Promise.resolve();
     try {
       if (typeof this.db.acquireProductionOperationLock === 'function') {
         databaseLockAcquired = await this.db.acquireProductionOperationLock(productionId, lockOwner);
         if (!databaseLockAcquired) {
           throw this.error('Another application process is rebuilding this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
         }
+        if (typeof this.db.renewProductionOperationLock === 'function') {
+          leaseHeartbeat = setInterval(() => {
+            renewalInFlight = renewalInFlight.then(async () => {
+              if (!databaseLockAcquired) return;
+              const renewed = await this.db.renewProductionOperationLock(productionId, lockOwner);
+              if (!renewed) this.logger.error(`Scene rebuild lease was lost for ${productionId}; lock ownership must be rechecked before another process starts`);
+            }).catch(error => {
+              this.logger.warn(`Could not renew scene rebuild lease for ${productionId}: ${error.message}`);
+            });
+          }, 60 * 1000);
+          leaseHeartbeat.unref?.();
+        }
       }
       return await this.rebuildUnlocked(productionId);
     } finally {
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+      await renewalInFlight;
       if (databaseLockAcquired) {
         await this.db.releaseProductionOperationLock(productionId, lockOwner).catch(error => {
           this.logger.warn(`Could not release scene rebuild lease for ${productionId}: ${error.message}`);
