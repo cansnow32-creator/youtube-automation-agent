@@ -1652,7 +1652,6 @@ class YouTubeAutomationAgent {
       throw error;
     }
     const report = review.quality_report || {};
-    const latestAttempt = Array.isArray(report.attempts) ? report.attempts[report.attempts.length - 1] : null;
     const script = {
       title: String(parsed.title).trim(),
       hook: writer.normalizeAIHook(parsed.hook),
