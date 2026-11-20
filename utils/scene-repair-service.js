@@ -682,7 +682,9 @@ class SceneRepairService {
       }
     }
 
+    await assertLease();
     const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint);
+    await assertLease();
     const allIntentionalSilence = scenes.every(scene => scene.narrationStatus === 'intentional_silence');
     let finalReady = false;
     try {
@@ -750,13 +752,16 @@ class SceneRepairService {
       await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' });
     }
     if (containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia) {
+      await assertLease();
       await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null });
     }
+    await assertLease();
     await this.db.saveProductionSceneRevision({
       productionId, sceneId: scenes[0].id, action: 'rebuild', before: { finalVideo: previousPath },
       after: { finalVideo: finalPath, captions: captionsPath },
       costEvidence: { billed: false, reusedScenes: scenes.length }
     });
+    await assertLease();
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
   }
 
