@@ -120,6 +120,24 @@ assert.equal(feedback[0].measuredProductions, 2, 'multiple snapshots for one pro
 assert.equal(feedback[0].medianBaselineDeltaPercent, 8,
   'the latest snapshot for a production is used for feedback');
 
+const bridgedDuplicateProduction = [
+  { ...snapshot('a', 'bridge-1', 'format', 2), productionId: 'production-bridge', videoId: undefined, measuredAt: '2026-11-18T00:00:00.000Z' },
+  { ...snapshot('b', 'bridge-1', 'format', 10), productionId: 'production-bridge', videoId: 'youtube-bridge', measuredAt: '2026-11-19T00:00:00.000Z' },
+  { ...snapshot('c', 'bridge-1', 'format', 6), productionId: undefined, videoId: 'youtube-bridge', measuredAt: '2026-11-17T00:00:00.000Z' }
+];
+feedback = engine.buildAppliedLearningFeedback(bridgedDuplicateProduction);
+assert.equal(feedback[0].measuredProductions, 1,
+  'production-only and video-only records connected by a bridge record must count as one published production');
+
+const conflictingSurface = [
+  { ...snapshot('a', 'surface-conflict-1', 'format', 8), productionId: 'production-conflict', videoId: 'youtube-conflict' },
+  { ...snapshot('b', 'surface-conflict-1', 'format', 8), productionId: 'production-conflict', videoId: 'youtube-conflict',
+    contentAttributes: { surface: 'shorts', appliedLearnings: [{ recommendationId: 'surface-conflict-1', category: 'format' }] } }
+];
+feedback = engine.buildAppliedLearningFeedback(conflictingSurface);
+assert.deepEqual(feedback, [],
+  'conflicting surface metadata for the same published production must be excluded instead of counted in both cohorts');
+
 const oldSnapshots = [
   { ...snapshot('c', 'old-1', 'format', 12), measuredAt: '2026-01-01T00:00:00.000Z' },
   { ...snapshot('d', 'old-1', 'format', 10), measuredAt: '2026-01-02T00:00:00.000Z' }
