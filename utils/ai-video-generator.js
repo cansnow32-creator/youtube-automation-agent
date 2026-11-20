@@ -616,6 +616,7 @@ class AIVideoGenerator {
           sources: sourceFingerprint,
           renderedAt: new Date().toISOString()
         }, null, 2));
+        await fs.rm(visualManifestPath, { force: true });
         await fs.rename(manifestTempPath, visualManifestPath);
       }
 
