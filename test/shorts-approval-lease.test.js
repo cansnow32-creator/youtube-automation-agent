@@ -19,8 +19,8 @@ async function main() {
   const bundle = {
     review_status: 'approved',
     provenance: { status: 'verified', containsSyntheticMedia: false },
+    assets: { finalVideo: { path: outputPath, simulated: false }, audio: { intentionalSilence: true, silenceReason: 'This clip intentionally contains no narration.', silenceConfirmedAt: new Date().toISOString() } },
     scenes: [{ id: 'scene-1', status: 'ready', narrationStatus: 'current', assetOrigin: 'generated' }],
-    assets: { audio: { intentionalSilence: true, silenceReason: 'This clip intentionally contains no narration.', silenceConfirmedAt: new Date().toISOString() } }
   };
   const db = {
     getProductionBundle: async () => bundle,
