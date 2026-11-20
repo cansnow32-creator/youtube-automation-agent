@@ -192,10 +192,12 @@ class ProductionReadinessService {
   }
 
   async probeQualityPipeline() {
+    const remoteReviewEnabled = process.env.QUALITY_ALLOW_REMOTE_REVIEW === 'true';
     const credentials = this.credentialManager.credentials || {};
     const geminiKey = credentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
-    if (!geminiKey) throw new Error('Gemini reviewer is not configured');
-    if (!process.env.GROQ_API_KEY) throw new Error('Groq reviewer is not configured');
+    const groqKey = process.env.GROQ_API_KEY;
+    if (remoteReviewEnabled && !geminiKey) throw new Error('Remote review is enabled but Gemini reviewer is not configured');
+    if (remoteReviewEnabled && !groqKey) throw new Error('Remote review is enabled but Groq reviewer is not configured');
 
     let baseUrl = String(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434');
     while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
@@ -208,8 +210,10 @@ class ProductionReadinessService {
       throw new Error(`Ollama model ${model} is not installed`);
     }
     return {
-      message: 'Ollama model is installed and Gemini/Groq reviewer credentials are configured.',
-      details: { ollamaModel: model, geminiConfigured: true, groqConfigured: true }
+      message: remoteReviewEnabled
+        ? 'Local Ollama reviewer is installed; explicitly enabled Gemini/Groq reviewers are configured.'
+        : 'Local Ollama generation and review model is installed; no paid remote reviewers are required.',
+      details: { ollamaModel: model, localReviewEnabled: true, remoteReviewEnabled, geminiConfigured: Boolean(geminiKey), groqConfigured: Boolean(groqKey) }
     };
   }
   async probeText() {
@@ -424,7 +428,7 @@ class ProductionReadinessService {
   remediationFor(id) {
     const messages = {
       text_provider: 'Run npm run walkthrough, verify the selected model, and confirm provider credits or quota.',
-      quality_pipeline: 'Start Ollama, pull the configured model, and set GEMINI_API_KEY (or saved Gemini credentials) plus GROQ_API_KEY. Rerun readiness.',
+      quality_pipeline: 'Start Ollama and pull the configured model. Remote Gemini/Groq reviewers are optional and require QUALITY_ALLOW_REMOTE_REVIEW=true.',
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
