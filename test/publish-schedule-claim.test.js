@@ -24,6 +24,27 @@ async function main() {
       youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
+    const scheduleDraft = suffix => ({
+      productionId: 'production-race',
+      title: `Concurrent schedule ${suffix}`,
+      publishTime: new Date(Date.now() + 120000).toISOString(),
+      status: 'scheduled',
+      priority: 50,
+      metadata: { source: suffix }
+    });
+    const concurrentSaves = await Promise.all([
+      dbA.saveScheduleEntry(scheduleDraft('A')),
+      dbB.saveScheduleEntry(scheduleDraft('B'))
+    ]);
+    assert.equal(concurrentSaves[0].id, concurrentSaves[1].id,
+      'concurrent schedule creation must return the same durable schedule row');
+    const duplicateSchedules = await dbA.getRow(
+      'SELECT COUNT(*) AS count FROM publish_schedule WHERE production_id = ?',
+      ['production-race']
+    );
+    assert.equal(duplicateSchedules.count, 1,
+      'only one schedule row may be created for a production even across SQLite connections');
+
     await dbA.executeQuery(
       "INSERT INTO publish_schedule (id, production_id, title, publish_time, status, priority, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
       ['schedule-1', 'short-1', 'Short title', new Date(Date.now() + 60000).toISOString(), 'scheduled', 60, JSON.stringify({ shortClipId: 'short-1' })]
