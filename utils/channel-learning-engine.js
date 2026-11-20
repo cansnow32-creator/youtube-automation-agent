@@ -550,7 +550,13 @@ class ChannelLearningEngine {
             ? Number(latest.result.liftPercent) : null,
           winnerLabel: winner?.label || null,
           confidence: latest.result?.confidence || null,
-          guardrailsPassed: latest.result?.guardrails?.passed === true
+          guardrailsPassed: latest.result?.guardrails?.passed === true,
+          comparisonMethod: latest.result?.comparisonMethod || null,
+          exposureAttribution: latest.result?.exposureAttribution || null,
+          causalInterpretation: latest.result?.comparisonMethod === 'sequential_same_video_observational'
+            ? 'observational_only_no_causal_winner'
+            : null,
+          armObservations: Array.isArray(latest.result?.arms) ? latest.result.arms : []
         }
       };
     });
