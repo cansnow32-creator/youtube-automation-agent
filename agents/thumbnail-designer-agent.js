@@ -1,5 +1,6 @@
 const sharp = require('sharp');
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 
@@ -26,25 +27,31 @@ class ThumbnailDesignerAgent {
     }
   }
 
-  async generateThumbnail(script, packagingLearning = null) {
+  async generateThumbnail(script, packagingLearning = null, assertLease = async () => {}) {
+    const generatedPaths = [];
+    let savedPath = null;
     try {
+      await assertLease();
       this.logger.info(`Generating thumbnail for: ${script.title}`);
-      
-      // Generate thumbnail concept
+
+      const suffix = 'job_' + crypto.randomUUID();
       const concept = await this.generateConcept(script, packagingLearning);
-      
-      // Create thumbnail prompt for AI generation
+      await assertLease();
       const prompt = await this.createPrompt(concept);
-      
-      // Generate base thumbnail
-      const thumbnailPath = await this.createThumbnail(concept);
-      
-      // Add text overlay
-      const finalThumbnail = await this.addTextOverlay(thumbnailPath, concept);
-      
-      // Optimize for YouTube
-      const optimizedThumbnail = await this.optimizeForYouTube(finalThumbnail);
-      
+      await assertLease();
+
+      const thumbnailPath = await this.createThumbnail(concept, suffix);
+      generatedPaths.push(thumbnailPath);
+      await assertLease();
+
+      const finalThumbnail = await this.addTextOverlay(thumbnailPath, concept, suffix);
+      generatedPaths.push(finalThumbnail);
+      await assertLease();
+
+      const optimizedThumbnail = await this.optimizeForYouTube(finalThumbnail, suffix);
+      generatedPaths.push(optimizedThumbnail);
+      await assertLease();
+
       const thumbnailData = {
         path: optimizedThumbnail,
         concept,
@@ -53,13 +60,22 @@ class ThumbnailDesignerAgent {
         fileSize: await this.getFileSize(optimizedThumbnail),
         createdAt: new Date().toISOString()
       };
-      
-      // Save to database
+
+      await assertLease();
       await this.db.saveThumbnail(thumbnailData);
-      
+      // Keep the durable optimized file once its database row has been saved.
+      savedPath = optimizedThumbnail;
+      await assertLease();
+
+      for (const generatedPath of generatedPaths) {
+        if (generatedPath !== savedPath) await fs.unlink(generatedPath).catch(() => {});
+      }
       this.logger.info('Thumbnail generated successfully');
       return thumbnailData;
     } catch (error) {
+      for (const generatedPath of generatedPaths) {
+        if (generatedPath !== savedPath) await fs.unlink(generatedPath).catch(() => {});
+      }
       this.logger.error('Failed to generate thumbnail:', error);
       throw error;
     }
@@ -241,12 +257,16 @@ class ThumbnailDesignerAgent {
       </svg>
     `;
     
-    await sharp(Buffer.from(svg))
-      .resize(width, height)
-      .png()
-      .toFile(outputPath);
-    
-    return outputPath;
+    try {
+      await sharp(Buffer.from(svg))
+        .resize(width, height)
+        .png()
+        .toFile(outputPath);
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(outputPath).catch(() => {});
+      throw error;
+    }
   }
 
   hexToRgb(color) {
@@ -308,45 +328,53 @@ class ThumbnailDesignerAgent {
     
     const textOverlay = await sharp(Buffer.from(textSvg)).png().toBuffer();
     
-    await sharp(imagePath)
-      .composite([{
-        input: textOverlay,
-        top: 0,
-        left: 0
-      }])
-      .toFile(outputPath);
-    
-    return outputPath;
+    try {
+      await sharp(imagePath)
+        .composite([{
+          input: textOverlay,
+          top: 0,
+          left: 0
+        }])
+        .toFile(outputPath);
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(outputPath).catch(() => {});
+      throw error;
+    }
   }
 
   async optimizeForYouTube(imagePath, suffix = '') {
     const marker = suffix ? `_${suffix}` : '';
     const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_optimized${marker}_${Date.now()}.jpg`);
     
-    // YouTube optimization: JPEG format, proper compression
-    await sharp(imagePath)
-      .resize(1280, 720, {
-        fit: 'cover',
-        position: 'centre'
-      })
-      .jpeg({
-        quality: 90,
-        progressive: true,
-        optimizeScans: true
-      })
-      .toFile(outputPath);
-    
-    // Verify file size (YouTube limit is 2MB)
-    const stats = await fs.stat(outputPath);
-    if (stats.size > 2 * 1024 * 1024) {
-      // Re-compress if too large
+    try {
+      // YouTube optimization: JPEG format, proper compression
       await sharp(imagePath)
-        .resize(1280, 720)
-        .jpeg({ quality: 80 })
+        .resize(1280, 720, {
+          fit: 'cover',
+          position: 'centre'
+        })
+        .jpeg({
+          quality: 90,
+          progressive: true,
+          optimizeScans: true
+        })
         .toFile(outputPath);
+
+      // Verify file size (YouTube limit is 2MB)
+      const stats = await fs.stat(outputPath);
+      if (stats.size > 2 * 1024 * 1024) {
+        // Re-compress if too large
+        await sharp(imagePath)
+          .resize(1280, 720)
+          .jpeg({ quality: 80 })
+          .toFile(outputPath);
+      }
+      return outputPath;
+    } catch (error) {
+      await fs.unlink(outputPath).catch(() => {});
+      throw error;
     }
-    
-    return outputPath;
   }
 
   async getFileSize(filePath) {
@@ -354,38 +382,57 @@ class ThumbnailDesignerAgent {
     return stats.size;
   }
 
-  async generateABVariants(concept) {
-    const concepts = [
-      {
-        label: 'Color contrast',
-        concept: {
-          ...concept,
-          colors: {
-            primary: concept.colors.secondary,
-            secondary: concept.colors.primary,
-            accent: concept.colors.accent
-          }
-        }
-      },
-      {
-        label: 'Alternate promise',
-        concept: { ...concept, primaryText: this.generateAlternativeText(concept.primaryText) }
-      },
-      {
-        label: 'Centered composition',
-        concept: { ...concept, composition: 'centered' }
-      }
-    ];
+  async generateABVariants(concept, assertLease = async () => {}) {
+    const generatedPaths = [];
     const variants = [];
-    for (let index = 0; index < concepts.length; index++) {
-      const { label, concept: variantConcept } = concepts[index];
-      const suffix = `experiment_${index + 1}`;
-      const base = await this.createThumbnail(variantConcept, suffix);
-      const overlay = await this.addTextOverlay(base, variantConcept, suffix);
-      const optimized = await this.optimizeForYouTube(overlay, suffix);
-      variants.push({ label, path: optimized, concept: variantConcept });
+    try {
+      const concepts = [
+        {
+          label: 'Color contrast',
+          concept: {
+            ...concept,
+            colors: {
+              primary: concept.colors.secondary,
+              secondary: concept.colors.primary,
+              accent: concept.colors.accent
+            }
+          }
+        },
+        {
+          label: 'Alternate promise',
+          concept: { ...concept, primaryText: this.generateAlternativeText(concept.primaryText) }
+        },
+        {
+          label: 'Centered composition',
+          concept: { ...concept, composition: 'centered' }
+        }
+      ];
+
+      for (let index = 0; index < concepts.length; index++) {
+        await assertLease();
+        const { label, concept: variantConcept } = concepts[index];
+        const suffix = 'experiment_' + crypto.randomUUID() + '_' + (index + 1);
+        const base = await this.createThumbnail(variantConcept, suffix);
+        generatedPaths.push(base);
+        await assertLease();
+        const overlay = await this.addTextOverlay(base, variantConcept, suffix);
+        generatedPaths.push(overlay);
+        await assertLease();
+        const optimized = await this.optimizeForYouTube(overlay, suffix);
+        generatedPaths.push(optimized);
+        await assertLease();
+        variants.push({ label, path: optimized, concept: variantConcept });
+      }
+
+      const publishedPaths = new Set(variants.map(variant => variant.path));
+      for (const generatedPath of generatedPaths) {
+        if (!publishedPaths.has(generatedPath)) await fs.unlink(generatedPath).catch(() => {});
+      }
+      return variants;
+    } catch (error) {
+      for (const generatedPath of generatedPaths) await fs.unlink(generatedPath).catch(() => {});
+      throw error;
     }
-    return variants;
   }
 
   generateAlternativeText(originalText) {
