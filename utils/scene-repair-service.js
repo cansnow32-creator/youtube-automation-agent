@@ -536,11 +536,10 @@ class SceneRepairService {
   }
 
   async cleanupStaleRepairTemps(productionId, maxAgeMs = 24 * 60 * 60 * 1000) {
-    const uuid = /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:rendering\\.mp4|writing(?:\\.m4a)?)$/i;
     const targets = [
-      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.rendering\\.mp4$/i },
-      { directory: path.join(this.dataRoot, 'captions'), prefix: `${productionId}_repair_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.writing$/i },
-      { directory: path.join(this.dataRoot, 'audio'), prefix: `${productionId}_scene_mix_`, suffix: /\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.writing\\.m4a$/i }
+      { directory: path.join(this.dataRoot, 'videos'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.rendering\.mp4$/i },
+      { directory: path.join(this.dataRoot, 'captions'), prefix: `${productionId}_repair_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing$/i },
+      { directory: path.join(this.dataRoot, 'audio'), prefix: `${productionId}_scene_mix_`, suffix: /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.writing\.m4a$/i }
     ];
     const cutoff = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
     let removed = 0;
