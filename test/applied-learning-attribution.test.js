@@ -56,6 +56,13 @@ assert.deepEqual(guidance.map(item => item.recommendationId), ['hook-1', 'format
 assert.ok(guidance.every(item => item.status === 'provided_to_generation_not_verified_as_applied'),
   'script guidance must remain separately auditable and must not be reported as verified application');
 
+const selectedPlanGuidance = engine.extractLearningGuidance([
+  { recommendationId: 'plan-format-1', category: 'format', target: 'future_plans', proposedChange: { prefer: 'tutorial' } },
+  { recommendationId: 'script-length-1', category: 'length', target: 'future_scripts', proposedChange: { prefer: '8-12 minutes' } }
+]);
+assert.deepEqual(selectedPlanGuidance.map(item => item.target), ['future_plans', 'future_scripts'],
+  'the normalized approved-learning target must survive into analytics guidance');
+
 const hookGuidance = [
   { recommendationId: 'hook-concise', category: 'hookLength', proposedChange: { prefer: 'concise' } },
   { recommendationId: 'hook-extended', category: 'hookLength', proposedChange: { prefer: 'extended' } },
