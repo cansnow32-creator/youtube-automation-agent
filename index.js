@@ -1013,7 +1013,7 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/shorts/:clipId/approve', protect, async (req, res) => {
       try {
         if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
-        const result = await this.shorts.approve(req.params.productionId, req.params.clipId, req.body || {});
+        const result = await this.approveShortClip(req.params.productionId, req.params.clipId, req.body || {});
         return res.json({ success: true, result });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
@@ -2416,6 +2416,25 @@ class YouTubeAutomationAgent {
       productionId,
       assertLease => this.shorts.render(productionId, clipId, { assertLease }),
       'Shorts render'
+    );
+  }
+
+  async approveShortClip(productionId, clipId, input = {}) {
+    if (!this.shorts) {
+      const error = new Error('Shorts repurposing requires completed setup');
+      error.status = 503;
+      throw error;
+    }
+    if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+      const error = new Error('Production operation lease is required to approve Shorts safely');
+      error.status = 503;
+      error.code = 'SHORTS_APPROVAL_LOCK_UNAVAILABLE';
+      throw error;
+    }
+    return this.scenes.withProductionOperationLease(
+      productionId,
+      assertLease => this.shorts.approve(productionId, clipId, input, { assertLease }),
+      'Short approval'
     );
   }
 
