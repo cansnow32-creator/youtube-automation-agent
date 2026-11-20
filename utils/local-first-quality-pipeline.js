@@ -167,8 +167,7 @@ class LocalFirstQualityPipeline {
       attempts.push({
         revision,
         score,
-        gemini: reviews.gemini,
-        groq: reviews.groq,
+        reviewers: reviews,
         approved
       });
       if (approved) {
@@ -192,7 +191,7 @@ class LocalFirstQualityPipeline {
       score: attempts[attempts.length - 1]?.score ?? 0,
       minimumScore: this.minimumScore,
       revisions: this.maxRevisions,
-      reviewers: Object.keys(attempts[attempts.length - 1] || {}),
+      reviewers: Object.keys(attempts[attempts.length - 1]?.reviewers || {}),
       remoteReviewEnabled: this.allowRemoteReview,
       attempts
     };
