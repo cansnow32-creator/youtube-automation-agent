@@ -127,7 +127,17 @@ class ChannelLearningEngine {
           appliedAt: change.appliedAt || null,
           previousTitle: String(change.previousTitle || '').slice(0, 100),
           title: String(change.title || '').slice(0, 100)
-        }))
+        })),
+      measurementPeriod: (() => {
+        const period = report.analytics?.period || {};
+        return {
+          measurementWindow: period.measurementWindow || report.measurementWindow || 'rolling',
+          startDate: period.startDate || null,
+          endDate: period.endDate || null,
+          windowDays: this.optionalNumber(period.windowDays),
+          precision: period.precision || 'unknown'
+        };
+      })()
     };
   }
 
