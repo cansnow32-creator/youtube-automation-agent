@@ -2084,8 +2084,9 @@ class YouTubeAutomationAgent {
       await stageAssertLease();
       const approvalRequired = forceHumanApproval || await this.db.getSetting('approval_required') !== 'false';
       const packagingExperiment = approvalRequired
-        ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
+        ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script, stageAssertLease)
         : null;
+      await stageAssertLease();
       const quality = await this.operator.runQualityChecks(productionData, profile);
       await stageAssertLease();
       const reviewStatus = quality.passed
@@ -2214,13 +2215,19 @@ class YouTubeAutomationAgent {
     ];
   }
 
-  async preparePackagingExperiment(thumbnail, productionData, seoData, script) {
+  async preparePackagingExperiment(thumbnail, productionData, seoData, script, assertLease = async () => {}) {
+    await assertLease();
     const approved = await this.db.listLearningRecommendations({ status: 'approved', limit: 25 });
+    await assertLease();
     const { isApprovedPackagingLearning } = require('./utils/packaging-learning');
     const recommendation = approved.find(isApprovedPackagingLearning);
     if (!recommendation) return null;
+
+    let generated = [];
     try {
-      const generated = await this.agents.thumbnailDesigner.generateABVariants(thumbnail.concept);
+      await assertLease();
+      generated = await this.agents.thumbnailDesigner.generateABVariants(thumbnail.concept, assertLease);
+      await assertLease();
       return {
         sourceRecommendationId: recommendation.id,
         hypothesis: recommendation.title,
@@ -2241,6 +2248,12 @@ class YouTubeAutomationAgent {
         createdAt: new Date().toISOString()
       };
     } catch (error) {
+      for (const variant of generated) {
+        if (variant.path && variant.path !== productionData.assets?.thumbnail?.path) {
+          await fs.unlink(variant.path).catch(() => {});
+        }
+      }
+      if (String(error.code || '').includes('LEASE')) throw error;
       this.logger.warn(`Packaging experiment preparation failed without blocking production: ${error.message}`);
       return null;
     }
