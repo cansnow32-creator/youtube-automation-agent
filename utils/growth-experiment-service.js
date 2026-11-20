@@ -318,52 +318,63 @@ class GrowthExperimentService {
     const samples = await this.db.listExperimentSamples(experiment.id, 1000);
     const arms = experiment.arms.map(arm => {
       const armSamples = samples.filter(sample => sample.armId === arm.id);
-      const trafficShift = this.trafficSourceShift(armSamples.at(0)?.trafficSources, armSamples.at(-1)?.trafficSources);
-      return { ...arm, result: { ...arm.result, trafficSourceShiftPoints: trafficShift } };
+      const first = armSamples[0];
+      const last = armSamples.at(-1);
+      const trafficShift = this.trafficSourceShift(first?.trafficSources, last?.trafficSources);
+      const measuredImpressions = armSamples.reduce((maximum, sample) => {
+        const value = Number(sample.metrics?.impressions);
+        return Number.isFinite(value) ? Math.max(maximum, value) : maximum;
+      }, 0);
+      return {
+        ...arm,
+        result: {
+          ...arm.result,
+          measuredImpressions,
+          sampleCount: armSamples.length,
+          trafficSourceShiftPoints: trafficShift
+        }
+      };
     });
     await Promise.all(arms.map(arm => this.db.updateExperimentArm(arm.id, { result: arm.result })));
-    const eligible = arms.filter(arm => arm.result.impressions >= experiment.minImpressions && arm.result.clicks >= 10);
+
+    // The current workflow rotates packages sequentially on one video. YouTube
+    // Analytics reports video-level metrics, not randomized per-arm exposure.
+    // A z-test over these time periods would falsely imply independent,
+    // randomized samples, so no arm can be declared a causal winner here.
     const result = {
       primaryMetric: 'ctr',
+      comparisonMethod: 'sequential_same_video_observational',
+      exposureAttribution: 'unavailable_from_youtube_analytics',
       minImpressions: experiment.minImpressions,
-      eligibleArms: eligible.length,
+      eligibleArms: arms.filter(arm => arm.result.measuredImpressions >= experiment.minImpressions).length,
       totalArms: arms.length,
       winnerArmId: null,
-      confidence: 'low',
-      reason: '',
-      guardrails: { passed: false }
+      confidence: 'unverified',
+      reason: 'Observational only: YouTube Analytics does not attribute impressions and clicks to the sequential title/thumbnail arms. A CTR difference cannot establish an A/B winner or causal lift.',
+      guardrails: {
+        passed: false,
+        evaluated: false,
+        reason: 'Retention and traffic-mix guardrails cannot correct for missing randomized arm-level exposure.'
+      },
+      arms: arms.map(arm => ({
+        armId: arm.id,
+        label: arm.label,
+        isControl: arm.isControl,
+        measuredImpressions: arm.result.measuredImpressions,
+        sampleCount: arm.result.sampleCount,
+        observedCtr: this.optionalMetric(arm.result.ctr),
+        observedClicks: this.optionalMetric(arm.result.clicks),
+        observedViews: this.optionalMetric(arm.result.views),
+        trafficSourceShiftPoints: this.optionalMetric(arm.result.trafficSourceShiftPoints)
+      }))
     };
-    if (eligible.length !== arms.length) {
-      result.reason = 'Inconclusive: every arm must reach the minimum qualified impressions and clicks.';
-      return result;
-    }
-    const ranked = [...eligible].sort((a, b) => b.result.ctr - a.result.ctr);
-    const [best, runnerUp] = ranked;
-    const zScore = this.twoProportionZ(best.result, runnerUp.result);
-    const control = arms.find(arm => arm.isControl);
-    const retentionDrop = control && best.id !== control.id
-      ? Number((best.result.averageViewPercentage - control.result.averageViewPercentage).toFixed(2))
-      : 0;
-    const trafficShift = Number(best.result.trafficSourceShiftPoints || 0);
-    const guardrailsPassed = retentionDrop >= -Number(experiment.guardrails.maximumRetentionDropPoints || 5)
-      && trafficShift <= Number(experiment.guardrails.maximumTrafficSourceShiftPoints || 20);
-    Object.assign(result, {
-      zScore: Number(zScore.toFixed(3)),
-      liftPercent: runnerUp.result.ctr > 0
-        ? Number((((best.result.ctr - runnerUp.result.ctr) / runnerUp.result.ctr) * 100).toFixed(1))
-        : null,
-      guardrails: { passed: guardrailsPassed, retentionDropPoints: retentionDrop, trafficSourceShiftPoints: trafficShift }
-    });
-    if (zScore < 1.96) {
-      result.reason = 'Inconclusive: the leading arm did not clear the 95% evidence threshold.';
-    } else if (!guardrailsPassed) {
-      result.reason = 'Inconclusive: the leading arm regressed a retention or traffic-mix guardrail.';
-    } else {
-      result.winnerArmId = best.id;
-      result.confidence = zScore >= 2.576 ? 'high' : 'medium';
-      result.reason = `${best.label} cleared the evidence and guardrail thresholds.`;
-    }
     return result;
+  }
+
+  optionalMetric(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
   }
 
   calculateArmResult(start = {}, end = {}) {
