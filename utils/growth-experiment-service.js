@@ -432,23 +432,29 @@ class GrowthExperimentService {
       throw this.error('Real YouTube analytics are unavailable; simulated evidence cannot advance an experiment', 409, 'EXPERIMENT_EVIDENCE_UNAVAILABLE');
     }
     const views = report.analytics?.views || {};
-    const ctr = Number(report.thumbnailMetrics?.clickThroughRate ?? views.averageCTR ?? 0);
-    const impressions = Number(report.thumbnailMetrics?.impressions ?? views.totalImpressions ?? 0);
-    const dailyRows = Array.isArray(views.dailyData) ? views.dailyData : [];
-    const clicks = dailyRows.length
-      ? dailyRows.reduce((sum, row) => sum + (Number(row[2] || 0) * Number(row[3] || 0) / 100), 0)
-      : impressions * ctr / 100;
+    const impressions = this.optionalMetric(views.totalImpressions);
+    const ctr = this.optionalMetric(views.averageCTR);
+    if (impressions === null || impressions <= 0 || ctr === null) {
+      throw this.error(
+        'YouTube Analytics did not return measured impressions and CTR; incomplete metrics cannot be treated as zero.',
+        409,
+        'EXPERIMENT_METRICS_INCOMPLETE'
+      );
+    }
+    const clicks = impressions * ctr / 100;
+    const watchTime = report.analytics?.watchTime || {};
+    const outcomes = report.analytics?.outcomes || {};
     return {
       metrics: {
         impressions,
         clicks: Number(clicks.toFixed(3)),
         ctr,
-        views: Number(views.totalViews || 0),
-        watchMinutes: Number(report.analytics?.watchTime?.totalWatchTime || 0),
-        averageViewPercentage: Number(report.analytics?.watchTime?.averageViewPercentage || 0),
-        engagementRate: Number(report.analytics?.engagement?.engagementRate || 0),
-        netSubscribers: Number(report.analytics?.outcomes?.netSubscribers || 0),
-        estimatedRevenue: Number(report.analytics?.outcomes?.estimatedRevenue || 0),
+        views: this.optionalMetric(views.totalViews),
+        watchMinutes: this.optionalMetric(watchTime.totalWatchTime),
+        averageViewPercentage: this.optionalMetric(watchTime.averageViewPercentage),
+        engagementRate: this.optionalMetric(report.analytics?.engagement?.engagementRate),
+        netSubscribers: this.optionalMetric(outcomes.netSubscribers),
+        estimatedRevenue: this.optionalMetric(outcomes.estimatedRevenue),
         measurementPeriod: report.analytics?.period || null
       },
       trafficSources: report.analytics?.trafficSources?.sources || [],
