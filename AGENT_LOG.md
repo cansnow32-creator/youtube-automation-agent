@@ -2,6 +2,14 @@
 
 Append newest entries at the top. Include date, branch, commit SHA, files changed, checks run, outcomes, and next action. Never log credentials or secrets.
 
+## 2026-11-20 — Harden scene-manifest lease regression test
+
+- Follow-up review found the scene-manifest test had been duplicated during concurrent edits, which would redeclare `const` variables in the same test scope. Removed the duplicate case and retained the stronger assertion that lease loss remains persistent through the FFmpeg catch path.
+- Verified `SceneRepairService.initializeAudioSegments()` uses the injected `this.runFFmpeg` runner, allowing the regression to simulate a completed segment render before lease loss is detected.
+- Commit on `feat/video-concept-approval`: `322cd1f0aff871dd09720c46dfdf20a3c71038ac`.
+- Re-fetched the test and current PR #2 metadata. PR #2 remains open/draft/unmerged and not mergeable because its stacked base is behind PR #1. Current head at this check: `322cd1f0aff871dd09720c46dfdf20a3c71038ac`; zero workflow runs. No tests/lint were executed.
+- Next: continue static audit of remaining side effects, then get a real CI run. Do not merge.
+
 ## 2026-11-20 — Fence scene-manifest initialization after narration splitting
 
 - Continued PR #2 audit into `SceneRepairService.initializeProduction()`. It splits the narration into per-scene audio files and then replaces the production scene manifest; without a lease callback, a stale worker could finish FFmpeg splitting and still publish scene rows.
