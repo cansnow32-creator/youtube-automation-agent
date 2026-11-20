@@ -118,5 +118,6 @@ module.exports = {
   startProductionStage,
   completeProductionStage,
   failProductionStage,
+  prepareProductionWorkflowForResume,
   runProductionStage
 };
