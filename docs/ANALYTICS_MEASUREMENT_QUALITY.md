@@ -15,3 +15,18 @@ The analytics pipeline distinguishes measured zero values from unavailable measu
 ## Interpretation
 
 A null value means the system cannot make a reliable statement for that metric and period. It does not mean zero views, zero engagement, poor retention, or a failed thumbnail. Operators should wait for a supported measurement window or reconnect the required YouTube API access before using that metric to guide future content.
+
+
+## Fixed early-life measurement windows
+
+The learning scheduler records separate cumulative windows from publication:
+
+- `24h`: the first 24 hours after publication
+- `7d`: the first 7 days after publication
+- `28d`: the first 28 days after publication
+
+A window is due only after its full elapsed duration. An incomplete 28-day period is not labeled as a 28-day result. Each window is stored independently for the same video.
+
+Channel-wide recommendations and cohort insights use the exact `7d` window as their comparable baseline. A video that has only a 24-hour or 28-day snapshot is not substituted into the 7-day cohort. This avoids comparing early launch performance with longer cumulative totals. The 24-hour and 28-day snapshots remain available for their own reporting and longitudinal analysis; they do not silently influence the fixed 7-day recommendation cohort.
+
+All these windows are cumulative since publication, not rolling periods. Comparisons remain observational and do not establish that a format, title, or script choice caused the measured outcome.
