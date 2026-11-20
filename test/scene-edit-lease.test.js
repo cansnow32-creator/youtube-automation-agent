@@ -118,7 +118,7 @@ async function run() {
       error => error.code === 'SCENE_EDIT_LEASE_LOST'
     );
     const uploadDirectory = path.join(uploadRoot, 'scene-assets', 'production-1');
-    await assert.rejects(fs.readdir(uploadDirectory), { code: 'ENOENT' });
+    assert.deepEqual(await fs.readdir(uploadDirectory), [], 'lease loss must remove the uploaded temporary asset');
   } finally {
     await fs.rm(uploadRoot, { recursive: true, force: true });
   }
