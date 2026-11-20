@@ -296,7 +296,6 @@ class SceneRepairService {
     const promptChanged = prompt !== scene.prompt;
     const durationChanged = duration !== scene.duration;
     await assertLease();
-    await assertLease();
     const next = await this.db.updateProductionScene(productionId, sceneId, {
       label, scriptText, prompt, duration, provenanceSourceIds,
       locked: input.locked === undefined ? scene.locked : input.locked === true,
@@ -675,6 +674,7 @@ class SceneRepairService {
       throw this.error(error.message || 'Replacement asset is invalid', 422);
     }
 
+    await assertLease();
     const next = await this.db.updateProductionScene(productionId, sceneId, {
       assetType, assetOrigin: 'uploaded', assetPath: outputPath, provider: 'operator-upload', model: null,
       externalTaskId: null, rightsConfirmed: true, containsSyntheticMedia: file.containsSyntheticMedia === true,
