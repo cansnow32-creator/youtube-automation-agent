@@ -1,3 +1,12 @@
+## 2026-11-20 — Serialize review refresh with scene operations
+
+- Continued PR #2 audit and fixed the stale-review race: `refreshContentReview()` now acquires the same production-scoped operation lease as scene edits/rebuilds and holds it across bundle read, quality checks, and `saveContentReview()`. It asserts lease ownership immediately before persistence.
+- Added `test/content-review-lock.test.js` to prove a competing review refresh cannot save while the first quality check holds the shared lock. Added the test to the package `npm test` chain.
+- Commits on `feat/video-concept-approval`: `7bf63295ed60213272917bad5ade79566629cfdb`, `5e9cbdb92787b66979d6ce6dd421007a34bb4a15`, `f22e1e82f52a8c800aebddbd390bd429d05940be`, `9615d030839f4ad5322e9ab1fb3a02eee28f9937`.
+- Re-fetched implementation, test, package script, and PR metadata. PR #2 remains open/draft/unmerged at `9615d030839f4ad5322e9ab1fb3a02eee28f9937`; GitHub reports zero workflow runs. Tests/lint have not been executed; no pass is claimed.
+- Note: competing refresh attempts receive HTTP 409 while another operation owns the lock; callers may retry after the active operation finishes.
+- Next: inspect media provider orphan-file cleanup and remaining production side effects, then establish actual CI execution. Do not merge.
+
 ## 2026-11-20 — Identify route-level stale review race
 
 - Inspected scene mutation routes after adding the long-running operation lease. Found handlers invoke `refreshContentReview()` after service methods return and release the shared lock. The quality-check read and subsequent `saveContentReview()` can race a second scene mutation and persist stale review state.
