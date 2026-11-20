@@ -16,7 +16,14 @@ const adoptedWinner = {
   title: 'Reuse the Curiosity packaging pattern',
   rationale: 'The curiosity variant improved qualified CTR.',
   confidence: 'high',
-  evidence: { liftPercent: 18.5, zScore: 2.1 },
+  evidence: {
+    liftPercent: 18.5, zScore: 2.1,
+    freshness: {
+      status: 'fresh', sampleCount: 6, maxAgeDays: 90,
+      oldestMeasuredAt: '2026-11-01T00:00:00.000Z',
+      latestMeasuredAt: '2026-11-19T00:00:00.000Z'
+    }
+  },
   proposedChange: {
     target: 'future_packaging',
     experiment: 'validated_title_thumbnail_pattern',
@@ -27,7 +34,7 @@ const adoptedWinner = {
   }
 };
 
-assert.equal(isApprovedPackagingLearning(legacy), true);
+assert.equal(isApprovedPackagingLearning(legacy), false, 'legacy packaging approvals without timestamped evidence must not be reused');
 assert.equal(isApprovedPackagingLearning(adoptedWinner), true);
 assert.equal(isApprovedPackagingLearning({ ...adoptedWinner, status: 'pending' }), false);
 assert.equal(isApprovedPackagingLearning({
@@ -51,10 +58,11 @@ assert.equal(context.winningArmLabel, 'Curiosity / Centered composition');
 assert.equal(context.evidence.liftPercent, 18.5);
 const missingEvidence = getApprovedPackagingLearning([{
   ...adoptedWinner,
-  evidence: { liftPercent: null, zScore: null }
+  evidence: { ...adoptedWinner.evidence, liftPercent: null, zScore: null }
 }]);
 assert.equal(missingEvidence.evidence.liftPercent, null);
 assert.equal(missingEvidence.evidence.zScore, null);
+assert.equal(isApprovedPackagingLearning({ ...adoptedWinner, evidence: {} }), false);
 assert.equal(context.confidence, 'high');
 assert.equal(getApprovedPackagingLearning([]), null);
 assert.equal(getApprovedPackagingLearning(null), null);
