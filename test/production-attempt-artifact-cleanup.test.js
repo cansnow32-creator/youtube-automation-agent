@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { ProductionManagementAgent } = require('../agents/production-management-agent');
+const { ProductionManagementAgent, getVideoAttemptSidecarPaths } = require('../agents/production-management-agent');
 
 function createLeaseLostError() {
   return Object.assign(new Error('generation job lease lost'), {
@@ -284,7 +284,19 @@ async function testSimulationArtifactIsRemovedAfterLeaseLoss() {
   }
 }
 
+function testVideoAttemptCleanupIncludesCineCodeSceneArtifacts() {
+  const outputPath = path.join(__dirname, '..', 'data', 'videos', 'production_attempt_final.mp4');
+  const paths = getVideoAttemptSidecarPaths(outputPath);
+  for (let index = 1; index <= 20; index++) {
+    const scenePath = path.join(path.dirname(outputPath), 'production_attempt_final_cinecode_scene_' + String(index).padStart(2, '0') + '.mp4');
+    for (const artifact of [scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp']) {
+      assert.ok(paths.includes(artifact), 'cleanup list must include ' + artifact);
+    }
+  }
+  assert.ok(paths.includes(outputPath + '.assembly.json'));
+}
 async function run() {
+  testVideoAttemptCleanupIncludesCineCodeSceneArtifacts();
   await testNarrationUsesAttemptScopedOutputsAndPreservesEarlierAttempt();
   await testNarrationOutputIsRemovedAfterLeaseLoss();
   await testCaptionsUseAttemptScopedPathsAndPreserveEarlierAttempt();
