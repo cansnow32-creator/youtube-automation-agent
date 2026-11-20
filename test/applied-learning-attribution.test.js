@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
 const { getAppliedPackagingLearning } = require('../utils/packaging-learning');
-const { verifyAppliedScriptLearnings } = require('../utils/script-learning-verification');
+const { verifyAppliedScriptLearnings, parseMinuteRange } = require('../utils/script-learning-verification');
 
 const engine = new ChannelLearningEngine({});
 
@@ -69,6 +69,29 @@ assert.deepEqual(verifiedHook.map(item => item.recommendationId), ['hook-concise
   'only exact, measurable hook-length preferences matching generated output may be verified');
 assert.equal(verifiedHook[0].observedWordCount, 9);
 assert.equal(verifiedHook[0].verificationMethod, 'generated_hook_word_count_threshold_40');
+
+assert.deepEqual(parseMinuteRange('8-12 minutes'), { minimum: 8, maximum: 12 });
+assert.deepEqual(parseMinuteRange('8 to 12 min'), { minimum: 8, maximum: 12 });
+assert.equal(parseMinuteRange('make it longer'), null, 'free-text length preferences must not be guessed');
+const lengthGuidance = [
+  { recommendationId: 'length-range', category: 'length', proposedChange: { prefer: '8-12 minutes' } },
+  { recommendationId: 'length-outside', category: 'length', proposedChange: { prefer: '2-4 minutes' } },
+  { recommendationId: 'length-free-text', category: 'length', proposedChange: { prefer: 'make it longer' } },
+  { recommendationId: 'format-not-verified', category: 'format', proposedChange: { prefer: 'list' } }
+];
+const longScript = {
+  hook: { text: 'A useful opening hook.' },
+  introduction: { greeting: 'Welcome.', topicIntro: 'Today we explain the topic.', valueProposition: 'You will learn the method.', credibility: 'We will use supplied evidence.' },
+  mainContent: { sections: [{ title: 'Core steps', content: ['useful '.repeat(1290)], duration: 600 }] },
+  conclusion: { recap: ['Review the key points.'], finalThought: 'Apply the steps carefully.' },
+  callToAction: { subscribe: 'Subscribe for more.' }
+};
+const verifiedLength = verifyAppliedScriptLearnings(lengthGuidance, longScript);
+assert.deepEqual(verifiedLength.map(item => item.recommendationId), ['length-range'],
+  'only explicit minute ranges containing the generated script estimate may be verified');
+assert.equal(verifiedLength[0].estimatedMinutes, 10.02);
+assert.equal(verifiedLength[0].wordsPerMinuteAssumption, 130);
+assert.equal(verifiedLength[0].verificationMethod, 'generated_spoken_word_count_estimated_minutes_130_wpm');
 const appliedScriptAttributes = engine.extractAttributes(
   { videoDetails: { title: 'A Sample Title' } },
   {
@@ -84,6 +107,23 @@ assert.deepEqual(appliedScriptAttributes.appliedLearnings, [{
 }]);
 assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-concise').status, 'verified_applied');
 assert.equal(appliedScriptAttributes.learningGuidance.find(item => item.recommendationId === 'hook-extended').status,
+  'provided_to_generation_not_verified_as_applied');
+const appliedLengthAttributes = engine.extractAttributes(
+  { videoDetails: { title: 'A Sample Title' } },
+  {
+    strategy: { approvedScriptLearnings: lengthGuidance },
+    script: { ...longScript, metadata: { verifiedAppliedLearnings: [{ ...verifiedLength[0], status: 'forged_metadata_should_be_ignored' }] } }
+  }
+);
+assert.deepEqual(appliedLengthAttributes.appliedLearnings, [{
+  recommendationId: 'length-range',
+  category: 'length',
+  appliedTo: ['script_length'],
+  source: 'generated_spoken_word_count_estimated_minutes_130_wpm'
+}], 'attribution must be recomputed from script output rather than trusting stored metadata');
+assert.equal(appliedLengthAttributes.learningGuidance.find(item => item.recommendationId === 'length-range').status,
+  'verified_applied');
+assert.equal(appliedLengthAttributes.learningGuidance.find(item => item.recommendationId === 'format-not-verified').status,
   'provided_to_generation_not_verified_as_applied');
 assert.deepEqual(engine.extractAppliedLearnings(
   { approvedScriptLearnings: [] },
