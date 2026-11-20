@@ -460,7 +460,6 @@ class ProductionManagementAgent {
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
         await assertLease();
-        await assertLease();
         await this.db.updateProductionData(productionData);
         throw new Error(productionData.timeline.lastProductionError);
       }
