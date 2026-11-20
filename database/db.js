@@ -2389,6 +2389,46 @@ class Database {
     return row ? this.deserializeScheduleEntry(row) : null;
   }
 
+  async getScheduleEntry(id) {
+    const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
+    return row ? this.deserializeScheduleEntry(row) : null;
+  }
+
+  async listUnresolvedPublishScheduleEntries(limit = 100) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
+    const rows = await this.getAllRows(
+      `SELECT * FROM publish_schedule
+       WHERE status IN ('uploading', 'reconciliation_required')
+       ORDER BY created_at ASC LIMIT ?`,
+      [safeLimit]
+    );
+    return rows.map(row => this.deserializeScheduleEntry(row));
+  }
+
+  async reconcileScheduleEntryUpload(id, videoId, metadata, publishedAt = new Date().toISOString()) {
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule
+       SET status = 'published', youtube_id = ?, youtube_url = ?, published_at = ?,
+           error_message = NULL, metadata = ?
+       WHERE id = ? AND status IN ('uploading', 'reconciliation_required') AND youtube_id IS NULL`,
+      [videoId, youtubeUrl, publishedAt, JSON.stringify(metadata || {}), id]
+    );
+    if (result.changes !== 1) return null;
+    return this.getScheduleEntry(id);
+  }
+
+  async resolveScheduleEntryUploadAbsent(id, metadata, reason) {
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule
+       SET status = 'failed', error_message = ?, metadata = ?
+       WHERE id = ? AND status IN ('uploading', 'reconciliation_required') AND youtube_id IS NULL`,
+      [reason, JSON.stringify(metadata || {}), id]
+    );
+    if (result.changes !== 1) return null;
+    return this.getScheduleEntry(id);
+  }
+
   async updateScheduleEntry(entry) {
     await this.executeQuery(
       `UPDATE publish_schedule SET 
