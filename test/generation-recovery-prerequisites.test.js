@@ -87,6 +87,42 @@ async function run() {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 
+  // Losing the outer generation-job lease while a producer is running must
+  // prevent the stale worker from saving either a completed or failed checkpoint.
+  const leaseWrites = [];
+  db.saveGenerationCheckpoint = async (jobId, stage, value) => {
+    leaseWrites.push({ jobId, stage, status: value.status });
+    const key = `${jobId}:${stage}`;
+    const previous = checkpoints.get(key) || {};
+    checkpoints.set(key, {
+      ...previous,
+      ...value,
+      stage,
+      artifact: value.artifact === undefined ? previous.artifact : value.artifact
+    });
+  };
+  let leaseLost = false;
+  await assert.rejects(
+    recovery.run('job-lease-loss', 'strategy', 10, async () => {
+      leaseLost = true;
+      return { topic: 'Must not be checkpointed' };
+    }, {
+      assertLease: async () => {
+        if (leaseLost) {
+          throw Object.assign(new Error('generation job lease lost'), {
+            code: 'GENERATION_JOB_LEASE_LOST',
+            status: 409
+          });
+        }
+      }
+    }),
+    error => error.code === 'GENERATION_JOB_LEASE_LOST'
+  );
+  assert.deepEqual(
+    leaseWrites.map(write => write.status),
+    ['running'],
+    'a worker that lost its job lease must not persist completed or failed state'
+  );
   process.stdout.write('Generation recovery prerequisite tests passed\n');
 }
 
