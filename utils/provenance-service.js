@@ -22,14 +22,14 @@ class ProvenanceService {
     return this.db.getContentProvenance(productionId);
   }
 
-  async review(productionId, input = {}) {
+  async review(productionId, input = {}, lease = null) {
     const existing = await this.db.getContentProvenance(productionId) || {};
     const provenance = this.build({
       sources: input.sources ?? existing.sources ?? [],
       claims: input.claims ?? existing.claims ?? [],
       containsSyntheticMedia: input.containsSyntheticMedia ?? existing.containsSyntheticMedia ?? false
     });
-    await this.db.saveContentProvenance(productionId, provenance);
+    await this.db.saveContentProvenance(productionId, provenance, lease);
     return this.db.getContentProvenance(productionId);
   }
 
