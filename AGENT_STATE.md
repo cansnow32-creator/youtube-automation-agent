@@ -1,6 +1,6 @@
 # AgentTube — Current State
 
-Last reconciled: 2026-11-20 (PR #2 head verified at `7940c5410c7caa3c3c82de47bcf628abec5adc80`; PR #3 head must be queried live because this update itself advances that branch)
+Last reconciled: 2026-11-20 (PR #2 head verified at `b6e9c7f10bf6c8e42ebbe50f08683863f70d2965`; PR #3 head verified at `4df4389927782b3a643b3fa5d6f92d3e201bf439` before continuity updates)
 Repository: cansnow32-creator/youtube-automation-agent
 Default branch: master
 
@@ -11,7 +11,7 @@ Default branch: master
 | PR | Branch | Base | Purpose | Live state at 2026-11-20 |
 |---|---|---|---|---|
 | [#1](https://github.com/cansnow32-creator/youtube-automation-agent/pull/1) | feat/local-first-quality-gate | master | Local-first Ollama script generation and 80-point review gate | Open draft, unmerged; head `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`; 0 check-runs on current head (previous head had 2 successful runs) |
-| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `7940c5410c7caa3c3c82de47bcf628abec5adc80`; 0 check-runs |
+| [#2](https://github.com/cansnow32-creator/youtube-automation-agent/pull/2) | feat/video-concept-approval | feat/local-first-quality-gate | Concept approval, production recovery, scene repair | Open draft, unmerged; head `b6e9c7f10bf6c8e42ebbe50f08683863f70d2965`; 0 check-runs |
 | [#3](https://github.com/cansnow32-creator/youtube-automation-agent/pull/3) | feat/agent-continuity | master | ChatGPT/GitHub continuity files and validation workflow | Open draft, unmerged; head `8034dd2bfcb0559ac63a6e8657fab36791033249`; 0 check-runs |
 
 PR #2 intentionally stacks on PR #1. Its current head `7940c5410c7caa3c3c82de47bcf628abec5adc80` is based on the prior PR #1 head `9438d3d6e9015684cc074f832188e05ecbf3ab51`; PR #1 has since advanced by one commit to `dcec5c12b7ae55ae1fbb69b6452398ddd97f6e81`. GitHub compare reports the PR #2 branch as diverged (402 ahead, 1 behind); do not retarget or rewrite the stacked branch without reviewing the CI workflow overlap. All current PR heads report zero check-runs. Connector-authored commits did not trigger Actions. PR #3 is independent. Never merge any PR without explicit user approval.
@@ -21,7 +21,7 @@ PR #2 intentionally stacks on PR #1. Its current head `7940c5410c7caa3c3c82de47b
 - CI workflow commit `96ac8f7c27be5009c981576650dd93c365cd160e` now runs `npm ci` against the committed lockfile before generating a separate, reviewable dependency remediation candidate. It no longer silently rewrites the lockfile before tests.
 - Static review inspected job-scoped production locking in `ProductionManagementAgent.processContent`, production-scoped resume leases, scene-repair lease heartbeats/loss guards, and temporary-output replacement with rollback.
 - Tightened a weak SQL assertion in `test/production-operation-lock.test.js` so it requires the literal `?` placeholder in the lease-renewal predicate; commit `5c346c23f75aa240c083371a8de42decdd80fed2`.
-- Added a real SQLite test using two independent connections to race for one lock, verify non-owner renewal/release, and test expired-lease takeover (commit `7940c5410c7caa3c3c82de47bcf628abec5adc80`). The test has been committed but has not been executed; real multi-process behavior and end-to-end production recovery remain unverified.
+- Added a real SQLite test using two independent connections to race for one lock, verify non-owner renewal/release, and test expired-lease takeover (commit `7940c5410c7caa3c3c82de47bcf628abec5adc80`). The test has been committed but has not been executed; real multi-process behavior and end-to-end production recovery remain unverified. A further static review found production SQLite connections did not configure a busy timeout, while the integration test manually did. Added this.db.configure('busyTimeout', 5000) during Database.initialize() in commit `b6e9c7f10bf6c8e42ebbe50f08683863f70d2965`; this prevents immediate SQLITE_BUSY on short writer contention but remains untested at runtime.
 - GitHub reports zero check-runs on the current PR #2 head. The new SQLite integration test and the broader PR #2 application tests/lint have not been run. PR #1's base workflow filter was broadened to include stacked PR targets, but the connector-authored commit did not trigger Actions.
 - Continue deeper review; add database-backed concurrency regression coverage where appropriate.
 
