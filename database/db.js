@@ -1337,6 +1337,24 @@ class Database {
     return rows.map(row => this.parseMediaGenerationTask(row));
   }
 
+  async getMediaGenerationTaskById(taskId) {
+    return this.parseMediaGenerationTask(
+      await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId])
+    );
+  }
+
+  async listUnresolvedMediaGenerationTasks(limit = 100) {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+    const rows = await this.getAllRows(
+      `SELECT * FROM media_generation_tasks
+       WHERE status IN ('submitting', 'submission_unknown', 'reconciliation_required', 'downloading', 'download_pending')
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      [safeLimit]
+    );
+    return rows.map(row => this.parseMediaGenerationTask(row));
+  }
+
   parseMediaGenerationTask(row) {
     return row ? {
       ...row,
