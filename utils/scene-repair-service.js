@@ -726,13 +726,13 @@ class SceneRepairService {
     return removed;
   }
   async rebuild(productionId) {
+    if (this.activeRebuilds.has(productionId)) {
+      throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
+    }
     if (typeof this.db.acquireProductionOperationLock !== 'function' ||
         typeof this.db.renewProductionOperationLock !== 'function' ||
         typeof this.db.releaseProductionOperationLock !== 'function') {
       throw this.error('Database acquire, renew, and release operation-lock support is required for scene rebuilds', 503, 'SCENE_REBUILD_LOCK_UNAVAILABLE');
-    }
-    if (this.activeRebuilds.has(productionId)) {
-      throw this.error('A scene rebuild is already running for this production', 409, 'SCENE_REBUILD_IN_PROGRESS');
     }
     this.activeRebuilds.add(productionId);
     const lockOwner = crypto.randomUUID();
