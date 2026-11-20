@@ -301,7 +301,7 @@ class AIVideoGenerator {
       const localPaths = [];
 
       for (let i = 0; i < count; i++) {
-        const imagePath = path.join(__dirname, '..', 'data', 'assets', `visual_${Date.now()}_${i}.png`);
+        const imagePath = path.join(__dirname, '..', 'data', 'assets', `visual_${Date.now()}_${crypto.randomUUID()}_${i}.png`);
         await this.generateImage(enhancedPrompt, imagePath);
         localPaths.push(imagePath);
       }
@@ -1252,7 +1252,7 @@ class AIVideoGenerator {
     
     const paths = [];
     for (let i = 0; i < count; i++) {
-      const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_sim_${Date.now()}_${i}.info`);
+      const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_sim_${Date.now()}_${crypto.randomUUID()}_${i}.info`);
       
       await fs.writeFile(assetPath, JSON.stringify({
         message: 'AI visual asset would be generated here',
