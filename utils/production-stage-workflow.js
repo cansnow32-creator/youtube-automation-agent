@@ -70,6 +70,9 @@ function prepareProductionWorkflowForResume(workflow, now = () => new Date()) {
   for (const stage of STAGE_ORDER) {
     const state = workflow.stages[stage];
     if (!state) throw new Error(`Production workflow is missing stage: ${stage}`);
+    if (!['pending', 'failed', 'in_progress', 'completed'].includes(state.status)) {
+      throw new Error(`Cannot resume from unexpected ${stage} status: ${state.status}`);
+    }
     if (state.status === 'in_progress') {
       state.status = 'failed';
       state.error = 'Production process stopped before the stage completed';
@@ -77,14 +80,22 @@ function prepareProductionWorkflowForResume(workflow, now = () => new Date()) {
     }
   }
   workflow.currentStage = null;
-  const firstIncomplete = STAGE_ORDER.find(stage => workflow.stages[stage].status !== 'completed');
-  if (!firstIncomplete) {
+  const firstIncomplete = STAGE_ORDER.findIndex(stage => workflow.stages[stage].status !== 'completed');
+  if (firstIncomplete >= 0) {
+    const completedAfterGap = STAGE_ORDER.slice(firstIncomplete + 1)
+      .find(stage => workflow.stages[stage].status === 'completed');
+    if (completedAfterGap) {
+      throw new Error(`Production workflow is inconsistent: ${completedAfterGap} is completed after an incomplete stage`);
+    }
+  }
+  if (firstIncomplete < 0) {
     workflow.updatedAt = timestamp;
     return null;
   }
-  const state = workflow.stages[firstIncomplete];
+  const stageToResume = STAGE_ORDER[firstIncomplete];
+  const state = workflow.stages[stageToResume];
   if (!['pending', 'failed'].includes(state.status)) {
-    throw new Error(`Cannot resume from unexpected ${firstIncomplete} status: ${state.status}`);
+    throw new Error(`Cannot resume from unexpected ${stageToResume} status: ${state.status}`);
   }
   if (state.status === 'failed') {
     state.lastError = state.error || null;
@@ -94,7 +105,7 @@ function prepareProductionWorkflowForResume(workflow, now = () => new Date()) {
     state.completedAt = null;
   }
   workflow.updatedAt = timestamp;
-  return firstIncomplete;
+  return stageToResume;
 }
 
 async function runProductionStage(workflow, stage, task, persist = async () => {}, now = () => new Date()) {
