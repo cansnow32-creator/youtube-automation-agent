@@ -6,7 +6,8 @@ Approved channel-learning recommendations are recorded on the production strateg
 
 - Packaging recommendations are attributed only when a non-control title and/or thumbnail variant from that recommendation is explicitly selected and approved. A manual title override is not attributed to the generated title variant.
 - Post-publish packaging changes are recorded separately in the schedule metadata with timestamp, previous title, and applied title. They are included in analytics snapshots as an audit trail, but are not misclassified as application of a pre-publish recommendation.
-- Script recommendations are attributed when approved script learnings are passed to script generation.
+- Approved script recommendations passed to generation are recorded separately as `learningGuidance` with `provided_to_generation_not_verified_as_applied`; prompt exposure alone is not proof that the generated script followed the recommendation.
+- Script recommendations are not included in `appliedLearnings` feedback until the system has a deterministic, independently auditable check that verifies the resulting script actually reflects the recommended change. This avoids counting an instruction as a successful application merely because it was supplied to a model.
 - Recommendation IDs are de-duplicated per production.
 - Selecting only control variants does not count as applying a packaging recommendation.
 - Only non-simulated 7-day performance snapshots are eligible for application feedback.
