@@ -171,8 +171,60 @@ async function run() {
       assert.ok(finalStats.size > 0, 'real FFmpeg assembly must produce a final MP4');
       assert.ok((await getMediaDuration(finalPath)) > 0, 'final MP4 must have a readable duration');
       assert.equal(await fs.access(finalPath).then(() => true, () => false), true);
-      assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_hybrid_visual.mp4')).then(() => true, () => false), false);
+      assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_hybrid_visual.mp4')).then(() => true, () => false), true,
+        'successful assembly keeps the visual-only cache for a future retry');
+      assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_hybrid_visual.mp4.render.json')).then(() => true, () => false), true);
       assert.equal(await fs.access(path.join(directory, 'real-ffmpeg-final_finalizing.mp4')).then(() => true, () => false), false);
+
+      // If audio mux fails, the completed visual timeline survives and is reused.
+      const retrySource = path.join(directory, 'retry-source.mp4');
+      const retryAudio = path.join(directory, 'retry-audio.mp3');
+      const retryOutput = path.join(directory, 'retry-output.mp4');
+      await fs.writeFile(retrySource, Buffer.from('source-video'));
+      await fs.writeFile(retryAudio, Buffer.from('source-audio'));
+      const retryGenerator = Object.create(AIVideoGenerator.prototype);
+      retryGenerator.logger = { info() {} };
+      retryGenerator.filterLocalImageAssets = async () => [];
+      retryGenerator.parseDurationSeconds = value => Number(value) || 0;
+      let timelineRenders = 0;
+      let muxAttempts = 0;
+      retryGenerator.renderMediaTimeline = async (_segments, target) => {
+        timelineRenders++;
+        await fs.writeFile(target, Buffer.from('visual-only-video'));
+        return target;
+      };
+      retryGenerator.validateRenderedVideo = async target => {
+        const stats = await fs.stat(target);
+        assert.ok(stats.size > 0);
+        return { path: target, size: stats.size, duration: 3 };
+      };
+      retryGenerator.addAudioToVideo = async (_visual, _audio, target) => {
+        muxAttempts++;
+        if (muxAttempts === 1) throw new Error('simulated audio mux failure');
+        await fs.writeFile(target, Buffer.from('final-video'));
+      };
+      await assert.rejects(
+        () => retryGenerator.generateHybridVideo(
+          [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+        ),
+        /simulated audio mux failure/
+      );
+      const retryVisual = path.join(directory, 'retry-output_hybrid_visual.mp4');
+      assert.equal(await fs.access(retryVisual).then(() => true, () => false), true,
+        'visual-only output must survive an audio mux failure');
+      await retryGenerator.generateHybridVideo(
+        [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+      );
+      assert.equal(timelineRenders, 1, 'retry must reuse the completed visual timeline');
+      assert.equal(muxAttempts, 2, 'audio mux should be retried');
+      assert.equal(await fs.access(retryOutput).then(() => true, () => false), true);
+
+      // A changed visual source invalidates only the visual cache.
+      await fs.appendFile(retrySource, Buffer.from('-changed'));
+      await retryGenerator.generateHybridVideo(
+        [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+      );
+      assert.equal(timelineRenders, 2, 'changed visual inputs must invalidate the visual cache');
     } else {
       process.stdout.write('FFmpeg unavailable locally; real render smoke test skipped\\n');
     }
