@@ -38,7 +38,7 @@ async function run() {
       normalizeAIClaims: () => [],
       calculateSectionsDuration: sections => sections.reduce((sum, section) => sum + section.duration, 0),
       estimateDuration: () => '1 minute',
-      formatFullScript: script => 'TITLE: ' + script.title + '\\n' + script.mainContent.sections[0].content.join(' ')
+      formatFullScript: script => 'TITLE: ' + script.title + '\\n' + script.mainContent.sections[0].content.join(' ') + ' supporting approved narration'.repeat(5)
     }
   };
   agent.db = {
