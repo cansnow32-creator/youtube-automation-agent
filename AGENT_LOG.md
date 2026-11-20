@@ -1,3 +1,15 @@
+## 2026-11-20 — Fence media clip generation against scene lease loss
+
+- Found that scene regeneration delegated to MediaGenerationService.generateClip(), which wrote directly to a shared output path and marked remote provider success before local download/validation completed. A stale worker could therefore publish an output or update media-task state after its scene lease had expired.
+- Added optional `assertLease` support throughout generateClip(): before task reads/writes, provider polling, downloads, cached-output reuse, and final persistence. Downloads now go to unique per-attempt temporary paths; after validation and a fresh lease assertion they are renamed to a unique scene-revision output. If lease loss is detected after publication, the attempt-specific output is removed.
+- Remote `succeeded` status is now persisted as local `running` until download, validation and safe publication finish; only then is the task marked succeeded.
+- Scene regeneration passes its lease assertion and uses a unique final output filename per attempt.
+- Added `test/media-generation-lease.test.js` for lease loss after download, stale-output cleanup, and no local success persistence; included it in the npm test chain.
+- Commits on `feat/video-concept-approval`: `e74ca1fe07c1b07d1e75dc11cb454b139b6dd381`, `17a7256203722d237bd34d1dcac4de8da2d23f8d`, `0c41484dd6f0e6f36f8e9c33f4f8e48cb6db43d4`, `cc9d60ec4baf35c6ebe8d89f6596bb2dd8fc9c50`, `b528f75dc2082af417e17c28d791a088df1e5fdf`, `9722a7b55560a4019c81c7ffcdde51af7bff696c`.
+- Re-fetched implementation, scene regeneration call site, test, and package test script. Tests/lint have not been executed; no pass is claimed. PR #2 still requires a GitHub Actions run.
+- Limitation: a remote provider task may still be created if the lease expires between the pre-request assertion and external API call. The response is checked before local DB persistence or output publication, but the remote provider API has no atomic lease-fencing integration.
+- Next: audit generated image/TTS file side effects, then establish real CI execution. Do not merge.
+
 ## 2026-11-20 — Serialize review refresh with scene operations
 
 - Continued PR #2 audit and fixed the stale-review race: `refreshContentReview()` now acquires the same production-scoped operation lease as scene edits/rebuilds and holds it across bundle read, quality checks, and `saveContentReview()`. It asserts lease ownership immediately before persistence.
