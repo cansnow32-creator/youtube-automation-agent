@@ -24,6 +24,18 @@ function run() {
   assert.throws(() => assertScriptQualityGate({
     metadata: { qualityGate: { status: 'approved', score: 99, minimumScore: 80, reviewers: ['gemini'], attempts: [{}] } }
   }, { enabled: true }), /no valid approved Ollama review/);
+  const humanApproved = {
+    metadata: {
+      qualityGate: { status: 'human_review_required', score: 61, minimumScore: 80, reviewers: ['ollama'], attempts: [{}] },
+      humanApproval: { reviewId: 'quality_review_1', decidedAt: '2026-11-20 10:00:00' }
+    }
+  };
+  const humanResult = assertScriptQualityGate(humanApproved, { enabled: true });
+  assert.equal(humanResult.status, 'human_approved');
+  assert.equal(humanResult.approvalSource, 'human');
+  assert.throws(() => assertScriptQualityGate({
+    metadata: { humanApproval: { reviewId: 'quality_review_1' } }
+  }, { enabled: true }), /no valid approved Ollama review/);
   process.stdout.write('Script quality gate tests passed\\n');
 }
 
