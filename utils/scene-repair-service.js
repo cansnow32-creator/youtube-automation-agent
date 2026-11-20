@@ -178,6 +178,10 @@ class SceneRepairService {
   }
 
   async withProductionOperationLease(productionId, operation, label = 'scene operation') {
+    if (typeof this.db.acquireProductionOperationLock !== 'function' ||
+        typeof this.db.releaseProductionOperationLock !== 'function') {
+      throw this.error('Database operation-lock support is required for scene changes', 503, 'SCENE_EDIT_LOCK_UNAVAILABLE');
+    }
     const owner = crypto.randomUUID();
     let acquired = false;
     let heartbeat = null;
