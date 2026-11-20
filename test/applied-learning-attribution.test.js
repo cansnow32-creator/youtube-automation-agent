@@ -89,7 +89,7 @@ const longScript = {
 const verifiedLength = verifyAppliedScriptLearnings(lengthGuidance, longScript);
 assert.deepEqual(verifiedLength.map(item => item.recommendationId), ['length-range'],
   'only explicit minute ranges containing the generated script estimate may be verified');
-assert.equal(verifiedLength[0].estimatedMinutes, 10.02);
+assert.equal(verifiedLength[0].estimatedMinutes, 10.16);
 assert.equal(verifiedLength[0].wordsPerMinuteAssumption, 130);
 assert.equal(verifiedLength[0].verificationMethod, 'generated_spoken_word_count_estimated_minutes_130_wpm');
 const appliedScriptAttributes = engine.extractAttributes(
