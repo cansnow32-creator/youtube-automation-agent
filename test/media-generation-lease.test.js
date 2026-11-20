@@ -518,6 +518,50 @@ async function testManualReconciliationVerifiesAndResumesRemoteTask() {
   }
 }
 
+async function testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirmation() {
+  let row = {
+    id: 'media-confirmed-absent',
+    status: 'submission_unknown',
+    external_task_id: null,
+    providerData: { previousTasks: [] },
+    output_path: null,
+    error: 'provider submission outcome unknown',
+    completed_at: null
+  };
+  let updates = 0;
+  const db = {
+    async getMediaGenerationTaskById(id) {
+      return id === row.id ? { ...row, providerData: { ...row.providerData } } : null;
+    },
+    async updateMediaGenerationTask(_id, changes) {
+      updates++;
+      row = { ...row };
+      if (changes.externalTaskId !== undefined) row.external_task_id = changes.externalTaskId;
+      if (changes.status !== undefined) row.status = changes.status;
+      if (changes.providerData !== undefined) row.providerData = { ...changes.providerData };
+      if (changes.outputPath !== undefined) row.output_path = changes.outputPath;
+      if (changes.error !== undefined) row.error = changes.error;
+      if (changes.completedAt !== undefined) row.completed_at = changes.completedAt;
+      return { ...row, providerData: { ...row.providerData } };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+
+  await assert.rejects(
+    service.resolveAmbiguousSubmissionAsAbsent(row.id, false),
+    error => error.code === 'REMOTE_TASK_ABSENCE_CONFIRMATION_REQUIRED'
+  );
+  assert.equal(updates, 0);
+  assert.equal(row.status, 'submission_unknown');
+
+  const resolved = await service.resolveAmbiguousSubmissionAsAbsent(row.id, true);
+  assert.equal(resolved.status, 'failed');
+  assert.equal(resolved.external_task_id, null);
+  assert.equal(resolved.providerData.operatorResolution.action, 'confirmed_no_remote_task');
+  assert.ok(resolved.completed_at);
+  assert.equal(updates, 1);
+}
+
 async function testAmbiguousProviderSubmissionIsNotAutomaticallyRetried() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-submission-unknown-'));
   const db = makeStatefulMediaTaskDb();
@@ -764,6 +808,7 @@ async function main() {
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
   await testManualReconciliationVerifiesAndResumesRemoteTask();
+  await testUnknownSubmissionCanBeClearedOnlyWithExplicitOperatorConfirmation();
   await testAmbiguousProviderSubmissionIsNotAutomaticallyRetried();
   await testLeaseLossAfterNonCancellableSubmissionBlocksRetry();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
