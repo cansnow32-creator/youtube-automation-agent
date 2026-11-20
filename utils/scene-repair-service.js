@@ -845,12 +845,14 @@ class SceneRepairService {
     await assertLease();
     const fingerprint = await this.buildRebuildFingerprint(scenes, bundle.assets?.audio?.path, assertLease);
     await assertLease();
-    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_visual.mp4`);
     const attemptId = crypto.randomUUID();
-    const visualTempPath = `${visualPath}.${attemptId}.rendering.mp4`;
-    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}.mp4`);
+    // Every worker publishes immutable attempt-scoped artifacts. A stale worker
+    // can therefore never overwrite a newer worker's cache/output path.
+    const visualPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_${attemptId}_visual.mp4`);
+    const visualTempPath = `${visualPath}.rendering.mp4`;
+    const finalPath = path.join(this.dataRoot, 'videos', `${productionId}_repair_${fingerprint}_${attemptId}.mp4`);
     const finalTempPath = `${finalPath}.${attemptId}.rendering.mp4`;
-    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${fingerprint}.srt`);
+    const captionsPath = path.join(this.dataRoot, 'captions', `${productionId}_repair_${fingerprint}_${attemptId}.srt`);
     await fs.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.mkdir(path.dirname(captionsPath), { recursive: true });
 
@@ -885,7 +887,7 @@ class SceneRepairService {
     }
 
     await assertLease();
-    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint, assertLease);
+    const audioPath = await this.rebuildNarration(productionId, scenes, bundle.assets?.audio?.path, fingerprint, assertLease, attemptId);
     await assertLease();
     const allIntentionalSilence = scenes.every(scene => scene.narrationStatus === 'intentional_silence');
     let finalReady = false;
@@ -1001,12 +1003,12 @@ class SceneRepairService {
     });
   }
 
-  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint, assertLease = async () => {}) {
+  async rebuildNarration(productionId, scenes, fallbackAudioPath, fingerprint, assertLease = async () => {}, attemptId = crypto.randomUUID()) {
     await assertLease();
     const hasSceneAudio = scenes.some(scene => scene.audioPath && scene.narrationStatus === 'current');
     const allCurrentWithoutSegments = scenes.every(scene => scene.narrationStatus === 'current' && !scene.audioPath);
     if (!hasSceneAudio && allCurrentWithoutSegments) { await assertLease(); return fallbackAudioPath; }
-    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}.m4a`);
+    const outputPath = path.join(this.dataRoot, 'audio', `${productionId}_scene_mix_${fingerprint}_${attemptId}.m4a`);
     try {
       const stat = await fs.stat(outputPath);
       if (stat.isFile() && stat.size > 0) {
@@ -1040,7 +1042,7 @@ class SceneRepairService {
       const duration = await this.getMediaDuration(tempPath);
       if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
       await this.runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
-      // The FFmpeg render may outlive the lease; verify ownership immediately before publishing the shared cache file.
+      // The FFmpeg render may outlive the lease; verify ownership immediately before publishing this immutable attempt file.
       await assertLease();
       await replaceFileWithRollback(tempPath, outputPath);
       return outputPath;
