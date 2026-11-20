@@ -200,7 +200,7 @@ class AnalyticsOptimizationAgent {
       trafficSources: () => this.getTrafficSourcesAnalytics(videoId, startDate, endDate),
       devices: () => this.getDeviceAnalytics(videoId, startDate, endDate),
       outcomes: () => this.getOutcomeAnalytics(videoId, startDate, endDate, options.currency || 'USD'),
-      engagement: () => this.calculateEngagementMetrics(videoId)
+      engagement: () => this.calculateEngagementMetrics(videoId, startDate, endDate)
     };
     const entries = Object.entries(requests);
     const settled = await Promise.allSettled(entries.map(([, request]) => request()));
@@ -273,19 +273,21 @@ class AnalyticsOptimizationAgent {
     });
     
     const rows = response.data.rows || [];
-    const totalViews = rows.reduce((sum, row) => sum + (Number(row[1]) || 0), 0);
-    const totalImpressions = rows.reduce((sum, row) => sum + (Number(row[2]) || 0), 0);
-    const ctrRows = rows.filter(row => Number.isFinite(Number(row[2])) && Number(row[2]) > 0 &&
-      Number.isFinite(Number(row[3])));
-    const ctrImpressions = ctrRows.reduce((sum, row) => sum + Number(row[2]), 0);
+    const numeric = value => value === null || value === undefined || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+    const totalViews = rows.reduce((sum, row) => sum + (numeric(row[1]) ?? 0), 0);
+    const totalImpressions = rows.reduce((sum, row) => sum + (numeric(row[2]) ?? 0), 0);
+    const ctrRows = rows.map(row => ({ impressions: numeric(row[2]), ctr: numeric(row[3]) }))
+      .filter(row => row.impressions !== null && row.impressions > 0 && row.ctr !== null);
+    const ctrImpressions = ctrRows.reduce((sum, row) => sum + row.impressions, 0);
     const weightedCTR = ctrImpressions > 0
-      ? ctrRows.reduce((sum, row) => sum + (Number(row[2]) * Number(row[3])), 0) / ctrImpressions
+      ? ctrRows.reduce((sum, row) => sum + (row.impressions * row.ctr), 0) / ctrImpressions
       : null;
 
     return {
       totalViews,
       totalImpressions,
       averageCTR: weightedCTR,
+      ctrAvailable: weightedCTR !== null,
       dailyData: rows
     };
   }
@@ -299,13 +301,26 @@ class AnalyticsOptimizationAgent {
       filters: `video==${videoId}`
     });
     
-    const data = response.data.rows?.[0] || [0, 0, 0];
-    
+    const data = response.data.rows?.[0];
+    if (!data) {
+      return {
+        totalWatchTime: null,
+        averageViewDuration: null,
+        averageViewPercentage: null,
+        retentionQuality: 'unknown',
+        available: false
+      };
+    }
+    const numeric = value => value === null || value === undefined || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+    const totalWatchTime = numeric(data[0]);
+    const averageViewDuration = numeric(data[1]);
+    const averageViewPercentage = numeric(data[2]);
     return {
-      totalWatchTime: data[0] || 0,
-      averageViewDuration: data[1] || 0,
-      averageViewPercentage: data[2] || 0,
-      retentionQuality: this.assessRetentionQuality(data[2])
+      totalWatchTime,
+      averageViewDuration,
+      averageViewPercentage,
+      retentionQuality: averageViewPercentage === null ? 'unknown' : this.assessRetentionQuality(averageViewPercentage),
+      available: [totalWatchTime, averageViewDuration, averageViewPercentage].some(value => value !== null)
     };
   }
 
@@ -427,23 +442,37 @@ class AnalyticsOptimizationAgent {
     };
   }
 
-  async calculateEngagementMetrics(videoId) {
-    const videoDetails = await this.getVideoDetails(videoId);
-    const stats = videoDetails.statistics;
-    
-    const views = stats.viewCount || 0;
-    const likes = stats.likeCount || 0;
-    const comments = stats.commentCount || 0;
-    const interactions = likes + comments;
-    const engagementRate = views > 0 ? (interactions / views) * 100 : 0;
-    const likeRatio = interactions > 0 ? (likes / interactions) * 100 : 0;
-    const commentsPerView = views > 0 ? (comments / views) * 100 : 0;
-    
+  async calculateEngagementMetrics(videoId, startDate = null, endDate = null) {
+    const response = await this.youtubeAnalytics.reports.query({
+      ids: 'channel==MINE',
+      startDate: startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      endDate: endDate || new Date().toISOString().split('T')[0],
+      metrics: 'views,likes,comments',
+      filters: `video==${videoId}`
+    });
+    const data = response.data.rows?.[0];
+    if (!data) {
+      return {
+        views: null, likes: null, comments: null,
+        engagementRate: null, likeRatio: null, commentsPerView: null,
+        engagementQuality: 'unknown', available: false
+      };
+    }
+    const numeric = value => value === null || value === undefined || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+    const views = numeric(data[0]);
+    const likes = numeric(data[1]);
+    const comments = numeric(data[2]);
+    const interactions = likes === null || comments === null ? null : likes + comments;
+    const engagementRate = views > 0 && interactions !== null ? (interactions / views) * 100 : null;
+    const likeRatio = interactions > 0 && likes !== null ? (likes / interactions) * 100 : null;
+    const commentsPerView = views > 0 && comments !== null ? (comments / views) * 100 : null;
     return {
-      engagementRate: parseFloat(engagementRate.toFixed(2)),
-      likeRatio: parseFloat(likeRatio.toFixed(2)),
-      commentsPerView: commentsPerView.toFixed(4),
-      engagementQuality: this.assessEngagementQuality(engagementRate)
+      views, likes, comments,
+      engagementRate: engagementRate === null ? null : Number(engagementRate.toFixed(2)),
+      likeRatio: likeRatio === null ? null : Number(likeRatio.toFixed(2)),
+      commentsPerView: commentsPerView === null ? null : Number(commentsPerView.toFixed(4)),
+      engagementQuality: engagementRate === null ? 'unknown' : this.assessEngagementQuality(engagementRate),
+      available: [views, likes, comments].some(value => value !== null)
     };
   }
 
@@ -458,21 +487,35 @@ class AnalyticsOptimizationAgent {
         filters: `video==${videoId}`
       });
       
-      const data = response.data.rows?.[0] || [0, 0];
-      
-      const ctr = data[1] || 0;
-      
+      const data = response.data.rows?.[0];
+      if (!data) {
+        return {
+          impressions: null, clickThroughRate: null, ctrQuality: 'unknown',
+          available: false, dataQuality: { status: 'no_rows', reason: 'No thumbnail metrics returned for the requested period.' },
+          recommendations: ['Thumbnail performance is unavailable for this measurement window']
+        };
+      }
+      const impressions = data[0] === null || data[0] === undefined ? null : Number(data[0]);
+      const ctr = data[1] === null || data[1] === undefined ? null : Number(data[1]);
+      const validImpressions = Number.isFinite(impressions) ? impressions : null;
+      const validCtr = Number.isFinite(ctr) ? ctr : null;
       return {
-        impressions: data[0] || 0,
-        clickThroughRate: ctr,
-        ctrQuality: this.assessCTRQuality(ctr),
-        recommendations: this.generateThumbnailRecommendations(ctr)
+        impressions: validImpressions,
+        clickThroughRate: validCtr,
+        ctrQuality: validCtr === null ? 'unknown' : this.assessCTRQuality(validCtr),
+        available: validImpressions !== null || validCtr !== null,
+        dataQuality: { status: 'available', source: 'youtube_analytics' },
+        recommendations: validCtr === null
+          ? ['CTR is unavailable; do not infer thumbnail quality']
+          : this.generateThumbnailRecommendations(validCtr)
       };
     } catch (error) {
       return {
-        impressions: 0,
-        clickThroughRate: 0,
+        impressions: null,
+        clickThroughRate: null,
         ctrQuality: 'unknown',
+        available: false,
+        dataQuality: { status: 'unavailable', reason: String(error.message || error).slice(0, 240) },
         recommendations: ['Unable to analyze thumbnail performance']
       };
     }
@@ -509,14 +552,14 @@ class AnalyticsOptimizationAgent {
     const insights = [];
     
     // Performance insights
-    if (analytics.views.totalViews > 10000) {
+    if (Number.isFinite(analytics.views?.totalViews) && analytics.views.totalViews > 10000) {
       insights.push({
         type: 'success',
         category: 'views',
         message: 'Video is performing above average in terms of views',
         impact: 'high'
       });
-    } else if (analytics.views.totalViews < 1000) {
+    } else if (Number.isFinite(analytics.views?.totalViews) && analytics.views.totalViews < 1000) {
       insights.push({
         type: 'warning',
         category: 'views',
@@ -527,14 +570,14 @@ class AnalyticsOptimizationAgent {
     }
     
     // Retention insights
-    if (analytics.watchTime.averageViewPercentage > 50) {
+    if (Number.isFinite(analytics.watchTime?.averageViewPercentage) && analytics.watchTime.averageViewPercentage > 50) {
       insights.push({
         type: 'success',
         category: 'retention',
         message: 'Excellent audience retention rate',
         impact: 'medium'
       });
-    } else if (analytics.watchTime.averageViewPercentage < 30) {
+    } else if (Number.isFinite(analytics.watchTime?.averageViewPercentage) && analytics.watchTime.averageViewPercentage < 30) {
       insights.push({
         type: 'critical',
         category: 'retention',
@@ -545,14 +588,14 @@ class AnalyticsOptimizationAgent {
     }
     
     // Thumbnail insights
-    if (thumbnailMetrics.clickThroughRate > 8) {
+    if (Number.isFinite(thumbnailMetrics?.clickThroughRate) && thumbnailMetrics.clickThroughRate > 8) {
       insights.push({
         type: 'success',
         category: 'thumbnail',
         message: 'Thumbnail is highly effective at driving clicks',
         impact: 'high'
       });
-    } else if (thumbnailMetrics.clickThroughRate < 3) {
+    } else if (Number.isFinite(thumbnailMetrics?.clickThroughRate) && thumbnailMetrics.clickThroughRate < 3) {
       insights.push({
         type: 'warning',
         category: 'thumbnail',
@@ -581,14 +624,14 @@ class AnalyticsOptimizationAgent {
     }
     
     // Engagement insights
-    if (analytics.engagement.engagementRate > 5) {
+    if (Number.isFinite(analytics.engagement?.engagementRate) && analytics.engagement.engagementRate > 5) {
       insights.push({
         type: 'success',
         category: 'engagement',
         message: 'High audience engagement',
         impact: 'medium'
       });
-    } else if (analytics.engagement.engagementRate < 1) {
+    } else if (Number.isFinite(analytics.engagement?.engagementRate) && analytics.engagement.engagementRate < 1) {
       insights.push({
         type: 'warning',
         category: 'engagement',
@@ -622,12 +665,12 @@ class AnalyticsOptimizationAgent {
       maxScore += weight;
       breakdown[name] = Math.round(points);
     }
-    const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+    const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : null;
     return {
       score: finalScore,
       breakdown,
       availableWeight: maxScore,
-      grade: this.getPerformanceGrade(finalScore)
+      grade: finalScore === null ? 'N/A' : this.getPerformanceGrade(finalScore)
     };
   }
 
