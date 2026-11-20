@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { Database } = require('../database/db');
 const { SceneRepairService } = require('../utils/scene-repair-service');
+const { ProductionManagementAgent } = require('../agents/production-management-agent');
 
 async function run() {
   const database = Object.create(Database.prototype);
@@ -72,6 +73,48 @@ async function run() {
   } finally {
     global.setInterval = originalSetInterval;
     global.clearInterval = originalClearInterval;
+  }
+
+  const resumeBlocked = Object.create(ProductionManagementAgent.prototype);
+  resumeBlocked.db = {
+    acquireProductionOperationLock: async () => false,
+    releaseProductionOperationLock: async () => { throw new Error('must not release another resume lock'); }
+  };
+  await assert.rejects(
+    resumeBlocked.resumeProduction('p5'),
+    error => error.code === 'PRODUCTION_OPERATION_LOCKED' && error.status === 409
+  );
+
+  const resumeSetInterval = global.setInterval;
+  const resumeClearInterval = global.clearInterval;
+  let resumeHeartbeat;
+  global.setInterval = callback => {
+    resumeHeartbeat = callback;
+    return { unref() {} };
+  };
+  global.clearInterval = () => {};
+  try {
+    let resumeReleased = false;
+    const resumeLostLease = Object.create(ProductionManagementAgent.prototype);
+    resumeLostLease.logger = { error() {} };
+    resumeLostLease.db = {
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => false,
+      releaseProductionOperationLock: async () => { resumeReleased = true; }
+    };
+    resumeLostLease.resumeProductionUnlocked = async (_id, assertLease) => {
+      resumeHeartbeat();
+      await assertLease();
+      return 'must-not-commit';
+    };
+    await assert.rejects(
+      resumeLostLease.resumeProduction('p6'),
+      error => error.code === 'PRODUCTION_RESUME_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(resumeReleased, true, 'resume lock is released after lease loss');
+  } finally {
+    global.setInterval = resumeSetInterval;
+    global.clearInterval = resumeClearInterval;
   }
 
     process.stdout.write('Production operation lock tests passed\\n');
