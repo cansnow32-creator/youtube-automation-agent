@@ -856,10 +856,21 @@ async function testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory() {
   const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
   service.isValidVideo = async () => true;
   let createCalls = 0;
+  let oldTaskQueries = 0;
   const provider = {
     id: 'test-provider',
     model: 'new-model',
     capabilities: { cancellation: false },
+    getTask: async id => {
+      oldTaskQueries++;
+      assert.equal(id, 'old-terminal-remote-id');
+      return {
+        status: 'failed',
+        externalTaskId: id,
+        model: 'old-model',
+        error: 'previous provider task failed'
+      };
+    },
     createTask: async () => {
       createCalls++;
       assert.equal(db.row.status, 'submitting', 'submission intent must be persisted before the remote API call');
@@ -888,6 +899,7 @@ async function testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory() {
     });
     assert.equal(result.outputPath, outputPath);
     assert.equal(createCalls, 1);
+    assert.equal(oldTaskQueries, 1, 'legacy failed records must query the old remote ID before resubmitting');
     assert.equal(db.row.status, 'succeeded');
     assert.equal(db.row.external_task_id, 'new-remote-id');
     assert.equal(db.row.output_path, outputPath);
