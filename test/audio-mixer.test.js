@@ -153,6 +153,40 @@ async function testProductionIntegration(directory) {
     await Promise.all([source, music, mixed, captions, finalPath].map(file => fs.rm(file, { force: true })));
   }
 }
+async function testMusicMixCache(directory) {
+  const video = path.join(directory, 'cache-source.mp4');
+  const music = path.join(directory, 'cache-music.wav');
+  const output = path.join(directory, 'cache-mixed.mp4');
+  await fs.writeFile(video, 'video-v1');
+  await fs.writeFile(music, 'music-v1');
+  let encodes = 0;
+  const dependencies = {
+    runFFmpeg: async args => {
+      if (String(args[args.length - 1]).endsWith('.mixing.mp4')) {
+        encodes++;
+        await fs.writeFile(args[args.length - 1], 'encoded-mix-' + encodes);
+      }
+    },
+    getMediaInfo: async () => ({ duration: 12, hasAudio: true, width: 640, height: 360 }),
+    getAudioInfo: async () => ({ duration: 8 })
+  };
+  const musicConfig = licensedMusic({ path: music });
+  const first = await mixBackgroundMusic(video, output, musicConfig, dependencies);
+  const second = await mixBackgroundMusic(video, output, musicConfig, dependencies);
+  assert.equal(first.status, 'mixed');
+  assert.equal(second.cached, true);
+  assert.equal(encodes, 1, 'identical inputs must reuse the validated music mix');
+
+  await fs.appendFile(music, '-changed');
+  const third = await mixBackgroundMusic(video, output, musicConfig, dependencies);
+  assert.equal(third.cached, undefined);
+  assert.equal(encodes, 2, 'changed music must invalidate the mix cache');
+
+  await fs.appendFile(video, '-changed');
+  await mixBackgroundMusic(video, output, musicConfig, dependencies);
+  assert.equal(encodes, 3, 'changed source video must invalidate the mix cache');
+}
+
 async function testFailedMixPreservesExistingOutput(directory) {
   const source = path.join(directory, 'failure-source.mp4');
   const music = path.join(directory, 'failure-music.wav');
@@ -226,6 +260,7 @@ async function run() {
     await testValidationAndArguments(directory);
     await testProductionIntegration(directory);
     await testFailedMixPreservesExistingOutput(directory);
+    await testMusicMixCache(directory);
     await testRealFFmpegMix(directory);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
