@@ -310,6 +310,12 @@ class PublishingSchedulingAgent {
     });
     
     const videoId = videoUpload.data.id;
+    if (!videoId) {
+      const error = new Error('YouTube accepted the upload request without returning a video ID; the outcome must be reconciled before retrying');
+      error.status = 502;
+      error.code = 'YOUTUBE_UPLOAD_ID_MISSING';
+      throw error;
+    }
     this.logger.info(`Video uploaded with ID: ${videoId}`);
     scheduleEntry.status = 'uploaded';
     scheduleEntry.youtubeId = videoId;
