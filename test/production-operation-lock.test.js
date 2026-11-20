@@ -117,6 +117,45 @@ async function run() {
     global.clearInterval = resumeClearInterval;
   }
 
+  const jobBlocked = Object.create(ProductionManagementAgent.prototype);
+  jobBlocked.db = {
+    acquireProductionOperationLock: async () => false,
+    releaseProductionOperationLock: async () => { throw new Error('must not release another job lock'); }
+  };
+  await assert.rejects(
+    jobBlocked.processContent({ jobId: 'job-locked' }),
+    error => error.code === 'PRODUCTION_JOB_LOCKED' && error.status === 409
+  );
+
+  let jobHeartbeat;
+  let jobReleased = false;
+  const jobLeaseLost = Object.create(ProductionManagementAgent.prototype);
+  jobLeaseLost.logger = { error() {} };
+  jobLeaseLost.db = {
+    acquireProductionOperationLock: async () => true,
+    renewProductionOperationLock: async () => false,
+    releaseProductionOperationLock: async () => { jobReleased = true; }
+  };
+  jobLeaseLost.processContentUnlocked = async (_input, assertLease) => {
+    jobHeartbeat();
+    await assertLease();
+    return 'must-not-create';
+  };
+  global.setInterval = callback => {
+    jobHeartbeat = callback;
+    return { unref() {} };
+  };
+  try {
+    await assert.rejects(
+      jobLeaseLost.processContent({ jobId: 'job-lost' }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(jobReleased, true, 'job lock is released after lease loss');
+  } finally {
+    global.setInterval = resumeSetInterval;
+    global.clearInterval = resumeClearInterval;
+  }
+
     process.stdout.write('Production operation lock tests passed\\n');
 }
 
