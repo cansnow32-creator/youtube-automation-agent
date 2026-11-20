@@ -5,15 +5,16 @@ const path = require('node:path');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 
 async function run() {
-  const partialPath = path.join(os.tmpdir(), `agenttube-partial-visual-${process.pid}-${Date.now()}.png`);
+  let partialPath = null;
   const simulatedPath = path.join(os.tmpdir(), `agenttube-visual-fallback-${process.pid}-${Date.now()}.info`);
   const generator = Object.create(AIVideoGenerator.prototype);
   generator.logger = { info() {}, warn() {}, error() {} };
   generator.openai = {};
   generator.gemini = null;
   generator.enhanceVisualPrompt = prompt => prompt;
-  generator.generateImage = async (_prompt, _imagePath) => {
-    await fs.writeFile(partialPath, 'partial image bytes');
+  generator.generateImage = async (_prompt, imagePath) => {
+    partialPath = imagePath;
+    await fs.writeFile(imagePath, 'partial image bytes');
     throw new Error('provider failed after partial write');
   };
   generator.simulateVisualAssets = async () => {
@@ -26,7 +27,7 @@ async function run() {
     assert.deepEqual(result, [simulatedPath]);
     await assert.rejects(fs.access(partialPath), { code: 'ENOENT' });
   } finally {
-    await fs.unlink(partialPath).catch(() => {});
+    if (partialPath) await fs.unlink(partialPath).catch(() => {});
     await fs.unlink(simulatedPath).catch(() => {});
   }
 
