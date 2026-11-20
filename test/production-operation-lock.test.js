@@ -47,12 +47,23 @@ async function run() {
     await fs.mkdir(videosDir, { recursive: true });
     const staleVisualTemp = path.join(videosDir,
       'prod_repair_fingerprint_123e4567-e89b-12d3-a456-426614174000_visual.mp4.rendering.mp4');
+    const recentVisualTemp = path.join(videosDir,
+      'prod_repair_fingerprint_123e4567-e89b-12d3-a456-426614174001_visual.mp4.rendering.mp4');
+    const completedFinal = path.join(videosDir,
+      'prod_repair_fingerprint_123e4567-e89b-12d3-a456-426614174002.mp4');
     await fs.writeFile(staleVisualTemp, 'stale-temp');
+    await fs.writeFile(recentVisualTemp, 'active-temp');
+    await fs.writeFile(completedFinal, 'completed-output');
     const oldTime = new Date(Date.now() - 60_000);
     await fs.utimes(staleVisualTemp, oldTime, oldTime);
+    await fs.utimes(completedFinal, oldTime, oldTime);
     assert.equal(await repair.cleanupStaleRepairTemps('prod', 1000), 1,
-      'stale attempt-scoped visual render temps are recognized by cleanup');
+      'cleanup removes only stale temporary render files');
     await assert.rejects(fs.access(staleVisualTemp));
+    assert.equal(await fs.readFile(recentVisualTemp, 'utf8'), 'active-temp',
+      'recent in-progress render temp is preserved');
+    assert.equal(await fs.readFile(completedFinal, 'utf8'), 'completed-output',
+      'completed immutable output is never treated as a temp file');
   } finally {
     await fs.rm(artifactDir, { recursive: true, force: true });
   }
