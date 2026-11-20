@@ -79,6 +79,20 @@ async function run() {
     });
     assert.equal(commands.length, 4, 'changed visual direction must invalidate cached renders');
 
+    // Content changes must invalidate a scene even when size and mtime are preserved.
+    const imageStat = await fs.stat(imageOne);
+    const imageBytes = await fs.readFile(imageOne);
+    const replacementImage = await sharp({ create: { width: 32, height: 32, channels: 3, background: '#123456' } }).png().toBuffer();
+    assert.equal(replacementImage.length, imageBytes.length, 'fixture images must have identical byte lengths');
+    await fs.writeFile(imageOne, replacementImage);
+    await fs.utimes(imageOne, imageStat.atime, imageStat.mtime);
+    await renderer.renderScenes({
+      visualAssets: [imageOne, imageTwo], totalDuration: 18, outputDir: directory,
+      outputPrefix: 'test-film', resolution: '720p', aspectRatio: '16:9',
+      concept: { visualDirection: { palette: 'cool blue' }, scenePlan: [] }
+    });
+    assert.equal(commands.length, 5, 'same-size content replacement must invalidate only the changed scene');
+
     const placeholder = new CineCodeRenderer({ runFFmpeg: async () => {}, logger: { info() {} } });
     await assert.rejects(() => placeholder.renderScenes({
       visualAssets: [path.join(directory, 'placeholder.info')],
@@ -241,6 +255,19 @@ async function run() {
       );
       assert.equal(timelineRenders, 2, 'changed visual inputs must invalidate the visual cache');
       assert.equal(muxAttempts, 4, 'changed visual inputs require a fresh final mux');
+
+      // A same-size replacement with the original mtime must still invalidate the visual cache.
+      const sourceStat = await fs.stat(retrySource);
+      const sourceBytes = await fs.readFile(retrySource);
+      const sameSizeReplacement = Buffer.from(sourceBytes.map((byte, index) => (byte + index + 1) % 256));
+      assert.equal(sameSizeReplacement.length, sourceBytes.length);
+      await fs.writeFile(retrySource, sameSizeReplacement);
+      await fs.utimes(retrySource, sourceStat.atime, sourceStat.mtime);
+      await retryGenerator.generateHybridVideo(
+        [{ path: retrySource, duration: 3 }], [], retryAudio, retryOutput, 3, { width: 1280, height: 720 }
+      );
+      assert.equal(timelineRenders, 3, 'same-size source content changes must invalidate visual rendering');
+      assert.equal(muxAttempts, 5, 'same-size source content changes must invalidate final assembly');
     } else {
       process.stdout.write('FFmpeg unavailable locally; real render smoke test skipped\\n');
     }
