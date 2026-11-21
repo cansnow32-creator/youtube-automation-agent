@@ -356,7 +356,7 @@ class ShortsRepurposingService {
       contentType: 'short',
       sourceProductionId: productionId,
       shortClipId: clip.id
-    });
+    }, { assertLease, leaseProductionId: productionId });
     await assertLease();
     if (!schedule) {
       const error = new Error('The Short could not be scheduled because its rendered media or narration evidence is incomplete');
@@ -364,11 +364,26 @@ class ShortsRepurposingService {
       throw error;
     }
     await assertLease();
-    return this.db.updateShortClip(clip.id, {
-      status: 'scheduled', publishTime: publishTime.toISOString(), privacyStatus,
-      inheritedEvidence: evidence, approvedAt: new Date().toISOString(), scheduleId: schedule.id,
-      error: null
-    });
+    const approved = await this.db.claimShortClipForSchedule(
+      clip.id,
+      productionId,
+      schedule.id,
+      {
+        publishTime: publishTime.toISOString(),
+        privacyStatus,
+        inheritedEvidence: evidence,
+        approvedAt: new Date().toISOString()
+      },
+      assertLease.lease || null
+    );
+    if (!approved) {
+      const error = new Error('This Short approval was superseded before its schedule could be attached');
+      error.status = 409;
+      error.code = 'SHORT_APPROVAL_SUPERSEDED';
+      throw error;
+    }
+    await assertLease();
+    return approved;
   }
 
   inheritedEvidence(bundle) {
