@@ -2432,7 +2432,12 @@ class YouTubeAutomationAgent {
         status: 'draft',
         titleVariants: this.buildTitleExperimentVariants(seoData.title || script.title),
         thumbnailVariants: [
-          { label: 'Control', path: productionData.assets?.thumbnail?.path, concept: thumbnail.concept },
+          {
+            label: 'Control',
+            path: productionData.assets?.thumbnail?.path,
+            thumbnailRecordId: productionData.assets?.thumbnail?.thumbnailRecordId || thumbnail.id || null,
+            concept: thumbnail.concept
+          },
           ...generated
         ],
         createdAt: new Date().toISOString()
