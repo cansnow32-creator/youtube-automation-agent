@@ -204,10 +204,13 @@ class ShortsRepurposingService {
       await assertLease();
       await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), { encoding: 'utf8', flag: 'wx' });
       await assertLease();
-      await this.db.updateShortClip(clip.id, {
-        status: 'rendering', error: null, renderAttemptId: attemptId,
-        outputPath: null, captionsPath: null, renderedAt: null, renderMetadata: null
-      });
+      const claimed = await this.db.claimShortClipRender(clip.id, productionId, attemptId);
+      if (!claimed) {
+        const error = new Error('This Short is no longer eligible for this render attempt');
+        error.status = 409;
+        error.code = 'SHORTS_RENDER_ATTEMPT_CLAIMED';
+        throw error;
+      }
       await assertLease();
       const filter = this.videoFilter(clip.layout, captionsPath);
       await this.runFFmpeg([
