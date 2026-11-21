@@ -973,6 +973,12 @@ class Database {
     return production.id;
   }
 
+  async withLegacyDiscoverabilityTransaction(callback) {
+    const run = (sql, params = []) => this.executeQuery(sql, params);
+    const all = (sql, params = []) => this.getAllRows(sql, params);
+    return callback({ run, all });
+  }
+
   async withIsolatedTransaction(callback) {
     if (!this.dbPath) throw new Error('A persistent database path is required for atomic scene operations');
     const connection = new sqlite3.Database(this.dbPath);
@@ -2255,33 +2261,23 @@ class Database {
     } : null;
   }
 
-  async saveDiscoverabilityAudit(productionId, platform, report = {}) {
+  async saveDiscoverabilityAudit(productionId, platform, report = {}, lease = null) {
     const auditId = this.generateId('discoverability');
     const findings = Array.isArray(report.findings) ? report.findings : [];
-    await this.executeQuery('BEGIN TRANSACTION');
-    try {
-      await this.executeQuery(
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      await tx.run(
         `INSERT INTO discoverability_audits (
           id, production_id, platform, mode, engine, engine_version,
           schema_version, status, summary, error_code, error
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          auditId,
-          productionId,
-          platform || 'youtube',
-          report.mode || 'content',
-          report.engine?.name || 'darkzseo',
-          report.engine?.version || null,
-          report.schemaVersion || null,
-          report.status || 'unavailable',
-          JSON.stringify(report.summary || {}),
-          report.errorCode || null,
-          report.error || null
-        ]
+        [auditId, productionId, platform || 'youtube', report.mode || 'content',
+          report.engine?.name || 'darkzseo', report.engine?.version || null,
+          report.schemaVersion || null, report.status || 'unavailable',
+          JSON.stringify(report.summary || {}), report.errorCode || null, report.error || null]
       );
-
       for (const finding of findings) {
-        const previous = await this.getRow(
+        const previousRows = await tx.all(
           `SELECT df.review_status, df.review_reason, df.reviewed_at
            FROM discoverability_findings df
            JOIN discoverability_audits da ON da.id = df.audit_id
@@ -2289,24 +2285,30 @@ class Database {
            ORDER BY df.created_at DESC, df.rowid DESC LIMIT 1`,
           [productionId, platform || 'youtube', finding.fingerprint]
         );
-        await this.executeQuery(
+        const previous = previousRows[0] || null;
+        await tx.run(
           `INSERT INTO discoverability_findings (
             id, audit_id, rule_id, category, severity, applicability,
             message, remediation, fingerprint, review_status, review_reason, reviewed_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            this.generateId('finding'), auditId, finding.ruleId, finding.category,
+          [this.generateId('finding'), auditId, finding.ruleId, finding.category,
             finding.severity, JSON.stringify(finding.applicability || []), finding.message,
             finding.remediation || null, finding.fingerprint,
             previous?.review_status || 'pending', previous?.review_reason || null,
-            previous?.reviewed_at || null
-          ]
+            previous?.reviewed_at || null]
         );
       }
-      await this.executeQuery('COMMIT');
-    } catch (error) {
-      await this.executeQuery('ROLLBACK');
-      throw error;
+    };
+    if (lease) await this.withIsolatedTransaction(persist);
+    else {
+      await this.executeQuery('BEGIN TRANSACTION');
+      try {
+        await this.withLegacyDiscoverabilityTransaction(persist);
+        await this.executeQuery('COMMIT');
+      } catch (error) {
+        await this.executeQuery('ROLLBACK').catch(() => {});
+        throw error;
+      }
     }
     return this.getDiscoverabilityAudit(auditId);
   }
