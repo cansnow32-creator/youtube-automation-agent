@@ -1797,7 +1797,15 @@ class Database {
         [productionId, sceneId]
       );
       const current = this.parseProductionScene(rows[0]);
-      if (!current) return null;
+      if (!current) {
+        if (lease) {
+          const error = new Error('Production scene no longer exists; the update was not committed');
+          error.code = 'PRODUCTION_SCENE_NOT_FOUND';
+          error.status = 404;
+          throw error;
+        }
+        return null;
+      }
       const next = { ...current, ...changes };
       const result = await tx.run(
         `UPDATE production_scenes SET
