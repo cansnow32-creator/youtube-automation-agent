@@ -10,7 +10,7 @@ class ProvenanceService {
     this.db = db;
   }
 
-  async initialize(productionId, production = {}) {
+  async initialize(productionId, production = {}, lease = null) {
     const existing = await this.db.getContentProvenance(productionId);
     if (existing) return existing;
 
@@ -18,7 +18,7 @@ class ProvenanceService {
     const sourceIdByUrl = new Map(sources.map(source => [source.url, source.id]));
     const claims = this.normalizeClaims(production.script?.claims || [], sources, sourceIdByUrl);
     const provenance = this.build({ sources, claims, containsSyntheticMedia: production.containsSyntheticMedia === true });
-    await this.db.saveContentProvenance(productionId, provenance);
+    await this.db.saveContentProvenance(productionId, provenance, lease);
     return this.db.getContentProvenance(productionId);
   }
 
