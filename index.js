@@ -1183,11 +1183,27 @@ class YouTubeAutomationAgent {
         if (bundle.review_status === 'approved' && bundle.schedule?.status === 'published') {
           return res.status(409).json({ error: 'Published content cannot be edited here' });
         }
-        const editorData = this.validateEditorData(req.body, bundle.editorData);
-        const result = await this.db.saveContentReview(
-          bundle.id,
-          buildContentReviewAfterEdit(bundle, editorData, req.body.reviewNotes)
-        );
+        if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+          return res.status(503).json({ error: 'Production operation lock is required for safe content edits' });
+        }
+        const result = await this.scenes.withProductionOperationLease(bundle.id, async assertLease => {
+          await assertLease();
+          const current = await this.db.getProductionBundle(bundle.id);
+          if (!current) return null;
+          if (current.schedule?.status === 'published' ||
+              current.schedule?.youtubeId ||
+              ['uploading', 'uploaded', 'reconciliation_required'].includes(current.schedule?.status)) {
+            return { conflict: true };
+          }
+          const editorData = this.validateEditorData(req.body, current.editorData);
+          await assertLease();
+          return this.db.saveContentReview(
+            current.id,
+            buildContentReviewAfterEdit(current, editorData, req.body.reviewNotes),
+            assertLease.lease
+          );
+        }, 'content edit');
+        if (result?.conflict) return res.status(409).json({ error: 'Content with a published or unresolved upload cannot be edited' });
         return res.json({ success: true, result: this.decorateContentBundle(result) });
       } catch (error) {
         return res.status(400).json({ success: false, error: error.message });
@@ -2561,6 +2577,21 @@ class YouTubeAutomationAgent {
   }
 
   async approveContent(productionId, input) {
+    if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+      const error = new Error('Production operation lock is required for safe content approval');
+      error.status = 503;
+      error.code = 'CONTENT_APPROVAL_LOCK_UNAVAILABLE';
+      throw error;
+    }
+    return this.scenes.withProductionOperationLease(
+      productionId,
+      assertLease => this.approveContentUnlocked(productionId, input, assertLease),
+      'content approval'
+    );
+  }
+
+  async approveContentUnlocked(productionId, input, assertLease = async () => {}) {
+    await assertLease();
     const bundle = await this.db.getProductionBundle(productionId);
     if (!bundle) {
       const error = new Error('Content not found');
@@ -2623,12 +2654,14 @@ class YouTubeAutomationAgent {
       scenes: bundle.scenes || []
     };
     const profile = await this.db.getChannelProfile() || {};
+    await assertLease();
     const quality = await this.operator.runQualityChecks(productionData, profile);
+    await assertLease();
     if (!quality.passed) {
       await this.db.saveContentReview(bundle.id, {
         status: 'needs_attention', editorData, qualityChecks: quality.checks,
         reviewNotes: `Blocking checks failed: ${quality.blockingFailures.join(', ')}`
-      });
+      }, assertLease.lease);
       const error = new Error('Content still has blocking quality failures');
       error.status = 409;
       error.quality = quality;
@@ -2637,7 +2670,7 @@ class YouTubeAutomationAgent {
 
     let scheduleEntry = bundle.schedule;
     if (!scheduleEntry) {
-      scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
+      scheduleEntry = await this.agents.publishing.scheduleContent(productionData, { assertLease, lease: assertLease.lease });
     } else if (scheduleEntry.status !== 'published') {
       scheduleEntry.title = productionData.script.title;
       scheduleEntry.publishTime = productionData.scheduledPublishTime;
@@ -2652,7 +2685,8 @@ class YouTubeAutomationAgent {
         privacyStatus: editorData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
         containsSyntheticMedia: productionData.containsSyntheticMedia
       };
-      await this.db.updateScheduleEntry(scheduleEntry);
+      await assertLease();
+      await this.db.updateScheduleEntry(scheduleEntry, assertLease.lease, bundle.id);
       await this.agents.publishing.loadPublishQueue();
     }
     if (!scheduleEntry) {
@@ -2661,11 +2695,12 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
+    await assertLease();
     await this.db.saveContentReview(bundle.id, {
       status: 'approved', editorData, qualityChecks: quality.checks,
       reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
-    });
-    await this.db.updateProductionStatus(bundle.id, 'scheduled');
+    }, assertLease.lease);
+    await this.db.updateProductionStatus(bundle.id, 'scheduled', assertLease.lease);
     await this.operator.notify({
       type: 'content_approved', level: 'success', title: 'Content approved',
       message: `${productionData.script.title} is scheduled for ${scheduleEntry.publishTime}`,
