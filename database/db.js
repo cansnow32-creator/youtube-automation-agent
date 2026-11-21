@@ -2759,12 +2759,12 @@ class Database {
   }
 
   // Publishing methods
-  async saveScheduleEntry(entry, lease = null) {
+  async saveScheduleEntry(entry, lease = null, leaseProductionId = entry.productionId) {
     const id = this.generateId('schedule');
     const insert = async tx => {
       if (lease) {
         await this.assertProductionLeaseInTransaction(
-          tx, lease, entry.productionId, false, entry.metadata?.generationJobId || null
+          tx, lease, leaseProductionId, false, entry.metadata?.generationJobId || null
         );
       }
       const result = await tx.run(
