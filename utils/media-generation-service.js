@@ -152,6 +152,7 @@ class MediaGenerationService {
   }
 
   async generateClip({ jobId, productionId, scene, provider, outputPath, request, assertLease = async () => {} }) {
+    const lease = assertLease.lease || null;
     await assertLease();
     if (typeof this.db?.findMediaGenerationTask !== 'function' ||
         typeof this.db?.createMediaGenerationTask !== 'function' ||
@@ -178,7 +179,7 @@ class MediaGenerationService {
       task = await this.db.createMediaGenerationTask({
         jobId, productionId, sceneIndex: scene.index, provider: provider.id, model: provider.model,
         status: 'submitting', request: this.safeRequest(request)
-      });
+      }, lease);
       // A concurrent claimant may have inserted the unique task row after our
       // read. Only an explicit database ownership result authorizes a provider call.
       taskCreatedThisInvocation = task?.createdByThisInvocation === true;
@@ -215,6 +216,7 @@ class MediaGenerationService {
     });
     const downloadPath = `${outputPath}.${crypto.randomUUID()}.part.mp4`;
     let outputPublished = false;
+    let outputPersisted = false;
     try {
       await assertLease();
       const resumeExistingRemoteTask = Boolean(task.external_task_id && [
@@ -250,7 +252,8 @@ class MediaGenerationService {
             task.id,
             task.status,
             task.external_task_id,
-            previousTaskHistory
+            previousTaskHistory,
+            lease
           );
           if (!claim?.claimed) {
             const error = new Error(`Another worker already claimed media task ${task.id} for retry; refusing a second provider submission.`);
@@ -294,7 +297,8 @@ class MediaGenerationService {
             task.id,
             task.status,
             task.external_task_id,
-            previousTaskHistory
+            previousTaskHistory,
+            lease
           );
           if (!claim?.claimed) {
             const error = new Error(`Another worker already claimed media task ${task.id} for retry; refusing a second provider submission.`);
@@ -328,7 +332,7 @@ class MediaGenerationService {
         externalTaskId: remoteTaskId,
         providerData: providerDataForTask(remote),
         error: remote.error || null
-      });
+      }, lease);
       await assertLease();
 
       const started = Date.now();
@@ -349,7 +353,7 @@ class MediaGenerationService {
           status: remote.status === 'succeeded' ? 'downloading' : remote.status,
           providerData: providerDataForTask(remote),
           error: remote.error || null
-        });
+        }, lease);
         await assertLease();
       }
 
@@ -370,7 +374,8 @@ class MediaGenerationService {
       task = await this.updateTask(task, {
         status: 'succeeded', outputPath, completedAt: new Date().toISOString(),
         providerData: providerDataForTask(remote), error: null
-      });
+      }, lease);
+      outputPersisted = true;
       await assertLease();
       return { task, outputPath, reused: false };
     } catch (error) {
@@ -381,7 +386,7 @@ class MediaGenerationService {
       try {
         await assertLease();
       } catch (leaseError) {
-        if (outputPublished) await fs.unlink(outputPath).catch(() => {});
+        if (outputPublished && !outputPersisted) await fs.unlink(outputPath).catch(() => {});
         if (remoteTaskId && !TERMINAL.has(remote?.status)) {
           await this.cancelRemoteTaskOnLeaseLoss(provider, remoteTaskId);
         }
@@ -629,7 +634,7 @@ class MediaGenerationService {
     };
   }
 
-  async updateTask(task, changes) {
+  async updateTask(task, changes, lease = null) {
     if (!this.db?.updateMediaGenerationTask) return {
       ...task,
       ...changes,
@@ -637,7 +642,7 @@ class MediaGenerationService {
       output_path: changes.outputPath === undefined ? task.output_path : changes.outputPath,
       providerData: changes.providerData === undefined ? task.providerData : changes.providerData
     };
-    return this.db.updateMediaGenerationTask(task.id, changes);
+    return this.db.updateMediaGenerationTask(task.id, changes, lease);
   }
 
   async assertNotCancelled(jobId, provider, task) {
