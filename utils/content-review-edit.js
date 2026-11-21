@@ -1,6 +1,14 @@
+function stableSerialize(value) {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function buildContentReviewAfterEdit(bundle, editorData, reviewNotes) {
   const previousEditorData = bundle.editorData || {};
-  const changed = JSON.stringify(editorData || {}) !== JSON.stringify(previousEditorData);
+  const changed = stableSerialize(editorData || {}) !== stableSerialize(previousEditorData);
   const approvalRevoked = bundle.review_status === 'approved' && changed;
   return {
     status: approvalRevoked ? 'needs_review' : (bundle.review_status || 'needs_review'),
