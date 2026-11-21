@@ -127,7 +127,9 @@ class ShortsRepurposingService {
     });
   }
 
-  async update(productionId, clipId, input = {}) {
+  async update(productionId, clipId, input = {}, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    await assertLease();
     const clip = await this.requireClip(productionId, clipId);
     if (clip.status === 'rendering') {
       const error = new Error('This Short cannot be edited while a render attempt is in progress');
@@ -169,7 +171,8 @@ class ShortsRepurposingService {
       changes.captionsPath = null;
       changes.renderMetadata = null;
     }
-    return this.db.updateShortClip(clipId, changes);
+    await assertLease();
+    return this.db.updateShortClip(clipId, changes, assertLease.lease || null, productionId);
   }
 
   async render(productionId, clipId, options = {}) {
