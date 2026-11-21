@@ -1144,7 +1144,13 @@ class Database {
     );
   }
 
-  async updateProductionStatus(productionId, status) {
+  async updateProductionStatus(productionId, status, lease = null) {
+    const update = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      const result = await tx.run('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
+      await this.requireLeaseWrite(result, lease);
+    };
+    if (lease) return this.withIsolatedTransaction(update);
     await this.executeQuery('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
   }
 
@@ -2139,8 +2145,29 @@ class Database {
     return this.getScriptQualityReview(reviewId);
   }
 
-  async saveContentReview(productionId, review = {}) {
-    await this.executeQuery(
+  async saveContentReview(productionId, review = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      await tx.run(
+        `INSERT INTO content_reviews (
+          production_id, status, editor_data, quality_checks, review_notes, reviewed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(production_id) DO UPDATE SET
+          status = excluded.status, editor_data = excluded.editor_data,
+          quality_checks = excluded.quality_checks, review_notes = excluded.review_notes,
+          reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
+        [
+          productionId,
+          review.status || 'needs_review',
+          JSON.stringify(review.editorData || {}),
+          JSON.stringify(review.qualityChecks || []),
+          review.reviewNotes || null,
+          review.reviewedAt || null
+        ]
+      );
+    };
+    if (lease) await this.withIsolatedTransaction(persist);
+    else await this.executeQuery(
       `INSERT INTO content_reviews (
         production_id, status, editor_data, quality_checks, review_notes, reviewed_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
@@ -2697,40 +2724,45 @@ class Database {
   }
 
   // Publishing methods
-  async saveScheduleEntry(entry) {
+  async saveScheduleEntry(entry, lease = null) {
     const id = this.generateId('schedule');
-    const result = await this.executeQuery(
-      `INSERT INTO publish_schedule (
-        id, production_id, title, publish_time, status,
-        priority, metadata
-      )
-      SELECT ?, ?, ?, ?, ?, ?, ?
-      WHERE NOT EXISTS (
-        SELECT 1 FROM publish_schedule WHERE production_id = ?
-      )`,
-      [
-        id,
-        entry.productionId,
-        entry.title,
-        entry.publishTime,
-        entry.status,
-        entry.priority,
-        JSON.stringify(entry.metadata),
-        entry.productionId
-      ]
-    );
-
+    const insert = async tx => {
+      if (lease) {
+        await this.assertProductionLeaseInTransaction(
+          tx, lease, entry.productionId, false, entry.metadata?.generationJobId || null
+        );
+      }
+      const result = await tx.run(
+        `INSERT INTO publish_schedule (
+          id, production_id, title, publish_time, status,
+          priority, metadata
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM publish_schedule WHERE production_id = ?
+        )`,
+        [id, entry.productionId, entry.title, entry.publishTime, entry.status,
+          entry.priority, JSON.stringify(entry.metadata), entry.productionId]
+      );
+      return result;
+    };
+    const result = lease
+      ? await this.withIsolatedTransaction(insert)
+      : await this.executeQuery(
+        `INSERT INTO publish_schedule (
+          id, production_id, title, publish_time, status, priority, metadata
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM publish_schedule WHERE production_id = ?)`,
+        [id, entry.productionId, entry.title, entry.publishTime, entry.status,
+          entry.priority, JSON.stringify(entry.metadata), entry.productionId]
+      );
     if (result.changes === 1) {
       entry.id = id;
       return entry;
     }
-
-    // The conditional insert is a single SQLite write statement. If another
-    // connection won the race, return its durable row instead of creating a
-    // second schedule for the same production.
     const existing = await this.getLatestScheduleEntry(entry.productionId);
     if (existing) return existing;
-
     const error = new Error('Schedule entry was not inserted and no existing row could be reloaded');
     error.code = 'SCHEDULE_CREATE_CONFLICT';
     error.status = 409;
