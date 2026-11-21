@@ -113,10 +113,6 @@ async function run() {
 
     // A stale owner must not update production metadata after another worker
     // takes over an expired lease. The write itself is fenced in SQL.
-    await connectionA.executeQuery(`CREATE TABLE productions (
-      id TEXT PRIMARY KEY, status TEXT, assets TEXT, timeline TEXT,
-      scheduled_publish_time TEXT, priority INTEGER
-    )`);
     await connectionA.executeQuery(
       'INSERT INTO productions (id, status, assets, timeline, priority) VALUES (?, ?, ?, ?, ?)',
       ['guarded-production', 'processing', '{}', '{}', 50]
