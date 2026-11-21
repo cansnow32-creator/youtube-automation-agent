@@ -2255,7 +2255,7 @@ class YouTubeAutomationAgent {
     productionData.provenance = await this.provenance.initialize(contentId, productionData, assertLease.lease || null);
     await assertLease();
     productionData.discoverability = this.discoverability
-      ? await this.discoverability.auditProduction(productionData, profile, 'youtube')
+      ? await this.discoverability.auditProduction(productionData, profile, 'youtube', assertLease)
       : null;
     await assertLease();
     this.logger.info(`Content saved with ID: ${contentId}`);
