@@ -66,6 +66,15 @@ async function run() {
     await database.executeQuery(
       "UPDATE shorts_clips SET approved_at = datetime('now') WHERE id = 'short-2'"
     );
+    await database.executeQuery(
+      "UPDATE content_reviews SET status = 'needs_review' WHERE production_id = 'production-2'"
+    );
+    assert.equal(await database.claimScheduleEntryForUpload('unapproved-short'), null,
+      'a Short approval must not outlive revocation of its source production approval');
+
+    await database.executeQuery(
+      "UPDATE content_reviews SET status = 'approved' WHERE production_id = 'production-2'"
+    );
     const approvedShort = await database.claimScheduleEntryForUpload('unapproved-short');
     assert.equal(approvedShort.status, 'uploading',
       'a Short with explicit approval and verified inherited evidence may be claimed');
