@@ -1407,11 +1407,39 @@ class Database {
     );
   }
 
-  async createMediaGenerationTask(input = {}) {
+  async createMediaGenerationTask(input = {}, lease = null) {
     const jobId = input.jobId || null;
     const productionId = input.productionId || null;
     if (!jobId && !productionId) {
       throw new Error('Media generation tasks require a generation job ID or production ID for safe scoping');
+    }
+
+    if (lease) {
+      return this.withIsolatedTransaction(async tx => {
+        await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+        const existingRows = jobId
+          ? await tx.all(
+            'SELECT * FROM media_generation_tasks WHERE job_id = ? AND scene_index = ? AND provider = ?',
+            [jobId, input.sceneIndex, input.provider]
+          )
+          : await tx.all(
+            'SELECT * FROM media_generation_tasks WHERE job_id IS NULL AND production_id = ? AND scene_index = ? AND provider = ?',
+            [productionId, input.sceneIndex, input.provider]
+          );
+        if (existingRows[0]) {
+          return { ...this.parseMediaGenerationTask(existingRows[0]), createdByThisInvocation: false };
+        }
+        const id = this.generateId('media');
+        await tx.run(
+          `INSERT INTO media_generation_tasks (
+            id, job_id, production_id, scene_index, provider, model, status, request, provider_data
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
+          [id, jobId, productionId, input.sceneIndex, input.provider, input.model,
+            input.status || 'submitting', JSON.stringify(input.request || {})]
+        );
+        const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [id]);
+        return { ...this.parseMediaGenerationTask(rows[0]), createdByThisInvocation: true };
+      });
     }
 
     // NULL job IDs do not participate in SQLite UNIQUE(job_id, scene_index, provider).
@@ -1482,31 +1510,69 @@ class Database {
     return this.parseMediaGenerationTask(row);
   }
 
-  async claimMediaGenerationTaskForSubmission(taskId, expectedStatus, expectedExternalTaskId, previousTasks = []) {
-    if (!['failed', 'cancelled'].includes(expectedStatus)) {
-      return { claimed: false, task: await this.getMediaGenerationTaskById(taskId) };
-    }
+  async claimMediaGenerationTaskForSubmission(taskId, expectedStatus, expectedExternalTaskId, previousTasks = [], lease = null) {
     const history = Array.isArray(previousTasks) ? previousTasks.slice(-10) : [];
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (!['failed', 'cancelled'].includes(expectedStatus)) {
+        const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+        return { claimed: false, task: this.parseMediaGenerationTask(rows[0]) };
+      }
+      const result = await tx.run(
+        `UPDATE media_generation_tasks SET
+          status = 'submitting',
+          external_task_id = NULL,
+          provider_data = ?,
+          output_path = NULL,
+          error = NULL,
+          completed_at = NULL,
+          updated_at = datetime('now')
+         WHERE id = ? AND status = ? AND external_task_id IS ?`,
+        [JSON.stringify(history.length ? { previousTasks: history } : {}), taskId, expectedStatus, expectedExternalTaskId || null]
+      );
+      const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+      return { claimed: result.changes === 1, task: this.parseMediaGenerationTask(rows[0]) };
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    const current = await this.getMediaGenerationTaskById(taskId);
+    if (!['failed', 'cancelled'].includes(expectedStatus) || !current) {
+      return { claimed: false, task: current };
+    }
     const result = await this.executeQuery(
       `UPDATE media_generation_tasks SET
-        status = 'submitting',
-        external_task_id = NULL,
-        provider_data = ?,
-        output_path = NULL,
-        error = NULL,
-        completed_at = NULL,
-        updated_at = datetime('now')
+        status = 'submitting', external_task_id = NULL, provider_data = ?,
+        output_path = NULL, error = NULL, completed_at = NULL, updated_at = datetime('now')
        WHERE id = ? AND status = ? AND external_task_id IS ?`,
       [JSON.stringify(history.length ? { previousTasks: history } : {}), taskId, expectedStatus, expectedExternalTaskId || null]
     );
-    return {
-      claimed: result.changes === 1,
-      task: await this.getMediaGenerationTaskById(taskId)
-    };
+    return { claimed: result.changes === 1, task: await this.getMediaGenerationTaskById(taskId) };
   }
 
-  async updateMediaGenerationTask(id, changes = {}) {
-    const current = this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
+  async updateMediaGenerationTask(id, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [id]);
+      const current = this.parseMediaGenerationTask(rows[0]);
+      if (!current) return null;
+      await tx.run(
+        `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
+         output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`,
+        [
+          changes.model === undefined ? current.model : changes.model,
+          changes.externalTaskId === undefined ? current.external_task_id : changes.externalTaskId,
+          changes.status === undefined ? current.status : changes.status,
+          JSON.stringify(changes.providerData === undefined ? (current.providerData ?? {}) : (changes.providerData ?? {})),
+          changes.outputPath === undefined ? current.output_path : changes.outputPath,
+          changes.error === undefined ? current.error : changes.error,
+          changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+          id
+        ]
+      );
+      const saved = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [id]);
+      return this.parseMediaGenerationTask(saved[0]);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    const current = await this.getMediaGenerationTaskById(id);
     if (!current) return null;
     await this.executeQuery(
       `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
@@ -1522,40 +1588,7 @@ class Database {
         id
       ]
     );
-    return this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
-  }
-
-  async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}) {
-    const current = await this.getMediaGenerationTaskById(taskId);
-    const expectedRemoteId = expectedExternalTaskId || null;
-    if (!current || current.status !== expectedStatus || (current.external_task_id || null) !== expectedRemoteId) {
-      return { updated: false, task: current };
-    }
-
-    // The WHERE clause is the concurrency guard. The read above only supplies
-    // unchanged columns; it is never treated as proof that this caller still owns
-    // the row after an asynchronous provider status lookup.
-    const result = await this.executeQuery(
-      `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
-       output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now')
-       WHERE id = ? AND status = ? AND external_task_id IS ?`,
-      [
-        changes.model === undefined ? current.model : changes.model,
-        changes.externalTaskId === undefined ? current.external_task_id : changes.externalTaskId,
-        changes.status === undefined ? current.status : changes.status,
-        JSON.stringify(changes.providerData === undefined ? (current.providerData ?? {}) : (changes.providerData ?? {})),
-        changes.outputPath === undefined ? current.output_path : changes.outputPath,
-        changes.error === undefined ? current.error : changes.error,
-        changes.completedAt === undefined ? current.completed_at : changes.completedAt,
-        taskId,
-        expectedStatus,
-        expectedRemoteId
-      ]
-    );
-    return {
-      updated: result.changes === 1,
-      task: await this.getMediaGenerationTaskById(taskId)
-    };
+    return this.getMediaGenerationTaskById(id);
   }
 
   async listMediaGenerationTasks(jobId) {
