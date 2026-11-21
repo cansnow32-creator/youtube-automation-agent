@@ -375,6 +375,12 @@ class MediaGenerationService {
         status: 'succeeded', outputPath, completedAt: new Date().toISOString(),
         providerData: providerDataForTask(remote), error: null
       }, lease);
+      if (!task || task.output_path !== outputPath) {
+        const error = new Error('The completed media artifact could not be confirmed in the durable task record');
+        error.code = 'MEDIA_TASK_PERSISTENCE_FAILED';
+        error.status = 503;
+        throw error;
+      }
       outputPersisted = true;
       await assertLease();
       return { task, outputPath, reused: false };
