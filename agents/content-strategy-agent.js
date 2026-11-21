@@ -418,7 +418,7 @@ class ContentStrategyAgent {
       await assertLease();
       if (aiStrategy) {
         await assertLease();
-        await this.db.saveContentStrategy(aiStrategy);
+        await this.db.saveContentStrategy(aiStrategy, assertLease.lease || null);
         await assertLease();
         this.logger.info(`Generated AI strategy for: ${aiStrategy.topic}`);
         return aiStrategy;
@@ -456,7 +456,7 @@ class ContentStrategyAgent {
 
       // Save only while this worker still owns the generation job.
       await assertLease();
-      await this.db.saveContentStrategy(strategy);
+      await this.db.saveContentStrategy(strategy, assertLease.lease || null);
       await assertLease();
 
       this.logger.info(`Generated strategy for: ${topic}`);
