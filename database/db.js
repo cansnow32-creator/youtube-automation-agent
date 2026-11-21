@@ -1978,6 +1978,22 @@ class Database {
     return this.getShortClip(id);
   }
 
+  async claimShortClipRender(id, productionId, attemptId) {
+    if (!id || !productionId || !attemptId) throw new Error('Short render claim requires clip, production, and attempt IDs');
+    const result = await this.executeQuery(
+      `UPDATE shorts_clips SET
+        status = 'rendering', error = NULL, render_attempt_id = ?,
+        output_path = NULL, captions_path = NULL, rendered_at = NULL,
+        render_metadata = NULL, updated_at = datetime('now')
+       WHERE id = ? AND production_id = ?
+         AND status IN ('proposed', 'failed', 'rendered')`,
+      [attemptId, id, productionId]
+    );
+    if (result.changes !== 1) return null;
+    const saved = await this.getShortClip(id);
+    return saved?.status === 'rendering' && saved.renderAttemptId === attemptId ? saved : null;
+  }
+
   async updateShortClipForSchedule(id, scheduleId, changes = {}) {
     const result = await this.executeQuery(
       `UPDATE shorts_clips SET
