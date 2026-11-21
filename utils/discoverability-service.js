@@ -77,9 +77,10 @@ class DiscoverabilityService {
     };
   }
 
-  async auditProduction(production, profile = {}, platform = 'youtube') {
+  async auditProduction(production, profile = {}, platform = 'youtube', assertLease = async () => {}) {
     if (!production?.id) throw this.error('A saved production is required for discoverability auditing', 400);
     if (platform !== 'youtube') throw this.error(`Platform "${platform}" is not enabled yet`, 400);
+    await assertLease();
     let report;
     try {
       report = this.normalizeReport(
@@ -90,7 +91,8 @@ class DiscoverabilityService {
       this.logger.warn(`DarkzSEO audit unavailable for ${production.id}: ${error.message}`);
       report = this.unavailableReport(error);
     }
-    return this.db.saveDiscoverabilityAudit(production.id, platform, report);
+    await assertLease();
+    return this.db.saveDiscoverabilityAudit(production.id, platform, report, assertLease.lease || null);
   }
 
   async reviewFinding(findingId, input = {}) {
