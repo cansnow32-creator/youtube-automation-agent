@@ -62,7 +62,7 @@ class ThumbnailDesignerAgent {
       };
 
       await assertLease();
-      await this.db.saveThumbnail(thumbnailData, assertLease.lease || null);
+      thumbnailData.id = await this.db.saveThumbnail(thumbnailData, assertLease.lease || null);
       // Keep the durable optimized file once its database row has been saved.
       savedPath = optimizedThumbnail;
       await assertLease();
