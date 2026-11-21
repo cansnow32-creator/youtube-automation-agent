@@ -21,7 +21,7 @@ async function main() {
     await dbA.executeQuery(`CREATE TABLE publish_schedule (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, title TEXT NOT NULL,
       publish_time TEXT NOT NULL, status TEXT, priority INTEGER, metadata TEXT,
-      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT,
+      youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT, upload_attempt_id TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
     const scheduleDraft = suffix => ({
@@ -56,6 +56,8 @@ async function main() {
     ]);
     assert.equal(claims.filter(Boolean).length, 1, 'only one SQLite connection may claim a scheduled upload');
     const winner = claims.find(Boolean);
+    const firstAttemptId = winner.uploadAttemptId;
+    assert.ok(firstAttemptId, 'the claim returns a unique upload-attempt fencing token');
     assert.equal(winner.status, 'uploading');
     assert.equal(winner.productionId, 'short-1');
     assert.ok(winner.uploadStartedAt, 'the atomic claim records when the upload attempt began');
@@ -72,17 +74,44 @@ async function main() {
     await dbA.executeQuery("UPDATE publish_schedule SET status = 'failed' WHERE id = ?", ['schedule-1']);
     const retry = await dbB.claimScheduleEntryForUpload('schedule-1');
     assert.equal(retry.status, 'uploading', 'a known failed pre-upload attempt can be retried');
+    assert.ok(retry.uploadAttemptId);
+    assert.notEqual(retry.uploadAttemptId, firstAttemptId,
+      'a retry receives a new fencing token, even when it reuses the same schedule row');
 
-    const recorded = await dbA.recordScheduleEntryUploadResult('schedule-1', 'youtube-video-123', { source: 'test' });
+    const staleResult = await dbA.recordScheduleEntryUploadResult(
+      'schedule-1', 'stale-worker-video', { source: 'stale' }, firstAttemptId
+    );
+    assert.equal(staleResult, null, 'a stale worker cannot attach its video ID to a newer upload attempt');
+    const staleFinalize = await dbA.updateScheduleEntryForUpload({
+      id: 'schedule-1', status: 'published', youtubeId: 'stale-worker-video',
+      youtubeUrl: 'https://www.youtube.com/watch?v=stale-worker-video'
+    }, firstAttemptId);
+    assert.equal(staleFinalize, null, 'a stale worker cannot finalize a newer upload attempt');
+
+    const recorded = await dbA.recordScheduleEntryUploadResult(
+      'schedule-1', 'youtube-video-123', { source: 'test' }, retry.uploadAttemptId
+    );
     assert.equal(recorded.status, 'uploaded');
     assert.equal(recorded.youtubeId, 'youtube-video-123');
     assert.equal(recorded.youtubeUrl, 'https://www.youtube.com/watch?v=youtube-video-123');
     assert.deepEqual(recorded.metadata, { source: 'test' });
-    const idempotent = await dbB.recordScheduleEntryUploadResult('schedule-1', 'youtube-video-123', { source: 'test' });
+    const idempotent = await dbB.recordScheduleEntryUploadResult(
+      'schedule-1', 'youtube-video-123', { source: 'test' }, retry.uploadAttemptId
+    );
     assert.equal(idempotent.youtubeId, 'youtube-video-123',
       'recording the same accepted YouTube ID twice must be idempotent');
-    const conflicting = await dbB.recordScheduleEntryUploadResult('schedule-1', 'different-video-id', {});
+    const conflicting = await dbB.recordScheduleEntryUploadResult(
+      'schedule-1', 'different-video-id', {}, retry.uploadAttemptId
+    );
     assert.equal(conflicting, null, 'a different video ID must never overwrite the accepted upload');
+    const finalized = await dbA.updateScheduleEntryForUpload({
+      ...recorded, status: 'published', publishedAt: new Date().toISOString()
+    }, retry.uploadAttemptId);
+    assert.equal(finalized.status, 'published', 'the current upload attempt can finalize its own schedule');
+    const staleAfterFinalize = await dbB.updateScheduleEntryForUpload({
+      ...recorded, status: 'failed', error: 'late stale failure'
+    }, firstAttemptId);
+    assert.equal(staleAfterFinalize, null, 'a late stale failure cannot downgrade a newer published schedule');
     process.stdout.write('Publish schedule upload claim CAS tests passed\\n');
   } finally {
     await Promise.all([close(dbA.db), close(dbB.db)]);
