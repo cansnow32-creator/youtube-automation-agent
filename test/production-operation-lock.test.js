@@ -298,6 +298,58 @@ async function run() {
       'INSERT INTO production_scenes (id, production_id, position, label) VALUES (?, ?, ?, ?)',
       ['keep-scene', 'guarded-production', 0, 'Original']
     );
+
+    assert.equal(await connectionA.acquireProductionOperationLock(productionJobLock, 'production-job-current', 10000), true);
+    await connectionA.executeQuery(`CREATE TABLE production_scene_revisions (
+      id TEXT PRIMARY KEY, production_id TEXT, scene_id TEXT, action TEXT, status TEXT,
+      before_state TEXT, after_state TEXT, cost_evidence TEXT, error TEXT, created_at TEXT, completed_at TEXT
+    )`);
+    await connectionA.executeQuery(`CREATE TABLE content_provenance (
+      production_id TEXT PRIMARY KEY, sources TEXT, claims TEXT, contains_synthetic_media INTEGER,
+      status TEXT, summary TEXT, reviewed_at TEXT, updated_at TEXT
+    )`);
+    const initialScene = {
+      id: 'generation-owned-scene', label: 'Scene 1', scriptText: 'A scene',
+      prompt: 'A scene prompt', duration: 5, assetType: 'image',
+      assetOrigin: 'generated', assetPath: '/data/scene.png'
+    };
+    await assert.rejects(
+      connectionA.replaceProductionScenes(productionRecord.id, [initialScene], staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const generationScenes = await connectionB.replaceProductionScenes(
+      productionRecord.id, [initialScene], currentProductionLease
+    );
+    assert.equal(generationScenes.length, 1);
+    assert.equal(generationScenes[0].assetPath, '/data/scene.png');
+    await assert.rejects(
+      connectionA.updateProductionScene(productionRecord.id, initialScene.id, { label: 'Stale edit' }, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const updatedGenerationScene = await connectionB.updateProductionScene(
+      productionRecord.id, initialScene.id, { label: 'Current edit' }, currentProductionLease
+    );
+    assert.equal(updatedGenerationScene.label, 'Current edit');
+    await assert.rejects(
+      connectionA.saveProductionSceneRevision({
+        productionId: productionRecord.id, sceneId: initialScene.id, action: 'edit'
+      }, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await connectionB.saveProductionSceneRevision({
+      productionId: productionRecord.id, sceneId: initialScene.id, action: 'edit',
+      before: { label: 'Scene 1' }, after: { label: 'Current edit' }
+    }, currentProductionLease);
+    await assert.rejects(
+      connectionA.saveContentProvenance(productionRecord.id, { status: 'stale' }, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const savedProvenance = await connectionB.saveContentProvenance(
+      productionRecord.id, { status: 'reviewed', containsSyntheticMedia: true }, currentProductionLease
+    );
+    assert.equal(savedProvenance.status, 'reviewed');
+    assert.equal(savedProvenance.containsSyntheticMedia, true);
+    await connectionB.releaseProductionOperationLock(productionJobLock, 'production-job-current');
     await assert.rejects(
       connectionA.replaceProductionScenes('guarded-production', [], {
         productionId: 'guarded-production', owner: 'old-owner'
