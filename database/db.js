@@ -131,6 +131,8 @@ class Database {
         youtube_url TEXT,
         published_at TEXT,
         error_message TEXT,
+        upload_started_at TEXT,
+        upload_attempt_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (production_id) REFERENCES productions(id)
       )`,
@@ -725,7 +727,8 @@ class Database {
       render_metadata: 'TEXT'
     });
     await this.ensureColumns('publish_schedule', {
-      upload_started_at: 'TEXT'
+      upload_started_at: 'TEXT',
+      upload_attempt_id: 'TEXT'
     });
     // Existing in-flight rows get a fresh conservative grace period after migration.
     await this.executeQuery(
@@ -2805,34 +2808,63 @@ class Database {
   }
 
   async claimScheduleEntryForUpload(id) {
+    const attemptId = this.generateId('upload_attempt');
     const result = await this.executeQuery(
       `UPDATE publish_schedule
-       SET status = 'uploading', error_message = NULL, upload_started_at = ?
+       SET status = 'uploading', error_message = NULL, upload_started_at = ?, upload_attempt_id = ?
        WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL`,
-      [new Date().toISOString(), id]
+      [new Date().toISOString(), attemptId, id]
     );
     if (result.changes !== 1) return null;
     const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
     return row ? this.deserializeScheduleEntry(row) : null;
   }
 
-  async recordScheduleEntryUploadResult(id, videoId, metadata = {}) {
-    if (!id || !videoId) return null;
+  async recordScheduleEntryUploadResult(id, videoId, metadata = {}, expectedAttemptId = null) {
+    if (!id || !videoId || !expectedAttemptId) return null;
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const result = await this.executeQuery(
       `UPDATE publish_schedule
        SET status = 'uploaded', youtube_id = ?, youtube_url = ?, error_message = NULL, metadata = ?
-       WHERE id = ? AND status = 'uploading' AND youtube_id IS NULL`,
-      [videoId, youtubeUrl, JSON.stringify(metadata || {}), id]
+       WHERE id = ? AND status = 'uploading' AND youtube_id IS NULL AND upload_attempt_id = ?`,
+      [videoId, youtubeUrl, JSON.stringify(metadata || {}), id, expectedAttemptId]
     );
     if (result.changes === 1) return this.getScheduleEntry(id);
 
-    // Idempotent success if a concurrent caller already persisted this exact ID.
+    // Idempotent success is limited to the same attempt and exact YouTube ID.
     const latest = await this.getScheduleEntry(id);
-    if (latest?.youtubeId === videoId && ['uploaded', 'published', 'reconciliation_required'].includes(latest.status)) {
+    if (latest?.uploadAttemptId === expectedAttemptId && latest.youtubeId === videoId &&
+        ['uploaded', 'published', 'reconciliation_required'].includes(latest.status)) {
       return latest;
     }
     return null;
+  }
+
+  async updateScheduleEntryForUpload(entry, expectedAttemptId) {
+    if (!entry?.id || !expectedAttemptId) return null;
+    const result = await this.executeQuery(
+      `UPDATE publish_schedule SET
+        title = COALESCE(?, title), publish_time = COALESCE(?, publish_time),
+        status = ?, priority = COALESCE(?, priority), metadata = COALESCE(?, metadata),
+        youtube_id = ?, youtube_url = ?, published_at = ?, error_message = ?
+       WHERE id = ? AND upload_attempt_id = ?
+         AND status IN ('uploading', 'uploaded', 'reconciliation_required')`,
+      [
+        entry.title || null,
+        entry.publishTime || entry.publish_time || null,
+        entry.status,
+        entry.priority ?? null,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+        entry.youtubeId || null,
+        entry.youtubeUrl || null,
+        entry.publishedAt || null,
+        entry.error || null,
+        entry.id,
+        expectedAttemptId
+      ]
+    );
+    if (result.changes !== 1) return null;
+    return this.getScheduleEntry(entry.id);
   }
 
   async getScheduleEntry(id) {
@@ -2953,6 +2985,7 @@ class Database {
       youtubeId: row.youtube_id,
       youtubeUrl: row.youtube_url,
       uploadStartedAt: row.upload_started_at || null,
+      uploadAttemptId: row.upload_attempt_id || null,
       publishedAt: row.published_at,
       error: row.error_message,
       metadata: JSON.parse(row.metadata || '{}')
