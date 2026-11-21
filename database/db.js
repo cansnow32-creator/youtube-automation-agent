@@ -1038,6 +1038,22 @@ class Database {
     await this.assertLeaseInTransaction(tx, lease, lease.productionId);
   }
 
+  async assertMediaGenerationTaskLeaseInTransaction(tx, lease, task) {
+    if (!lease) return;
+    if (task?.production_id && lease.productionId === task.production_id) {
+      await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      return;
+    }
+    if (task?.job_id) {
+      await this.assertGenerationJobLeaseInTransaction(tx, lease, task.job_id);
+      return;
+    }
+    throw Object.assign(new Error('Media task operation lease does not own the requested task'), {
+      code: 'MEDIA_TASK_LEASE_INVALID',
+      status: 409
+    });
+  }
+
   async assertProductionLeaseInTransaction(tx, lease, productionId, allowMissingProduction = false, productionJobIdHint = null) {
     if (!lease) return;
     if (lease.productionId === productionId) {
@@ -1566,7 +1582,10 @@ class Database {
 
     if (lease) {
       return this.withIsolatedTransaction(async tx => {
-        await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+        await this.assertMediaGenerationTaskLeaseInTransaction(tx, lease, {
+          job_id: jobId,
+          production_id: productionId
+        });
         const existingRows = jobId
           ? await tx.all(
             'SELECT * FROM media_generation_tasks WHERE job_id = ? AND scene_index = ? AND provider = ?',
@@ -1647,10 +1666,12 @@ class Database {
   async claimMediaGenerationTaskForSubmission(taskId, expectedStatus, expectedExternalTaskId, previousTasks = [], lease = null) {
     const history = Array.isArray(previousTasks) ? previousTasks.slice(-10) : [];
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+      const current = this.parseMediaGenerationTask(rows[0]);
+      if (!current) return { claimed: false, task: null };
+      if (lease) await this.assertMediaGenerationTaskLeaseInTransaction(tx, lease, rows[0]);
       if (!['failed', 'cancelled'].includes(expectedStatus)) {
-        const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
-        return { claimed: false, task: this.parseMediaGenerationTask(rows[0]) };
+        return { claimed: false, task: current };
       }
       const result = await tx.run(
         `UPDATE media_generation_tasks SET
@@ -1684,10 +1705,10 @@ class Database {
 
   async updateMediaGenerationTask(id, changes = {}, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
       const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [id]);
       const current = this.parseMediaGenerationTask(rows[0]);
       if (!current) return null;
+      if (lease) await this.assertMediaGenerationTaskLeaseInTransaction(tx, lease, rows[0]);
       await tx.run(
         `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
          output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`,
