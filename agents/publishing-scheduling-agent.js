@@ -233,6 +233,13 @@ class PublishingSchedulingAgent {
         throw error;
       }
       scheduleEntry = claimedEntry;
+      const uploadAttemptId = scheduleEntry.uploadAttemptId;
+      if (!uploadAttemptId) {
+        const error = new Error('The durable upload claim did not return an attempt ID; refusing to upload without stale-worker fencing');
+        error.status = 503;
+        error.code = 'PUBLISH_ATTEMPT_ID_MISSING';
+        throw error;
+      }
       const queuedEntry = this.publishQueue.find(entry => entry.id === scheduleEntry.id);
       if (queuedEntry) Object.assign(queuedEntry, scheduleEntry);
       await this.syncShortStatus(scheduleEntry, 'uploading');
@@ -244,14 +251,28 @@ class PublishingSchedulingAgent {
         if (scheduleEntry.uploadAttempted && this.isUploadOutcomeUnknown(error)) {
           scheduleEntry.status = 'reconciliation_required';
           scheduleEntry.error = 'Upload outcome is unknown; verify the YouTube channel before retrying';
-          await this.db.updateScheduleEntry(scheduleEntry);
+          const saved = await this.db.updateScheduleEntryForUpload?.(scheduleEntry, uploadAttemptId);
+          if (!saved) {
+            const stale = new Error('The upload attempt was superseded before its uncertain outcome could be recorded; reconcile the YouTube channel');
+            stale.status = 409;
+            stale.code = 'PUBLISH_ATTEMPT_SUPERSEDED';
+            throw stale;
+          }
+          Object.assign(scheduleEntry, saved);
           await this.syncShortStatus(scheduleEntry, 'reconciliation_required', scheduleEntry.error);
           error.code = 'UPLOAD_OUTCOME_UNKNOWN';
           error.status = 409;
         } else {
           scheduleEntry.status = 'failed';
           scheduleEntry.error = error.message;
-          await this.db.updateScheduleEntry(scheduleEntry);
+          const saved = await this.db.updateScheduleEntryForUpload?.(scheduleEntry, uploadAttemptId);
+          if (!saved) {
+            const stale = new Error('The failed upload attempt is no longer current; its state was not overwritten');
+            stale.status = 409;
+            stale.code = 'PUBLISH_ATTEMPT_SUPERSEDED';
+            throw stale;
+          }
+          Object.assign(scheduleEntry, saved);
           await this.syncShortStatus(scheduleEntry, 'failed', error.message);
         }
         throw error;
@@ -263,7 +284,14 @@ class PublishingSchedulingAgent {
       scheduleEntry.youtubeId = uploadResult.id;
       scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${uploadResult.id}`;
       
-      await this.db.updateScheduleEntry(scheduleEntry);
+      const saved = await this.db.updateScheduleEntryForUpload?.(scheduleEntry, uploadAttemptId);
+      if (!saved) {
+        const error = new Error('The YouTube upload completed, but this publish attempt is no longer current; the recorded video ID must be reconciled without overwriting the newer schedule');
+        error.status = 409;
+        error.code = 'PUBLISH_ATTEMPT_SUPERSEDED';
+        throw error;
+      }
+      Object.assign(scheduleEntry, saved);
       await this.syncShortStatus(scheduleEntry, 'published');
       
       // Remove from queue
@@ -344,7 +372,8 @@ class PublishingSchedulingAgent {
     const persistedUpload = await this.db.recordScheduleEntryUploadResult(
       scheduleEntry.id,
       videoId,
-      scheduleEntry.metadata || {}
+      scheduleEntry.metadata || {},
+      scheduleEntry.uploadAttemptId
     );
     if (!persistedUpload) {
       const latest = await this.db.getScheduleEntry?.(scheduleEntry.id);
@@ -375,7 +404,8 @@ class PublishingSchedulingAgent {
         };
         this.logger.warn(`Video ${videoId} was uploaded, but its thumbnail failed. Repair the thumbnail separately; do not retry the video upload.`);
       }
-      await this.db.updateScheduleEntry(scheduleEntry);
+      const saved = await this.db.updateScheduleEntryForUpload?.(scheduleEntry, scheduleEntry.uploadAttemptId);
+      if (saved) Object.assign(scheduleEntry, saved);
     }
     
     // Captions are a post-upload asset. Their failure must never turn a successful
@@ -398,7 +428,8 @@ class PublishingSchedulingAgent {
         };
         this.logger.warn(`Video ${videoId} was uploaded, but captions failed. Repair captions separately; do not retry the video upload.`);
       }
-      await this.db.updateScheduleEntry(scheduleEntry);
+      const saved = await this.db.updateScheduleEntryForUpload?.(scheduleEntry, scheduleEntry.uploadAttemptId);
+      if (saved) Object.assign(scheduleEntry, saved);
     }
     
     return videoUpload.data;
