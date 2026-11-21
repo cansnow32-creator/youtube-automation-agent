@@ -1220,17 +1220,36 @@ class YouTubeAutomationAgent {
     });
 
     this.app.post('/api/content/:productionId/reject', protect, async (req, res) => {
-      const bundle = await this.db.getProductionBundle(req.params.productionId);
-      if (!bundle) return res.status(404).json({ error: 'Content not found' });
-      await this.db.saveContentReview(bundle.id, {
-        status: 'rejected',
-        editorData: bundle.editorData,
-        qualityChecks: bundle.qualityChecks,
-        reviewNotes: req.body?.notes || 'Rejected by operator',
-        reviewedAt: new Date().toISOString()
-      });
-      await this.db.updateProductionStatus(bundle.id, 'rejected');
-      return res.json({ success: true });
+      try {
+        const bundle = await this.db.getProductionBundle(req.params.productionId);
+        if (!bundle) return res.status(404).json({ error: 'Content not found' });
+        if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+          return res.status(503).json({ error: 'Production operation lock is required for safe review changes' });
+        }
+        const result = await this.scenes.withProductionOperationLease(bundle.id, async assertLease => {
+          await assertLease();
+          const current = await this.db.getProductionBundle(bundle.id);
+          if (!current) return { missing: true };
+          if (current.schedule?.youtubeId ||
+              ['uploading', 'uploaded', 'published', 'reconciliation_required'].includes(current.schedule?.status)) {
+            return { conflict: true };
+          }
+          await this.db.saveContentReview(bundle.id, {
+            status: 'rejected',
+            editorData: current.editorData,
+            qualityChecks: current.qualityChecks,
+            reviewNotes: req.body?.notes || 'Rejected by operator',
+            reviewedAt: new Date().toISOString()
+          }, assertLease.lease);
+          await this.db.updateProductionStatus(bundle.id, 'rejected', assertLease.lease);
+          return { rejected: true };
+        }, 'content rejection');
+        if (result?.missing) return res.status(404).json({ error: 'Content not found' });
+        if (result?.conflict) return res.status(409).json({ error: 'Content with a published or unresolved upload cannot be rejected' });
+        return res.json({ success: true });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
     });
 
     this.app.post('/api/content/:productionId/retry', protect, async (req, res) => {
@@ -2572,7 +2591,7 @@ class YouTubeAutomationAgent {
         qualityChecks: quality.checks,
         reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
         reviewedAt: null
-      });
+      }, assertLease.lease);
     }, 'content review refresh');
   }
 
