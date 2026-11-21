@@ -71,6 +71,7 @@ async function testThumbnailFailureNeverRepeatsVideoUpload() {
     title: 'Thumbnail recovery test',
     publishTime: new Date(Date.now() - 60000).toISOString(),
     status: 'uploading',
+    uploadAttemptId: 'attempt-thumbnail-test',
     metadata: {
       seo: { title: 'Thumbnail recovery test', description: 'A valid test description', tags: ['one', 'two', 'three'], categoryId: '22', defaultLanguage: 'en' },
       video: { path: '/virtual/test.mp4' },
@@ -100,14 +101,19 @@ async function testThumbnailFailureNeverRepeatsVideoUpload() {
     }
   };
   agent.db = {
-    recordScheduleEntryUploadResult: async (id, videoId, metadata) => {
+    recordScheduleEntryUploadResult: async (id, videoId, metadata, attemptId) => {
       stored = {
         ...stored, id, status: 'uploaded', youtubeId: videoId,
-        youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`, metadata
+        youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`, metadata,
+        uploadAttemptId: attemptId
       };
       return { ...stored };
     },
-    updateScheduleEntry: async next => { stored = { ...next }; },
+    updateScheduleEntryForUpload: async (next, attemptId) => {
+      if (attemptId !== stored.uploadAttemptId) return null;
+      stored = { ...next };
+      return { ...stored };
+    },
     getLatestScheduleEntry: async () => ({ ...stored, metadata: { ...stored.metadata } })
   };
 
