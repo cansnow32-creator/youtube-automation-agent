@@ -595,20 +595,6 @@ class MediaGenerationService {
     return update.task;
   }
 
-  async cancelRemoteTaskOnLeaseLoss(provider, taskId) {
-    if (!taskId) return;
-    if (!provider?.capabilities?.cancellation || typeof provider.cancelTask !== 'function') {
-      this.logger.warn(`Lease lost while remote task ${taskId} was active; provider ${provider?.id || 'unknown'} does not support cancellation.`);
-      return;
-    }
-    try {
-      await provider.cancelTask(taskId);
-      this.logger.warn(`Cancelled remote task ${taskId} after generation lease loss.`);
-    } catch (error) {
-      this.logger.warn(`Could not cancel remote task ${taskId} after lease loss: ${safeModelError(error)}`);
-    }
-  }
-
   safeRequest(request) {
     const reference = value => value ? path.basename(String(value)) : null;
     return {
