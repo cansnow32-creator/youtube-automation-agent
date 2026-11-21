@@ -204,7 +204,7 @@ class ShortsRepurposingService {
       await assertLease();
       await fs.writeFile(captionsPath, this.buildCaptions(sourceScenes, clip.duration), { encoding: 'utf8', flag: 'wx' });
       await assertLease();
-      const claimed = await this.db.claimShortClipRender(clip.id, productionId, attemptId);
+      const claimed = await this.db.claimShortClipRender(clip.id, productionId, attemptId, assertLease.lease || null);
       if (!claimed) {
         const error = new Error('This Short is no longer eligible for this render attempt');
         error.status = 409;
@@ -241,7 +241,7 @@ class ShortsRepurposingService {
         status: 'rendered', outputPath, captionsPath, error: null,
         renderedAt: new Date().toISOString(),
         renderMetadata: { duration: media.duration, width: media.width, height: media.height, hasAudio: media.hasAudio === true }
-      });
+      }, assertLease.lease || null);
       if (!saved) {
         const error = new Error('This Short render attempt is no longer current; its result was discarded');
         error.status = 409;
@@ -253,7 +253,7 @@ class ShortsRepurposingService {
       await Promise.all(ownedPaths.map(file => fs.rm(file, { force: true }).catch(() => {})));
       if (['GENERATION_JOB_LEASE_LOST', 'PRODUCTION_OPERATION_LOCK_LOST', 'SCENE_EDIT_LEASE_LOST', 'SCENE_EDIT_LEASE_UNVERIFIED', 'SHORTS_RENDER_ATTEMPT_SUPERSEDED'].includes(error?.code)) throw error;
       await assertLease();
-      await this.db.updateShortClipForRender(clip.id, attemptId, { status: 'failed', error: error.message });
+      await this.db.updateShortClipForRender(clip.id, attemptId, { status: 'failed', error: error.message }, assertLease.lease || null);
       throw error;
     }
   }
