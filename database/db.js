@@ -1111,6 +1111,63 @@ class Database {
     );
   }
 
+  async finalizeProductionRebuild(input = {}, lease = null) {
+    const production = input.production || {};
+    const sceneIds = [...new Set((input.sceneIds || []).filter(Boolean))];
+    if (!production.id || !sceneIds.length) throw new Error('Production rebuild finalization requires a production and scene IDs');
+    const revision = input.revision || {};
+    const revisionId = this.generateId('scene_revision');
+    return this.withIsolatedTransaction(async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, false, production.timeline?.jobId || null);
+      const productionResult = await tx.run(
+        `UPDATE productions SET status = ?, assets = ?, timeline = ?,
+          scheduled_publish_time = ?, priority = ? WHERE id = ?`,
+        [production.status, JSON.stringify(production.assets), JSON.stringify(production.timeline),
+          production.scheduledPublishTime, production.priority, production.id]
+      );
+      await this.requireLeaseWrite(productionResult, lease);
+      const placeholders = sceneIds.map(() => '?').join(', ');
+      const sceneResult = await tx.run(
+        `UPDATE production_scenes SET status = 'ready', updated_at = datetime('now')
+         WHERE production_id = ? AND id IN (${placeholders})`,
+        [production.id, ...sceneIds]
+      );
+      if (sceneResult.changes !== sceneIds.length) {
+        const error = new Error('Production rebuild could not finalize every expected scene');
+        error.code = 'PRODUCTION_REBUILD_SCENE_SET_CHANGED';
+        error.status = 409;
+        throw error;
+      }
+      if (input.provenance) {
+        const provenance = input.provenance;
+        await tx.run(
+          `INSERT INTO content_provenance (
+            production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(production_id) DO UPDATE SET
+            sources = excluded.sources, claims = excluded.claims,
+            contains_synthetic_media = excluded.contains_synthetic_media,
+            status = excluded.status, summary = excluded.summary,
+            reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
+          [production.id, JSON.stringify(provenance.sources || []), JSON.stringify(provenance.claims || []),
+            Number(provenance.containsSyntheticMedia === true), provenance.status || 'not_required',
+            JSON.stringify(provenance.summary || {}), provenance.reviewedAt || null]
+        );
+      }
+      await tx.run(
+        `INSERT INTO production_scene_revisions (
+          id, production_id, scene_id, action, status, before_state, after_state,
+          cost_evidence, error, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [revisionId, production.id, revision.sceneId || sceneIds[0], 'rebuild', 'completed',
+          JSON.stringify(revision.before || {}), JSON.stringify(revision.after || {}),
+          JSON.stringify(revision.costEvidence || { billed: false }), null, new Date().toISOString()]
+      );
+      const rows = await tx.all('SELECT * FROM production_scene_revisions WHERE id = ?', [revisionId]);
+      return this.parseProductionSceneRevision(rows[0]);
+    });
+  }
+
   async getProductionPipeline() {
     const rows = await this.getAllRows(
       'SELECT * FROM productions ORDER BY priority DESC, created_at ASC'
