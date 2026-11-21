@@ -39,9 +39,14 @@ async function main() {
     claimScheduleEntryForUpload: async id => {
       if (id !== state.id || !['scheduled', 'paused', 'failed'].includes(state.status) || state.youtubeId) return null;
       state.status = 'uploading';
+      state.uploadAttemptId = 'attempt-current';
       return { ...state, metadata: { ...state.metadata } };
     },
-    updateScheduleEntry: async entry => { Object.assign(state, entry); }
+    updateScheduleEntryForUpload: async (entry, attemptId) => {
+      if (attemptId !== state.uploadAttemptId || state.status !== 'uploading') return null;
+      Object.assign(state, entry);
+      return { ...state };
+    }
   };
   const makeAgent = () => {
     const agent = Object.create(PublishingSchedulingAgent.prototype);
