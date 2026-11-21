@@ -2247,12 +2247,12 @@ class YouTubeAutomationAgent {
 
     // Re-persist reused production artifacts in case a restart happened between checkpointing and persistence.
     await assertLease();
-    const contentId = await this.db.saveProductionData(productionData);
+    const contentId = await this.db.saveProductionData(productionData, assertLease.lease || null);
     await assertLease();
-    await this.db.saveProductionSnapshot(productionData);
+    await this.db.saveProductionSnapshot(productionData, assertLease.lease || null);
     await assertLease();
     if (!this.provenance) this.provenance = new ProvenanceService(this.db);
-    productionData.provenance = await this.provenance.initialize(contentId, productionData);
+    productionData.provenance = await this.provenance.initialize(contentId, productionData, assertLease.lease || null);
     await assertLease();
     productionData.discoverability = this.discoverability
       ? await this.discoverability.auditProduction(productionData, profile, 'youtube')
@@ -2293,19 +2293,19 @@ class YouTubeAutomationAgent {
         } : {},
         reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
         reviewedAt: approvalRequired ? null : new Date().toISOString()
-      });
+      }, stageAssertLease.lease || null);
       await stageAssertLease();
 
       let scheduleEntry = null;
       if (reviewStatus === 'approved') {
         await stageAssertLease();
-        scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
+        scheduleEntry = await this.agents.publishing.scheduleContent(productionData, { assertLease: stageAssertLease });
         await stageAssertLease();
-        await this.db.updateProductionStatus(contentId, scheduleEntry ? 'scheduled' : productionData.status);
+        await this.db.updateProductionStatus(contentId, scheduleEntry ? 'scheduled' : productionData.status, stageAssertLease.lease || null);
         await stageAssertLease();
       } else {
         await stageAssertLease();
-        await this.db.updateProductionStatus(contentId, reviewStatus);
+        await this.db.updateProductionStatus(contentId, reviewStatus, stageAssertLease.lease || null);
         await stageAssertLease();
         await stageAssertLease();
         await this.operator.notify({
