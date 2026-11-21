@@ -291,16 +291,16 @@ class ProductionManagementAgent {
       };
       productionData.jobId = jobId;
       productionData.timeline.productionWorkflow = createProductionWorkflow(approvedConcept.id);
-      const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
+      const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData, assertLease.lease || null); };
       
       // Add to pipeline
       this.pipeline.push(productionData);
       
       // Save to database
       await assertLease();
-      await this.db.saveProductionData(productionData);
+      await this.db.saveProductionData(productionData, assertLease.lease || null);
       await assertLease();
-      await this.db.saveProductionSnapshot(productionData);
+      await this.db.saveProductionSnapshot(productionData, assertLease.lease || null);
       
       // Persist stage transitions so interrupted or failed work is visible in the production record.
       await runProductionStage(
@@ -380,7 +380,7 @@ class ProductionManagementAgent {
       productionData.timeline.readyForUpload = new Date().toISOString();
 
       await assertLease();
-      await this.db.updateProductionData(productionData);
+      await this.db.updateProductionData(productionData, assertLease.lease || null);
 
       this.logger.info(`Content processing complete: ${productionId} (status: ${productionData.status})`);
       return productionData;
@@ -491,15 +491,15 @@ class ProductionManagementAgent {
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = 'Completed stage records do not contain a real MP4 final video';
         await assertLease();
-        await this.db.updateProductionData(productionData);
+        await this.db.updateProductionData(productionData, assertLease.lease || null);
         throw new Error(productionData.timeline.lastProductionError);
       }
       productionData.status = 'ready';
       await assertLease();
-      await this.db.updateProductionData(productionData);
+      await this.db.updateProductionData(productionData, assertLease.lease || null);
       return productionData;
     }
-    const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData); };
+    const persistWorkflow = async () => { await assertLease(); return this.db.updateProductionData(productionData, assertLease.lease || null); };
     try {
       await assertLease();
       if (workflow.stages.visuals.status !== 'completed') {
@@ -569,7 +569,7 @@ class ProductionManagementAgent {
       productionData.status = 'ready';
       productionData.timeline.readyForUpload = new Date().toISOString();
       await assertLease();
-      await this.db.updateProductionData(productionData);
+      await this.db.updateProductionData(productionData, assertLease.lease || null);
       const index = this.pipeline.findIndex(item => item.id === productionId);
       if (index >= 0) this.pipeline[index] = productionData;
       else this.pipeline.push(productionData);
@@ -578,7 +578,7 @@ class ProductionManagementAgent {
       await assertLease();
       productionData.status = 'failed';
       productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
-      await this.db.updateProductionData(productionData);
+      await this.db.updateProductionData(productionData, assertLease.lease || null);
       throw error;
     }
   }
@@ -864,7 +864,7 @@ class ProductionManagementAgent {
         };
         // Persist immediately: a later scene failure must not lose earlier images.
         await assertLease();
-        await this.db.updateProductionData(productionData);
+        await this.db.updateProductionData(productionData, assertLease.lease || null);
       } catch (error) {
         // Lease loss/unverifiable ownership is not a provider failure and must
         // never be swallowed into the retry/fallback path.
@@ -902,7 +902,7 @@ class ProductionManagementAgent {
       updatedAt: new Date().toISOString()
     };
     await assertLease();
-    await this.db.updateProductionData(productionData);
+    await this.db.updateProductionData(productionData, assertLease.lease || null);
 
     if (validAssets.length !== visualPrompts.length) {
       const failedCount = visualPrompts.length - validAssets.length;
@@ -912,7 +912,7 @@ class ProductionManagementAgent {
 
     await assertLease();
     productionData.timeline.videoGenerated = new Date().toISOString();
-    await this.db.updateProductionData(productionData);
+    await this.db.updateProductionData(productionData, assertLease.lease || null);
     return validAssets;
   }
 
