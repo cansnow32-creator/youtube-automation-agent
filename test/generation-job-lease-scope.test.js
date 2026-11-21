@@ -31,6 +31,13 @@ async function run() {
       attempt_count INTEGER DEFAULT 0, error TEXT, started_at TEXT, completed_at TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(job_id, stage)
     )`);
+    await database.executeQuery(`CREATE TABLE media_generation_tasks (
+      id TEXT PRIMARY KEY, job_id TEXT, production_id TEXT, scene_index INTEGER NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL, external_task_id TEXT,
+      status TEXT DEFAULT 'submitting', request TEXT NOT NULL DEFAULT '{}',
+      provider_data TEXT NOT NULL DEFAULT '{}', output_path TEXT, error TEXT,
+      completed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
     for (const id of ['job-1', 'job-2']) {
       await database.executeQuery(
         'INSERT INTO generation_jobs (id, status, stage, progress, details, cancel_requested) VALUES (?, ?, ?, ?, ?, 0)',
@@ -40,6 +47,36 @@ async function run() {
         status: 'completed', artifact: { topic: id }
       });
     }
+
+    await database.executeQuery(
+      `INSERT INTO media_generation_tasks
+       (id, job_id, production_id, scene_index, provider, model, status, request, provider_data, external_task_id)
+       VALUES ('media-job-2', 'job-2', 'production-2', 0, 'test-provider', 'test-model', 'failed', '{}', '{}', 'remote-old')`
+    );
+    await assert.rejects(
+      database.createMediaGenerationTask({
+        jobId: 'job-2', productionId: 'production-2', sceneIndex: 1,
+        provider: 'test-provider', model: 'test-model'
+      }, lease),
+      error => error.code === 'GENERATION_JOB_LEASE_INVALID' && error.status === 409
+    );
+    await assert.rejects(
+      database.updateMediaGenerationTask('media-job-2', { status: 'succeeded' }, lease),
+      error => error.code === 'GENERATION_JOB_LEASE_INVALID' && error.status === 409
+    );
+    await assert.rejects(
+      database.claimMediaGenerationTaskForSubmission('media-job-2', 'failed', 'remote-old', [], lease),
+      error => error.code === 'GENERATION_JOB_LEASE_INVALID' && error.status === 409
+    );
+    const untouchedMediaTask = await database.getMediaGenerationTaskById('media-job-2');
+    assert.equal(untouchedMediaTask.status, 'failed', 'a job lease cannot mutate another job media task');
+    assert.equal(untouchedMediaTask.external_task_id, 'remote-old', 'cross-job claim cannot clear another task remote ID');
+
+    const ownMediaTask = await database.createMediaGenerationTask({
+      jobId: 'job-1', productionId: 'production-1', sceneIndex: 0,
+      provider: 'test-provider', model: 'test-model'
+    }, lease);
+    assert.equal(ownMediaTask.createdByThisInvocation, true, 'a generation lease may create tasks for its own job');
 
     await assert.rejects(
       database.updateGenerationJob('job-2', { status: 'failed', error: 'cross-job write' }, lease),
