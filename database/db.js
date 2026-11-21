@@ -959,7 +959,7 @@ class Database {
   // Production methods
   async saveProductionData(production, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, true);
       await tx.run(
         `INSERT OR REPLACE INTO productions (
           id, status, assets, timeline, scheduled_publish_time,
@@ -1036,6 +1036,44 @@ class Database {
     }
   }
 
+  async assertProductionLeaseInTransaction(tx, lease, productionId, allowMissingProduction = false) {
+    if (!lease) return;
+    if (lease.productionId === productionId) {
+      await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      return;
+    }
+    const prefix = 'generation:';
+    if (typeof lease.productionId !== 'string' || !lease.productionId.startsWith(prefix)) {
+      throw Object.assign(new Error('Production operation lease does not own this production'), {
+        code: 'SCENE_EDIT_LEASE_INVALID', status: 409
+      });
+    }
+    const jobId = lease.productionId.slice(prefix.length);
+    if (!jobId) {
+      throw Object.assign(new Error('Generation job lease context is invalid'), {
+        code: 'SCENE_EDIT_LEASE_INVALID', status: 409
+      });
+    }
+    const rows = await tx.all('SELECT timeline FROM productions WHERE id = ?', [productionId]);
+    if (!rows[0]) {
+      if (!allowMissingProduction) {
+        throw Object.assign(new Error('Production does not exist for the supplied generation job lease'), {
+          code: 'SCENE_EDIT_LEASE_INVALID', status: 409
+        });
+      }
+    } else {
+      let timeline;
+      try { timeline = JSON.parse(rows[0].timeline || '{}'); }
+      catch (_error) { timeline = null; }
+      if (timeline?.jobId !== jobId) {
+        throw Object.assign(new Error('Generation job lease is not associated with this production'), {
+          code: 'SCENE_EDIT_LEASE_INVALID', status: 409
+        });
+      }
+    }
+    await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+  }
+
   leaseGuard(lease, productionId) {
     if (!lease) return { sql: '', params: [] };
     if (lease.productionId !== productionId || !lease.owner) {
@@ -1056,25 +1094,39 @@ class Database {
   }
 
   async updateProductionData(production, lease = null) {
-    // Generation-job leases are keyed as generation:<jobId>, while a production
-    // row has its own ID. Validate the supplied lease key, not the row ID.
-    const guard = this.leaseGuard(lease, lease?.productionId || production.id);
-    const result = await this.executeQuery(
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id);
+      const result = await tx.run(
+        `UPDATE productions SET
+          status = ?, assets = ?, timeline = ?,
+          scheduled_publish_time = ?, priority = ?
+         WHERE id = ?`,
+        [
+          production.status,
+          JSON.stringify(production.assets),
+          JSON.stringify(production.timeline),
+          production.scheduledPublishTime,
+          production.priority,
+          production.id
+        ]
+      );
+      await this.requireLeaseWrite(result, lease);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    await this.executeQuery(
       `UPDATE productions SET
         status = ?, assets = ?, timeline = ?,
         scheduled_publish_time = ?, priority = ?
-      WHERE id = ?${guard.sql}`,
+       WHERE id = ?`,
       [
         production.status,
         JSON.stringify(production.assets),
         JSON.stringify(production.timeline),
         production.scheduledPublishTime,
         production.priority,
-        production.id,
-        ...guard.params
+        production.id
       ]
     );
-    await this.requireLeaseWrite(result, lease);
   }
 
   async getProductionPipeline() {
@@ -1090,7 +1142,7 @@ class Database {
 
   async saveProductionSnapshot(production, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id);
       await tx.run(
         `INSERT OR REPLACE INTO production_snapshots (
           production_id, strategy, script, thumbnail, seo
@@ -1661,7 +1713,7 @@ class Database {
 
   async replaceProductionScenes(productionId, scenes = [], lease = null) {
     return this.withIsolatedTransaction(async tx => {
-      await this.assertLeaseInTransaction(tx, lease, productionId);
+      await this.assertProductionLeaseInTransaction(tx, lease, productionId);
       await tx.run('DELETE FROM production_scenes WHERE production_id = ?', [productionId]);
       for (const [position, scene] of scenes.entries()) {
         const id = scene.id || this.generateId('scene');
@@ -1743,7 +1795,7 @@ class Database {
 
   async reorderProductionScenes(productionId, orderedIds = [], lease = null) {
     return this.withIsolatedTransaction(async tx => {
-      await this.assertLeaseInTransaction(tx, lease, productionId);
+      await this.assertProductionLeaseInTransaction(tx, lease, productionId);
       const rows = await tx.all('SELECT * FROM production_scenes WHERE production_id = ? ORDER BY position, created_at', [productionId]);
       const scenes = rows.map(row => this.parseProductionScene(row));
       if (orderedIds.length !== scenes.length || new Set(orderedIds).size !== scenes.length ||
