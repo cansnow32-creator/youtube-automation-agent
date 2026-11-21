@@ -194,6 +194,9 @@ class ProductionManagementAgent {
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
+    // This wrapper owns a distinct job:<id> lock in addition to any upstream
+    // generation-job lease. Pass its identity to all fenced DB writes.
+    assertLease.lease = Object.freeze({ productionId: lockId, owner });
     const heartbeat = setInterval(() => {
       renewalInFlight = renewalInFlight.then(async () => {
         if (leaseFailure) return;
