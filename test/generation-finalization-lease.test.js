@@ -33,6 +33,9 @@ async function run() {
       production_id TEXT PRIMARY KEY, status TEXT, editor_data TEXT,
       quality_checks TEXT, review_notes TEXT, reviewed_at TEXT, updated_at TEXT
     )`);
+    await database.executeQuery(`CREATE TABLE production_snapshots (
+      production_id TEXT PRIMARY KEY, strategy TEXT, script TEXT, thumbnail TEXT, seo TEXT
+    )`);
     await database.executeQuery(`CREATE TABLE publish_schedule (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, title TEXT NOT NULL,
       publish_time TEXT NOT NULL, status TEXT, priority INTEGER, metadata TEXT,
@@ -41,6 +44,19 @@ async function run() {
     )`);
 
     const staleLease = { productionId: lease.productionId, owner: 'worker-stale' };
+    const productionPayload = {
+      id: 'production-1', status: 'failed', assets: {}, timeline: { jobId: 'job-finalize' },
+      scheduledPublishTime: new Date().toISOString(), priority: 1, estimatedDuration: 'short',
+      strategy: {}, script: {}, thumbnail: {}, seo: {}
+    };
+    await assert.rejects(
+      database.saveProductionData(productionPayload, staleLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await assert.rejects(
+      database.saveProductionSnapshot(productionPayload, staleLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
     await assert.rejects(
       database.updateProductionStatus('production-1', 'failed', staleLease),
       error => error.code === 'SCENE_EDIT_LEASE_LOST'
