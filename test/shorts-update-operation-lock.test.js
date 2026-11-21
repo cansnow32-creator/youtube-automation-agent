@@ -44,7 +44,7 @@ async function run() {
       database.updateShortClip('short-edit-1', { title: 'Late edit' }, { productionId, owner: 'owner-a' }, productionId),
       error => error.code === 'SHORT_EDIT_STATE_CONFLICT' && error.status === 409
     );
-    process.stdout.write('Shorts update operation lease tests passed\\n');
+    process.stdout.write('Shorts update operation lease tests passed\n');
   } finally {
     await database.releaseProductionOperationLock('short-edit-production', 'owner-a').catch(() => {});
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
@@ -53,6 +53,6 @@ async function run() {
 }
 
 run().catch(error => {
-  process.stderr.write(`Shorts update operation lease tests failed: ${error.stack || error.message}\\n`);
+  process.stderr.write(`Shorts update operation lease tests failed: ${error.stack || error.message}\n`);
   process.exitCode = 1;
 });
