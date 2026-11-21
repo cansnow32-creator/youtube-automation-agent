@@ -48,7 +48,10 @@ class PublishingSchedulingAgent {
     }
   }
 
-  async scheduleContent(productionData) {
+  async scheduleContent(productionData, options = {}) {
+    const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    const lease = options.lease || assertLease.lease || null;
+    await assertLease();
     try {
       const finalVideo = productionData.assets?.finalVideo;
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
@@ -61,7 +64,9 @@ class PublishingSchedulingAgent {
       }
 
       this.logger.info(`Scheduling content: ${productionData.id}`);
+      await assertLease();
       const existing = await this.db.getLatestScheduleEntry?.(productionData.id);
+      await assertLease();
       if (existing) {
         if (['scheduled', 'paused'].includes(existing.status) && !this.publishQueue.some(entry => entry.id === existing.id)) {
           this.publishQueue.push(existing);
@@ -92,7 +97,9 @@ class PublishingSchedulingAgent {
         createdAt: new Date().toISOString()
       };
       
-      const saved = await this.db.saveScheduleEntry(scheduleEntry) || scheduleEntry;
+      await assertLease();
+      const saved = await this.db.saveScheduleEntry(scheduleEntry, lease) || scheduleEntry;
+      await assertLease();
       this.publishQueue.push(saved);
       this.publishQueue.sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
       
