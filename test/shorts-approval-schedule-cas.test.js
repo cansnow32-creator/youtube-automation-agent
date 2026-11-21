@@ -60,12 +60,27 @@ async function run() {
     assert.equal(Number(scheduleCount.count), 0, 'a stale approval cannot create a Short schedule');
 
     const schedule = await database.saveScheduleEntry({ ...entry }, lease, 'production-source');
-    const staleClaim = await database.claimShortClipForSchedule(
+    await assert.rejects(
+      database.claimShortClipForSchedule(
+        'short-1', 'production-source', schedule.id,
+        { publishTime: entry.publishTime, privacyStatus: 'private', inheritedEvidence: { ready: true } },
+        staleLease
+      ),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const approved = await database.claimShortClipForSchedule(
       'short-1', 'production-source', schedule.id,
       { publishTime: entry.publishTime, privacyStatus: 'private', inheritedEvidence: { ready: true } },
-      staleLease
+      lease
     );
-    assert.rejects(Promise.resolve(staleClaim), error => error.code === 'SCENE_EDIT_LEASE_LOST');
+    assert.equal(approved.status, 'scheduled');
+    assert.equal(approved.scheduleId, schedule.id);
+    const duplicateClaim = await database.claimShortClipForSchedule(
+      'short-1', 'production-source', schedule.id,
+      { publishTime: entry.publishTime, privacyStatus: 'private', inheritedEvidence: { ready: true } },
+      lease
+    );
+    assert.equal(duplicateClaim, null, 'a second worker cannot replace an already attached Short schedule');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
