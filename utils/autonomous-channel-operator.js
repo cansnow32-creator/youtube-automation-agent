@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const { Logger } = require('./logger');
 const { requireApprovedVideoConcept } = require('./approved-video-concept-gate');
 
@@ -11,6 +12,62 @@ class AutonomousChannelOperator {
     this.notify = options.notify || (async () => null);
     this.logger = new Logger('AutonomousOperator');
     this.activeRuns = new Map();
+    this.runLeases = new Map();
+    this.operatorLockId = 'operator:active';
+    this.operatorLeaseMs = 60 * 1000;
+  }
+
+  async acquireOperatorLease() {
+    const owner = randomUUID();
+    const acquired = await this.db.acquireProductionOperationLock(
+      this.operatorLockId, owner, this.operatorLeaseMs
+    );
+    if (!acquired) {
+      const error = new Error('Another application process currently owns the autonomous operator');
+      error.status = 409;
+      error.code = 'OPERATOR_LEASE_ACTIVE';
+      throw error;
+    }
+    return { productionId: this.operatorLockId, owner, timer: null, lost: false };
+  }
+
+  async releaseOperatorLease(runId, lease) {
+    if (lease.timer) clearInterval(lease.timer);
+    this.runLeases.delete(runId);
+    await this.db.releaseProductionOperationLock(this.operatorLockId, lease.owner);
+  }
+
+  async assertOperatorLease(runId) {
+    const lease = this.runLeases.get(runId);
+    if (!lease || lease.lost) {
+      const error = new Error('Autonomous operator lease was lost');
+      error.code = 'OPERATOR_LEASE_LOST';
+      error.status = 409;
+      throw error;
+    }
+    const renewed = await this.db.renewProductionOperationLock(
+      this.operatorLockId, lease.owner, this.operatorLeaseMs
+    );
+    if (!renewed) {
+      lease.lost = true;
+      const error = new Error('Autonomous operator lease was lost');
+      error.code = 'OPERATOR_LEASE_LOST';
+      error.status = 409;
+      throw error;
+    }
+    if (!lease.timer) {
+      lease.timer = setInterval(async () => {
+        try {
+          const ok = await this.db.renewProductionOperationLock(
+            this.operatorLockId, lease.owner, this.operatorLeaseMs
+          );
+          if (!ok) lease.lost = true;
+        } catch (_error) {
+          lease.lost = true;
+        }
+      }, 15000);
+      lease.timer.unref?.();
+    }
   }
 
   async bindApprovedConcept(strategy) {
@@ -33,19 +90,30 @@ class AutonomousChannelOperator {
       throw error;
     }
     strategy = await this.bindApprovedConcept(strategy);
-    const active = await this.db.getActiveOperatorRun();
-    if (active || this.activeRuns.size) {
-      const error = new Error('An autonomous operator run is already active');
-      error.status = 409;
+    const lease = await this.acquireOperatorLease();
+    let run;
+    try {
+      const active = await this.db.getActiveOperatorRun();
+      if (active || this.activeRuns.size) {
+        const error = new Error('An autonomous operator run is already active');
+        error.status = 409;
+        throw error;
+      }
+      run = await this.db.createOperatorRun(strategy.id);
+      this.runLeases.set(run.id, lease);
+      const work = this.execute(run.id, strategy)
+        .catch(error => this.logger.error(`Operator run ${run.id} failed:`, error))
+        .finally(async () => {
+          this.activeRuns.delete(run.id);
+          await this.releaseOperatorLease(run.id, lease);
+        });
+      this.activeRuns.set(run.id, work);
+      return run;
+    } catch (error) {
+      if (run) this.runLeases.delete(run.id);
+      await this.db.releaseProductionOperationLock(this.operatorLockId, lease.owner);
       throw error;
     }
-
-    const run = await this.db.createOperatorRun(strategy.id);
-    const work = this.execute(run.id, strategy)
-      .catch(error => this.logger.error(`Operator run ${run.id} failed:`, error))
-      .finally(() => this.activeRuns.delete(run.id));
-    this.activeRuns.set(run.id, work);
-    return run;
   }
 
   async resume(runId, strategy) {
@@ -66,24 +134,35 @@ class AutonomousChannelOperator {
       throw error;
     }
     strategy = await this.bindApprovedConcept(strategy);
-    const active = await this.db.getActiveOperatorRun();
-    if (active || this.activeRuns.size) {
-      const error = new Error('An autonomous operator run is already active');
-      error.status = 409;
+    const lease = await this.acquireOperatorLease();
+    try {
+      const active = await this.db.getActiveOperatorRun();
+      if (active || this.activeRuns.size) {
+        const error = new Error('An autonomous operator run is already active');
+        error.status = 409;
+        throw error;
+      }
+      this.runLeases.set(runId, lease);
+      await this.update(runId, {
+        status: 'queued',
+        stage: 'resuming',
+        error: null,
+        cancelRequested: false,
+        completedAt: null
+      });
+      const work = this.execute(runId, strategy, { resume: true })
+        .catch(error => this.logger.error(`Resumed operator run ${runId} failed:`, error))
+        .finally(async () => {
+          this.activeRuns.delete(runId);
+          await this.releaseOperatorLease(runId, lease);
+        });
+      this.activeRuns.set(runId, work);
+      return this.db.getOperatorRun(runId);
+    } catch (error) {
+      this.runLeases.delete(runId);
+      await this.db.releaseProductionOperationLock(this.operatorLockId, lease.owner);
       throw error;
     }
-    await this.update(runId, {
-      status: 'queued',
-      stage: 'resuming',
-      error: null,
-      cancelRequested: false,
-      completedAt: null
-    });
-    const work = this.execute(runId, strategy, { resume: true })
-      .catch(error => this.logger.error(`Resumed operator run ${runId} failed:`, error))
-      .finally(() => this.activeRuns.delete(runId));
-    this.activeRuns.set(runId, work);
-    return this.db.getOperatorRun(runId);
   }
 
   async execute(runId, strategy, options = {}) {
@@ -262,6 +341,7 @@ class AutonomousChannelOperator {
   }
 
   async assertNotCancelled(runId) {
+    await this.assertOperatorLease(runId);
     const run = await this.db.getOperatorRun(runId);
     if (run?.cancelRequested) {
       const error = new Error('Autonomous operator stopped by the channel owner');
@@ -271,7 +351,8 @@ class AutonomousChannelOperator {
   }
 
   update(runId, changes) {
-    return this.db.updateOperatorRun(runId, changes);
+    const lease = this.runLeases.get(runId) || null;
+    return this.db.updateOperatorRun(runId, changes, lease);
   }
 }
 
