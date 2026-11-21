@@ -50,14 +50,21 @@ The existing protected `POST /api/content/:productionId/retry` endpoint now resu
 
 ## Cross-process operation safety
 
-Production creation for a generation job uses a database-backed lease keyed by
-the job ID. A second worker receives a conflict instead of creating a duplicate
-production for the same job. Resuming an existing production uses a separate
+Production creation for a generation job uses nested database-backed
+leases: the generation orchestrator owns `generation:<jobId>`, and
+`ProductionManagementAgent` owns `job:<jobId>`. A second worker receives a
+conflict instead of creating a duplicate production for the same job. The
+production row stores its originating job ID in `timeline.jobId`; database
+mutations verify that a job-scoped lease is associated with that exact
+production before committing the manifest, snapshots, scene records, revisions,
+or provenance. Resuming an existing production uses a separate
 production-scoped lease, so direct retries cannot run the same saved workflow
-concurrently. Both leases are renewed while work is active and checked before
-workflow persistence; losing or failing to verify a lease stops subsequent
-state commits. Long-running media commands are not forcibly cancelled, but
-their outputs are not committed after lease loss is detected.
+concurrently. Leases are renewed while work is active and checked inside the
+same SQLite transaction as protected writes; losing or failing to verify a
+lease stops subsequent state commits. Long-running media commands are not
+forcibly cancelled, because the next lease owner may be reconciling the same
+remote provider task. Their outputs are committed only while the owning lease
+remains valid.
 
 Scene-repair output replacement uses a temporary file and a rollback backup.
 If promoting the validated temporary output fails, the previous output is
