@@ -339,7 +339,7 @@ class ProductionManagementAgent {
           persistWorkflow
         );
       } catch (error) {
-        if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeNarration);
+        // Lease ownership is gone or unverifiable: preserve every artifact for the current owner/recovery.
         throw error;
       }
       const assetsBeforeEditing = {
@@ -369,7 +369,7 @@ class ProductionManagementAgent {
           persistWorkflow
         );
       } catch (error) {
-        if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeEditing);
+        // Lease ownership is gone or unverifiable: preserve every artifact for the current owner/recovery.
         throw error;
       }
       // Mark as ready — or simulated, when no real video could be produced
@@ -533,7 +533,7 @@ class ProductionManagementAgent {
             return { audioPath, provider: productionData.assets.audio.provider || null };
           }, persistWorkflow);
         } catch (error) {
-          if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeNarration);
+          // Lease ownership is gone or unverifiable: preserve every artifact for the current owner/recovery.
           throw error;
         }
       }
@@ -561,7 +561,7 @@ class ProductionManagementAgent {
             };
           }, persistWorkflow);
         } catch (error) {
-          if (isLeaseFailure(error)) await cleanupNewProductionAssets(productionData, assetsBeforeEditing);
+          // Lease ownership is gone or unverifiable: preserve every artifact for the current owner/recovery.
           throw error;
         }
       }
