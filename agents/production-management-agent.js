@@ -626,6 +626,7 @@ class ProductionManagementAgent {
           originalPath: thumbnail.path,
           dimensions: aiThumbnail.dimensions,
           fileSize: aiThumbnail.fileSize,
+          thumbnailRecordId: thumbnail.id || null,
           generatedWith: 'AI'
         };
       }
@@ -657,7 +658,8 @@ class ProductionManagementAgent {
         path: productionThumbnailPath,
         originalPath: thumbnail.path,
         dimensions: thumbnail.dimensions || { width: 1792, height: 1024 },
-        fileSize: thumbnail.fileSize || 0
+        fileSize: thumbnail.fileSize || 0,
+        thumbnailRecordId: thumbnail.id || null
       };
     }
 
@@ -671,6 +673,7 @@ class ProductionManagementAgent {
       originalPath: thumbnail.path,
       dimensions: thumbnail.dimensions || { width: 1792, height: 1024 },
       fileSize: 0,
+      thumbnailRecordId: thumbnail.id || null,
       simulated: true
     };
   }
