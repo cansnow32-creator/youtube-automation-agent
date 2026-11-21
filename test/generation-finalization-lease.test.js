@@ -57,6 +57,12 @@ async function run() {
       }, staleLease),
       error => error.code === 'SCENE_EDIT_LEASE_LOST'
     );
+    await assert.rejects(
+      database.saveDiscoverabilityAudit('production-1', 'youtube', {
+        status: 'passed', findings: []
+      }, staleLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
 
     await database.updateProductionStatus('production-1', 'needs_review', lease);
     const status = await database.getRow('SELECT status FROM productions WHERE id = ?', ['production-1']);
