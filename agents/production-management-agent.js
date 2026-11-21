@@ -60,55 +60,6 @@ function getVideoAttemptSidecarPaths(videoPath) {
   return paths;
 }
 
-async function cleanupNewProductionAssets(productionData, previousAssets = {}) {
-  const current = productionData?.assets || {};
-  const pathsToRemove = [];
-  const preserved = [
-    previousAssets.audio?.path,
-    previousAssets.captions?.path,
-    previousAssets.finalVideo?.path,
-    previousAssets.finalVideo?.cleanPath,
-    ...(previousAssets.finalVideo?.provider?.scenes || []).map(scene => scene.path),
-    previousAssets.backgroundMusic?.path
-  ];
-
-  if (current.audio?.path && current.audio.path !== previousAssets.audio?.path) {
-    pathsToRemove.push(current.audio.path, current.audio.path + '.pcm', current.audio.path + '.info');
-  }
-  if (current.captions?.path && current.captions.path !== previousAssets.captions?.path) {
-    pathsToRemove.push(current.captions.path);
-  }
-  if (current.finalVideo?.path && current.finalVideo.path !== previousAssets.finalVideo?.path) {
-    if (current.finalVideo.path.endsWith('.assembly.json')) {
-      pathsToRemove.push(current.finalVideo.path);
-      pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.path.slice(0, -'.assembly.json'.length)));
-    } else {
-      pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.path));
-    }
-  }
-  if (current.finalVideo?.cleanPath && current.finalVideo.cleanPath !== previousAssets.finalVideo?.cleanPath) {
-    pathsToRemove.push(...getVideoAttemptSidecarPaths(current.finalVideo.cleanPath));
-  }
-  for (const scene of current.finalVideo?.provider?.scenes || []) {
-    if (scene.path && scene.reused !== true) {
-      pathsToRemove.push(
-        scene.path,
-        scene.path + '.rendering.mp4',
-        scene.path + '.render.json',
-        scene.path + '.render.json.tmp'
-      );
-    }
-  }
-  if (current.backgroundMusic?.path && current.backgroundMusic.path !== previousAssets.backgroundMusic?.path) {
-    pathsToRemove.push(
-      current.backgroundMusic.path,
-      current.backgroundMusic.path + '.mixing.mp4',
-      current.backgroundMusic.path + '.mix.json',
-      current.backgroundMusic.path + '.mix.json.tmp'
-    );
-  }
-  await removeAttemptFiles(pathsToRemove, preserved);
-}
 
 function isLeaseFailure(error) {
   const code = String(error?.code || '').toUpperCase();
@@ -319,12 +270,6 @@ class ProductionManagementAgent {
         },
         persistWorkflow
       );
-      const assetsBeforeNarration = {
-        audio: productionData.assets.audio,
-        captions: productionData.assets.captions,
-        finalVideo: productionData.assets.finalVideo,
-        backgroundMusic: productionData.assets.backgroundMusic
-      };
       try {
         await runProductionStage(
           productionData.timeline.productionWorkflow,
@@ -342,12 +287,6 @@ class ProductionManagementAgent {
         // Lease ownership is gone or unverifiable: preserve every artifact for the current owner/recovery.
         throw error;
       }
-      const assetsBeforeEditing = {
-        audio: productionData.assets.audio,
-        captions: productionData.assets.captions,
-        finalVideo: productionData.assets.finalVideo,
-        backgroundMusic: productionData.assets.backgroundMusic
-      };
       try {
         await runProductionStage(
           productionData.timeline.productionWorkflow,
@@ -518,12 +457,6 @@ class ProductionManagementAgent {
       }
       await assertLease();
       if (workflow.stages.narration.status !== 'completed') {
-        const assetsBeforeNarration = {
-          audio: productionData.assets.audio,
-          captions: productionData.assets.captions,
-          finalVideo: productionData.assets.finalVideo,
-          backgroundMusic: productionData.assets.backgroundMusic
-        };
         try {
           await runProductionStage(workflow, 'narration', async () => {
             const audioPath = await this.generateAudioNarration(productionData, assertLease);
@@ -539,12 +472,6 @@ class ProductionManagementAgent {
       }
       await assertLease();
       if (workflow.stages.editing.status !== 'completed') {
-        const assetsBeforeEditing = {
-          audio: productionData.assets.audio,
-          captions: productionData.assets.captions,
-          finalVideo: productionData.assets.finalVideo,
-          backgroundMusic: productionData.assets.backgroundMusic
-        };
         try {
           await runProductionStage(workflow, 'editing', async () => {
             await this.generateCaptions(productionData, assertLease);
