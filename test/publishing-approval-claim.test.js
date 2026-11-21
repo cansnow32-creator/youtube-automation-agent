@@ -75,6 +75,16 @@ async function run() {
     await database.executeQuery(
       "UPDATE content_reviews SET status = 'approved' WHERE production_id = 'production-2'"
     );
+    await database.executeQuery(`CREATE TABLE production_operation_locks (
+      production_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL
+    )`);
+    await database.executeQuery(
+      'INSERT INTO production_operation_locks (production_id, owner, expires_at) VALUES (?, ?, ?)',
+      ['production-2', 'active-review', Date.now() + 60000]
+    );
+    assert.equal(await database.claimScheduleEntryForUpload('unapproved-short'), null,
+      'an active source production review/edit lease must block the Short upload claim');
+    await database.executeQuery("DELETE FROM production_operation_locks WHERE production_id = 'production-2'");
     const approvedShort = await database.claimScheduleEntryForUpload('unapproved-short');
     assert.equal(approvedShort.status, 'uploading',
       'a Short with explicit approval and verified inherited evidence may be claimed');
@@ -83,7 +93,7 @@ async function run() {
     await insertSchedule('no-approval-evidence', 'production-3');
     assert.equal(await database.claimScheduleEntryForUpload('no-approval-evidence'), null,
       'a schedule without a matching approved production or Short must fail closed');
-    process.stdout.write('Publishing approval claim tests passed\\n');
+    process.stdout.write('Publishing approval claim tests passedfailed: ${error.stack || error.message}\\nfailed: ${error.stack || error.message}\\nn');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
@@ -91,6 +101,6 @@ async function run() {
 }
 
 run().catch(error => {
-  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}\\n`);
+  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}failed: ${error.stack || error.message}\\nfailed: ${error.stack || error.message}\\nn`);
   process.exitCode = 1;
 });
