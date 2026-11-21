@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const { buildContentReviewAfterEdit } = require('./utils/content-review-edit');
 const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('./utils/logger');
@@ -1183,13 +1184,10 @@ class YouTubeAutomationAgent {
           return res.status(409).json({ error: 'Published content cannot be edited here' });
         }
         const editorData = this.validateEditorData(req.body, bundle.editorData);
-        const result = await this.db.saveContentReview(bundle.id, {
-          status: bundle.review_status || 'needs_review',
-          editorData,
-          qualityChecks: bundle.qualityChecks,
-          reviewNotes: req.body.reviewNotes ?? bundle.review_notes,
-          reviewedAt: bundle.reviewed_at
-        });
+        const result = await this.db.saveContentReview(
+          bundle.id,
+          buildContentReviewAfterEdit(bundle, editorData, req.body.reviewNotes)
+        );
         return res.json({ success: true, result: this.decorateContentBundle(result) });
       } catch (error) {
         return res.status(400).json({ success: false, error: error.message });
