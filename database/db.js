@@ -2326,10 +2326,17 @@ class Database {
            )`,
         [Date.now()]
       );
+      // Preserve an operator run owned by another live application process.
       await tx.run(
         `UPDATE operator_runs SET status = 'interrupted', stage = 'interrupted',
          error = 'The application restarted before this operator run finished', updated_at = datetime('now'),
-         completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')`
+         completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')
+           AND NOT EXISTS (
+             SELECT 1 FROM production_operation_locks AS active_lock
+             WHERE active_lock.production_id = 'operator:active'
+               AND active_lock.expires_at > ?
+           )`,
+        [Date.now()]
       );
     });
   }
@@ -2940,28 +2947,37 @@ class Database {
     return rows.map(row => this.deserializeOperatorRun(row));
   }
 
-  async updateOperatorRun(id, changes = {}) {
-    const current = await this.getOperatorRun(id);
-    if (!current) return null;
-    await this.executeQuery(
-      `UPDATE operator_runs SET status = ?, stage = ?, progress = ?, research = ?, plan = ?,
-       generated_jobs = ?, summary = ?, error = ?, cancel_requested = ?,
-       updated_at = datetime('now'), completed_at = ? WHERE id = ?`,
-      [
-        changes.status ?? current.status,
-        changes.stage ?? current.stage,
-        changes.progress ?? current.progress,
-        JSON.stringify(changes.research ?? current.research ?? {}),
-        JSON.stringify(changes.plan ?? current.plan ?? []),
-        JSON.stringify(changes.generatedJobs ?? current.generatedJobs ?? []),
-        JSON.stringify(changes.summary ?? current.summary ?? {}),
-        changes.error === undefined ? current.error : changes.error,
-        changes.cancelRequested === undefined ? current.cancel_requested : Number(changes.cancelRequested),
-        changes.completedAt === undefined ? current.completed_at : changes.completedAt,
-        id
-      ]
-    );
-    return this.getOperatorRun(id);
+  async updateOperatorRun(id, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, 'operator:active');
+      const rows = await tx.all('SELECT * FROM operator_runs WHERE id = ?', [id]);
+      const row = rows[0];
+      if (!row) return null;
+      const current = this.deserializeOperatorRun(row);
+      const result = await tx.run(
+        `UPDATE operator_runs SET status = ?, stage = ?, progress = ?, research = ?, plan = ?,
+         generated_jobs = ?, summary = ?, error = ?, cancel_requested = ?,
+         updated_at = datetime('now'), completed_at = ? WHERE id = ?`,
+        [
+          changes.status ?? current.status,
+          changes.stage ?? current.stage,
+          changes.progress ?? current.progress,
+          JSON.stringify(changes.research ?? current.research ?? {}),
+          JSON.stringify(changes.plan ?? current.plan ?? []),
+          JSON.stringify(changes.generatedJobs ?? current.generatedJobs ?? []),
+          JSON.stringify(changes.summary ?? current.summary ?? {}),
+          changes.error === undefined ? current.error : changes.error,
+          changes.cancelRequested === undefined ? current.cancel_requested : Number(changes.cancelRequested),
+          changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+          id
+        ]
+      );
+      await this.requireLeaseWrite(result, lease);
+      const saved = await tx.all('SELECT * FROM operator_runs WHERE id = ?', [id]);
+      return saved[0] ? this.deserializeOperatorRun(saved[0]) : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    return this.withIsolatedTransaction(persist);
   }
 
   deserializeOperatorRun(row) {
