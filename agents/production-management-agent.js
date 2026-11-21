@@ -393,7 +393,7 @@ class ProductionManagementAgent {
         await assertLease();
         productionData.status = 'failed';
         productionData.timeline.lastProductionError = String(error?.message || error).slice(0, 500);
-        await this.db.updateProductionData(productionData).catch(persistError => {
+        await this.db.updateProductionData(productionData, assertLease.lease || null).catch(persistError => {
           this.logger.error('Failed to persist production failure state:', persistError);
         });
       }
