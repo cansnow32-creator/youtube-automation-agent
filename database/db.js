@@ -3251,25 +3251,27 @@ class Database {
       if (lease) {
         await this.assertProductionLeaseInTransaction(tx, lease, leaseProductionId);
       }
+      const where = lease ? 'WHERE id = ? AND production_id = ?' : 'WHERE id = ?';
+      const params = [
+        entry.title || null,
+        entry.publishTime || entry.publish_time || null,
+        entry.status,
+        entry.priority ?? null,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+        entry.youtubeId || null,
+        entry.youtubeUrl || null,
+        entry.publishedAt || null,
+        entry.error || null,
+        entry.id
+      ];
+      if (lease) params.push(leaseProductionId);
       const result = await tx.run(
         `UPDATE publish_schedule SET
           title = COALESCE(?, title), publish_time = COALESCE(?, publish_time),
           status = ?, priority = COALESCE(?, priority), metadata = COALESCE(?, metadata),
           youtube_id = ?, youtube_url = ?, published_at = ?, error_message = ?
-        WHERE id = ? AND production_id = ?`,
-        [
-          entry.title || null,
-          entry.publishTime || entry.publish_time || null,
-          entry.status,
-          entry.priority ?? null,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
-          entry.youtubeId || null,
-          entry.youtubeUrl || null,
-          entry.publishedAt || null,
-          entry.error || null,
-          entry.id,
-          leaseProductionId
-        ]
+        ${where}`,
+        params
       );
       await this.requireLeaseWrite(result, lease);
     };
@@ -3279,7 +3281,7 @@ class Database {
         title = COALESCE(?, title), publish_time = COALESCE(?, publish_time),
         status = ?, priority = COALESCE(?, priority), metadata = COALESCE(?, metadata),
         youtube_id = ?, youtube_url = ?, published_at = ?, error_message = ?
-      WHERE id = ? AND production_id = ?`,
+      WHERE id = ?`,
       [
         entry.title || null,
         entry.publishTime || entry.publish_time || null,
@@ -3290,8 +3292,7 @@ class Database {
         entry.youtubeUrl || null,
         entry.publishedAt || null,
         entry.error || null,
-        entry.id,
-        leaseProductionId
+        entry.id
       ]
     );
   }
