@@ -110,6 +110,7 @@ class AutonomousChannelOperator {
       this.activeRuns.set(run.id, work);
       return run;
     } catch (error) {
+      if (lease.timer) clearInterval(lease.timer);
       if (run) this.runLeases.delete(run.id);
       await this.db.releaseProductionOperationLock(this.operatorLockId, lease.owner);
       throw error;
@@ -159,6 +160,7 @@ class AutonomousChannelOperator {
       this.activeRuns.set(runId, work);
       return this.db.getOperatorRun(runId);
     } catch (error) {
+      if (lease.timer) clearInterval(lease.timer);
       this.runLeases.delete(runId);
       await this.db.releaseProductionOperationLock(this.operatorLockId, lease.owner);
       throw error;
