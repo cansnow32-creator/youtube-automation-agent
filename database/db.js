@@ -2433,8 +2433,25 @@ class Database {
   }
 
   async saveContentReview(productionId, review = {}, lease = null) {
-    const persist = async tx => {
-      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+    await this.withIsolatedTransaction(async tx => {
+      await tx.run(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+        production_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      if (lease) {
+        await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      } else {
+        const active = await tx.all(
+          'SELECT owner FROM production_operation_locks WHERE production_id = ? AND expires_at > ?',
+          [productionId, Date.now()]
+        );
+        if (active.length) {
+          throw Object.assign(new Error('A production operation is active; review changes must wait for its lease to finish'), {
+            code: 'CONTENT_REVIEW_LOCK_ACTIVE',
+            status: 409
+          });
+        }
+      }
       await tx.run(
         `INSERT INTO content_reviews (
           production_id, status, editor_data, quality_checks, review_notes, reviewed_at, updated_at
@@ -2452,25 +2469,7 @@ class Database {
           review.reviewedAt || null
         ]
       );
-    };
-    if (lease) await this.withIsolatedTransaction(persist);
-    else await this.executeQuery(
-      `INSERT INTO content_reviews (
-        production_id, status, editor_data, quality_checks, review_notes, reviewed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(production_id) DO UPDATE SET
-        status = excluded.status, editor_data = excluded.editor_data,
-        quality_checks = excluded.quality_checks, review_notes = excluded.review_notes,
-        reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
-      [
-        productionId,
-        review.status || 'needs_review',
-        JSON.stringify(review.editorData || {}),
-        JSON.stringify(review.qualityChecks || []),
-        review.reviewNotes || null,
-        review.reviewedAt || null
-      ]
-    );
+    });
     return this.getProductionBundle(productionId);
   }
 
