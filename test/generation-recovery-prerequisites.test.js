@@ -162,6 +162,25 @@ async function run() {
     ['running'],
     'a worker that lost its job lease must not persist completed or failed state'
   );
+  // Stage-progress persistence must receive the same generation lease
+  // used by checkpoint writes, so the database can fence the mutation itself.
+  let stageUpdateArgs = null;
+  const leaseAwareRecovery = new GenerationRecoveryService(db, {
+    maxAttempts: 1,
+    baseDelayMs: 0,
+    updateJobStage: async (...args) => { stageUpdateArgs = args; }
+  });
+  const leaseAwareAssert = async () => {};
+  leaseAwareAssert.lease = Object.freeze({
+    productionId: 'generation:job-stage-lease',
+    owner: 'generation-stage-owner'
+  });
+  await leaseAwareRecovery.run('job-stage-lease', 'strategy', 10,
+    async () => ({ topic: 'Lease-fenced stage update' }),
+    { assertLease: leaseAwareAssert });
+  assert.equal(stageUpdateArgs[4], leaseAwareAssert,
+    'stage updates receive the exact lease assertion function, including its owner context');
+
   process.stdout.write('Generation recovery prerequisite tests passed\n');
 }
 
