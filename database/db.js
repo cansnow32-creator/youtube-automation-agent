@@ -1042,8 +1042,11 @@ class Database {
       await this.assertLeaseInTransaction(tx, lease, lease.productionId);
       return;
     }
-    const prefix = 'generation:';
-    if (typeof lease.productionId !== 'string' || !lease.productionId.startsWith(prefix)) {
+    const prefixes = ['generation:', 'job:'];
+    const prefix = prefixes.find(value =>
+      typeof lease.productionId === 'string' && lease.productionId.startsWith(value)
+    );
+    if (!prefix) {
       throw Object.assign(new Error('Production operation lease does not own this production'), {
         code: 'SCENE_EDIT_LEASE_INVALID', status: 409
       });
