@@ -1831,6 +1831,7 @@ class Database {
           productionId, sceneId
         ]
       );
+      await this.requireLeaseWrite(result, lease);
       const saved = await tx.all(
         'SELECT * FROM production_scenes WHERE production_id = ? AND id = ?',
         [productionId, sceneId]
@@ -1865,6 +1866,7 @@ class Database {
         productionId, sceneId
       ]
     );
+    if (result.changes !== 1) return null;
     return this.getProductionScene(productionId, sceneId);
   }
 
