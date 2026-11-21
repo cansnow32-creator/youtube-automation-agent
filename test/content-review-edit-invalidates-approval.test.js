@@ -28,6 +28,13 @@ assert.equal(unchanged.status, 'approved');
 assert.equal(unchanged.reviewedAt, approved.reviewed_at);
 assert.deepEqual(unchanged.qualityChecks, approved.qualityChecks);
 
+const reordered = buildContentReviewAfterEdit(
+  approved,
+  { factChecked: true, title: 'Approved title' },
+  undefined
+);
+assert.equal(reordered.status, 'approved', 'object key order alone is not a content edit');
+
 const pending = buildContentReviewAfterEdit(
   { ...approved, review_status: 'needs_review' },
   { title: 'Changed title', factChecked: true },
