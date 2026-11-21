@@ -3095,7 +3095,8 @@ class Database {
              AND EXISTS (
                SELECT 1 FROM shorts_clips AS clip
                WHERE clip.schedule_id = publish_schedule.id
-                 AND clip.production_id = publish_schedule.production_id
+                 AND clip.id = json_extract(publish_schedule.metadata, '$.shortClipId')
+                 AND clip.production_id = json_extract(publish_schedule.metadata, '$.sourceProductionId')
                  AND clip.approved_at IS NOT NULL
                  AND json_extract(clip.inherited_evidence, '$.ready') = 1
                  AND clip.status IN ('scheduled', 'failed', 'uploading', 'reconciliation_required', 'published')
