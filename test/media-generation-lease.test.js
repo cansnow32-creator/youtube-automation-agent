@@ -1182,6 +1182,9 @@ async function testMediaTaskFromDifferentProductionCannotBeReused() {
     }),
     createMediaGenerationTask: async () => {
       throw new Error('a mismatched existing task must not be replaced');
+    },
+    updateMediaGenerationTask: async () => {
+      throw new Error('a mismatched existing task must not be updated');
     }
   };
   const provider = {
