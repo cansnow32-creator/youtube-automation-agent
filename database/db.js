@@ -1761,11 +1761,50 @@ class Database {
   }
 
   async updateProductionScene(productionId, sceneId, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      const rows = await tx.all(
+        'SELECT * FROM production_scenes WHERE production_id = ? AND id = ?',
+        [productionId, sceneId]
+      );
+      const current = this.parseProductionScene(rows[0]);
+      if (!current) return null;
+      const next = { ...current, ...changes };
+      await tx.run(
+        `UPDATE production_scenes SET
+          position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
+          asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
+          narration_provider = ?, narration_model = ?, narration_task_id = ?, narration_error = ?,
+          narration_generated_at = ?, narration_cost = ?, provider = ?,
+          model = ?, external_task_id = ?, status = ?, narration_status = ?, revision = ?,
+          locked = ?, rights_confirmed = ?, provenance_source_ids = ?,
+          contains_synthetic_media = ?, estimated_cost = ?, actual_cost = ?,
+          updated_at = datetime('now')
+         WHERE production_id = ? AND id = ?`,
+        [
+          next.position, next.label, next.scriptText || '', next.prompt || '', next.duration,
+          next.assetType || 'missing', next.assetOrigin || 'generated', next.assetPath || null,
+          next.audioPath || null, next.narrationProvider || null, next.narrationModel || null,
+          next.narrationTaskId || null, next.narrationError || null, next.narrationGeneratedAt || null,
+          JSON.stringify(next.narrationCost || {}), next.provider || null, next.model || null, next.externalTaskId || null,
+          next.status || 'ready', next.narrationStatus || 'current', next.revision || 1,
+          next.locked ? 1 : 0, next.rightsConfirmed ? 1 : 0,
+          JSON.stringify(next.provenanceSourceIds || []), next.containsSyntheticMedia ? 1 : 0,
+          JSON.stringify(next.estimatedCost || {}), JSON.stringify(next.actualCost || {}),
+          productionId, sceneId
+        ]
+      );
+      const saved = await tx.all(
+        'SELECT * FROM production_scenes WHERE production_id = ? AND id = ?',
+        [productionId, sceneId]
+      );
+      return this.parseProductionScene(saved[0]);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     const current = await this.getProductionScene(productionId, sceneId);
     if (!current) return null;
     const next = { ...current, ...changes };
-    const guard = this.leaseGuard(lease, productionId);
-    const result = await this.executeQuery(
+    await this.executeQuery(
       `UPDATE production_scenes SET
         position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
         asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
@@ -1775,7 +1814,7 @@ class Database {
         locked = ?, rights_confirmed = ?, provenance_source_ids = ?,
         contains_synthetic_media = ?, estimated_cost = ?, actual_cost = ?,
         updated_at = datetime('now')
-       WHERE production_id = ? AND id = ?${guard.sql}`,
+       WHERE production_id = ? AND id = ?`,
       [
         next.position, next.label, next.scriptText || '', next.prompt || '', next.duration,
         next.assetType || 'missing', next.assetOrigin || 'generated', next.assetPath || null,
@@ -1786,10 +1825,9 @@ class Database {
         next.locked ? 1 : 0, next.rightsConfirmed ? 1 : 0,
         JSON.stringify(next.provenanceSourceIds || []), next.containsSyntheticMedia ? 1 : 0,
         JSON.stringify(next.estimatedCost || {}), JSON.stringify(next.actualCost || {}),
-        productionId, sceneId, ...guard.params
+        productionId, sceneId
       ]
     );
-    await this.requireLeaseWrite(result, lease);
     return this.getProductionScene(productionId, sceneId);
   }
 
@@ -1818,21 +1856,36 @@ class Database {
 
   async saveProductionSceneRevision(input = {}, lease = null) {
     const id = this.generateId('scene_revision');
-    const guard = this.leaseGuard(lease, input.productionId);
-    const result = await this.executeQuery(
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, input.productionId);
+      await tx.run(
+        `INSERT INTO production_scene_revisions (
+          id, production_id, scene_id, action, status, before_state, after_state,
+          cost_evidence, error, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, input.productionId, input.sceneId, input.action, input.status || 'completed',
+          JSON.stringify(input.before || {}), JSON.stringify(input.after || {}),
+          JSON.stringify(input.costEvidence || {}), input.error || null,
+          input.completedAt || new Date().toISOString()
+        ]
+      );
+      const rows = await tx.all('SELECT * FROM production_scene_revisions WHERE id = ?', [id]);
+      return this.parseProductionSceneRevision(rows[0]);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    await this.executeQuery(
       `INSERT INTO production_scene_revisions (
         id, production_id, scene_id, action, status, before_state, after_state,
         cost_evidence, error, completed_at
-       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${guard.sql ? guard.sql.replace(' AND EXISTS (SELECT 1 FROM production_operation_locks', ' WHERE EXISTS (SELECT 1 FROM production_operation_locks') : ''}`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, input.productionId, input.sceneId, input.action, input.status || 'completed',
         JSON.stringify(input.before || {}), JSON.stringify(input.after || {}),
         JSON.stringify(input.costEvidence || {}), input.error || null,
-        input.completedAt || new Date().toISOString(),
-        ...guard.params
+        input.completedAt || new Date().toISOString()
       ]
     );
-    await this.requireLeaseWrite(result, lease);
     return this.getProductionSceneRevision(id);
   }
 
@@ -2135,11 +2188,43 @@ class Database {
   }
 
   async saveContentProvenance(productionId, provenance = {}, lease = null) {
-    const guard = this.leaseGuard(lease, productionId);
-    const result = await this.executeQuery(
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      await tx.run(
+        `INSERT INTO content_provenance (
+          production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(production_id) DO UPDATE SET
+          sources = excluded.sources, claims = excluded.claims,
+          contains_synthetic_media = excluded.contains_synthetic_media,
+          status = excluded.status, summary = excluded.summary,
+          reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
+        [
+          productionId,
+          JSON.stringify(provenance.sources || []),
+          JSON.stringify(provenance.claims || []),
+          Number(provenance.containsSyntheticMedia === true),
+          provenance.status || 'not_required',
+          JSON.stringify(provenance.summary || {}),
+          provenance.reviewedAt || null
+        ]
+      );
+      const rows = await tx.all('SELECT * FROM content_provenance WHERE production_id = ?', [productionId]);
+      const row = rows[0];
+      return row ? {
+        ...row,
+        sources: JSON.parse(row.sources || '[]'),
+        claims: JSON.parse(row.claims || '[]'),
+        containsSyntheticMedia: Boolean(row.contains_synthetic_media),
+        summary: JSON.parse(row.summary || '{}'),
+        reviewedAt: row.reviewed_at
+      } : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    await this.executeQuery(
       `INSERT INTO content_provenance (
         production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
-      ) SELECT ?, ?, ?, ?, ?, ?, ?, datetime('now') WHERE 1 = 1${guard.sql}
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(production_id) DO UPDATE SET
         sources = excluded.sources, claims = excluded.claims,
         contains_synthetic_media = excluded.contains_synthetic_media,
@@ -2152,11 +2237,9 @@ class Database {
         Number(provenance.containsSyntheticMedia === true),
         provenance.status || 'not_required',
         JSON.stringify(provenance.summary || {}),
-        provenance.reviewedAt || null,
-        ...guard.params
+        provenance.reviewedAt || null
       ]
     );
-    await this.requireLeaseWrite(result, lease);
     return this.getContentProvenance(productionId);
   }
 
