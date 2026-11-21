@@ -1970,8 +1970,25 @@ class Database {
     return this.getShortClip(id);
   }
 
-  async claimShortClipRender(id, productionId, attemptId) {
+  async claimShortClipRender(id, productionId, attemptId, lease = null) {
     if (!id || !productionId || !attemptId) throw new Error('Short render claim requires clip, production, and attempt IDs');
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      const result = await tx.run(
+        `UPDATE shorts_clips SET
+          status = 'rendering', error = NULL, render_attempt_id = ?,
+          output_path = NULL, captions_path = NULL, rendered_at = NULL,
+          render_metadata = NULL, updated_at = datetime('now')
+         WHERE id = ? AND production_id = ?
+           AND status IN ('proposed', 'failed', 'rendered')`,
+        [attemptId, id, productionId]
+      );
+      if (result.changes !== 1) return null;
+      const rows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+      const saved = this.parseShortClip(rows[0]);
+      return saved?.status === 'rendering' && saved.renderAttemptId === attemptId ? saved : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     const result = await this.executeQuery(
       `UPDATE shorts_clips SET
         status = 'rendering', error = NULL, render_attempt_id = ?,
@@ -2034,7 +2051,39 @@ class Database {
     return this.getShortClip(id);
   }
 
-  async updateShortClipForRender(id, attemptId, changes = {}) {
+  async updateShortClipForRender(id, attemptId, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) {
+        const currentRows = await tx.all('SELECT production_id FROM shorts_clips WHERE id = ?', [id]);
+        if (!currentRows[0]) return null;
+        await this.assertProductionLeaseInTransaction(tx, lease, currentRows[0].production_id);
+      }
+      const rows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+      const current = this.parseShortClip(rows[0]);
+      if (!current || current.status !== 'rendering' || current.renderAttemptId !== attemptId) return null;
+      const next = { ...current, ...changes };
+      const result = await tx.run(
+        `UPDATE shorts_clips SET
+          title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
+          duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
+          publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
+          schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_metadata = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = 'rendering' AND render_attempt_id = ?`,
+        [
+          next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
+          Number(next.startSeconds || 0), Number(next.duration || 30), next.layout || 'blur', next.rationale || null,
+          next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
+          next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
+          next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
+          next.error || null, next.renderMetadata ? JSON.stringify(next.renderMetadata) : null, id, attemptId
+        ]
+      );
+      if (result.changes !== 1) return null;
+      const savedRows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+      const saved = this.parseShortClip(savedRows[0]);
+      return saved?.renderAttemptId === attemptId && saved.status === next.status ? saved : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     const current = await this.getShortClip(id);
     if (!current || current.status !== 'rendering' || current.renderAttemptId !== attemptId) return null;
     const next = { ...current, ...changes };
