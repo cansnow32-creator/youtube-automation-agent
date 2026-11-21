@@ -77,6 +77,8 @@ async function run() {
   const connectionB = Object.create(Database.prototype);
   connectionA.db = new sqlite3.Database(lockPath);
   connectionB.db = new sqlite3.Database(lockPath);
+  connectionA.dbPath = lockPath;
+  connectionB.dbPath = lockPath;
   connectionA.db.configure('busyTimeout', 5000);
   connectionB.db.configure('busyTimeout', 5000);
   try {
@@ -136,7 +138,6 @@ async function run() {
 
     // Manifest replacement runs on a dedicated SQLite connection in one
     // BEGIN IMMEDIATE transaction. A stale lease cannot delete existing rows.
-    connectionA.dbPath = lockPath;
     await connectionA.executeQuery(`CREATE TABLE generation_checkpoints (
       job_id TEXT NOT NULL, stage TEXT NOT NULL, status TEXT DEFAULT 'pending',
       artifact TEXT, attempt_count INTEGER DEFAULT 0, error TEXT, started_at TEXT,
