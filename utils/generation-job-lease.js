@@ -35,6 +35,9 @@ async function acquireGenerationJobLease(db, jobId, options = {}) {
     await renewalInFlight;
     if (leaseFailure) throw leaseFailure;
   };
+  // Expose the exact lock identity so checkpoint writes can fence stale workers
+  // inside the same SQLite transaction as their mutation.
+  assertLease.lease = Object.freeze({ productionId: lockId, owner });
   const heartbeat = setInterval(() => {
     if (released || leaseFailure) return;
     renewalInFlight = renewalInFlight.then(async () => {
