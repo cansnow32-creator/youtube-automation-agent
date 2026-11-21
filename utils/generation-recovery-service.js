@@ -54,7 +54,7 @@ class GenerationRecoveryService {
     let lastError;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       await assertLease();
-      await this.updateJobStage(jobId, stage, progress, { attempt });
+      await this.updateJobStage(jobId, stage, progress, { attempt }, assertLease);
       await assertLease();
       const startedAt = new Date().toISOString();
       await this.db.saveGenerationCheckpoint(jobId, stage, {
@@ -190,7 +190,7 @@ class GenerationRecoveryService {
     const job = await this.db.getGenerationJob(jobId);
     await assertLease();
     const reusedStages = Array.from(new Set([...(job?.details?.reusedStages || []), stage]));
-    await this.updateJobStage(jobId, stage, progress, { reusedStages });
+    await this.updateJobStage(jobId, stage, progress, { reusedStages }, assertLease);
     await assertLease();
   }
 
