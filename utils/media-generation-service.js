@@ -386,10 +386,9 @@ class MediaGenerationService {
       try {
         await assertLease();
       } catch (leaseError) {
+        // The next lease owner may be reconciling this exact provider task.
+        // Never cancel a shared remote task merely because this worker went stale.
         if (outputPublished && !outputPersisted) await fs.unlink(outputPath).catch(() => {});
-        if (remoteTaskId && !TERMINAL.has(remote?.status)) {
-          await this.cancelRemoteTaskOnLeaseLoss(provider, remoteTaskId);
-        }
         throw leaseError;
       }
       const recoveryStatus = error.code === 'JOB_CANCELLED'
@@ -414,7 +413,7 @@ class MediaGenerationService {
         completedAt: ['failed', 'cancelled', 'submission_unknown'].includes(recoveryStatus)
           ? new Date().toISOString()
           : null
-      });
+      }, lease);
       throw error;
     }
   }
