@@ -2116,7 +2116,48 @@ class Database {
     return this.parseShortClip(await this.getRow('SELECT * FROM shorts_clips WHERE id = ?', [id]));
   }
 
-  async updateShortClip(id, changes = {}) {
+  async updateShortClip(id, changes = {}, lease = null, productionId = null) {
+    if (lease) {
+      return this.withIsolatedTransaction(async tx => {
+        const rows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+        const current = this.parseShortClip(rows[0]);
+        if (!current) return null;
+        if (!productionId || current.production_id !== productionId) {
+          const error = new Error('Short draft does not belong to the leased source production');
+          error.code = 'SHORT_PRODUCTION_SCOPE_MISMATCH';
+          error.status = 409;
+          throw error;
+        }
+        await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+        if (['rendering', 'approved', 'scheduled', 'uploading', 'published', 'reconciliation_required'].includes(current.status)) {
+          const error = new Error('This Short is no longer editable in its current state');
+          error.code = 'SHORT_EDIT_STATE_CONFLICT';
+          error.status = 409;
+          throw error;
+        }
+        const next = { ...current, ...changes };
+        const result = await tx.run(
+          `UPDATE shorts_clips SET
+            title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
+            duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
+            publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
+            schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, render_attempt_id = ?, render_metadata = ?, updated_at = datetime('now')
+           WHERE id = ? AND production_id = ? AND status NOT IN ('rendering', 'approved', 'scheduled', 'uploading', 'published', 'reconciliation_required')`,
+          [
+            next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
+            Number(next.startSeconds || 0), Number(next.duration || 30), next.layout || 'blur', next.rationale || null,
+            next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
+            next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
+            next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
+            next.error || null, next.renderAttemptId || null, next.renderMetadata ? JSON.stringify(next.renderMetadata) : null,
+            id, productionId
+          ]
+        );
+        await this.requireLeaseWrite(result, lease);
+        const savedRows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+        return this.parseShortClip(savedRows[0]);
+      });
+    }
     const current = await this.getShortClip(id);
     if (!current) return null;
     const next = { ...current, ...changes };
