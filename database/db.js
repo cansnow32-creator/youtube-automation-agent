@@ -1271,7 +1271,45 @@ class Database {
     }));
   }
 
-  async saveGenerationCheckpoint(jobId, stage, changes = {}) {
+  async saveGenerationCheckpoint(jobId, stage, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      const rows = await tx.all(
+        'SELECT * FROM generation_checkpoints WHERE job_id = ? AND stage = ?',
+        [jobId, stage]
+      );
+      const current = rows[0] ? { ...rows[0], artifact: JSON.parse(rows[0].artifact || 'null') } : null;
+      const artifact = changes.artifact === undefined ? current?.artifact : changes.artifact;
+      const attemptCount = changes.incrementAttempt
+        ? Number(current?.attempt_count || 0) + 1
+        : changes.attemptCount ?? current?.attempt_count ?? 0;
+      await tx.run(
+        `INSERT INTO generation_checkpoints (
+          job_id, stage, status, artifact, attempt_count, error, started_at, completed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(job_id, stage) DO UPDATE SET
+          status = excluded.status, artifact = excluded.artifact,
+          attempt_count = excluded.attempt_count, error = excluded.error,
+          started_at = excluded.started_at, completed_at = excluded.completed_at,
+          updated_at = datetime('now')`,
+        [
+          jobId,
+          stage,
+          changes.status ?? current?.status ?? 'pending',
+          artifact === undefined ? null : JSON.stringify(artifact),
+          attemptCount,
+          changes.error === undefined ? current?.error ?? null : changes.error,
+          changes.startedAt === undefined ? current?.started_at ?? null : changes.startedAt,
+          changes.completedAt === undefined ? current?.completed_at ?? null : changes.completedAt
+        ]
+      );
+      const saved = await tx.all(
+        'SELECT * FROM generation_checkpoints WHERE job_id = ? AND stage = ?',
+        [jobId, stage]
+      );
+      return saved[0] ? { ...saved[0], artifact: JSON.parse(saved[0].artifact || 'null') } : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     const current = await this.getGenerationCheckpoint(jobId, stage);
     const artifact = changes.artifact === undefined ? current?.artifact : changes.artifact;
     const attemptCount = changes.incrementAttempt
@@ -1316,9 +1354,17 @@ class Database {
     return rows.map(row => ({ ...row, artifact: JSON.parse(row.artifact || 'null') }));
   }
 
-  async deleteGenerationCheckpoints(jobId, stages = []) {
+  async deleteGenerationCheckpoints(jobId, stages = [], lease = null) {
     if (!stages.length) return;
     const placeholders = stages.map(() => '?').join(', ');
+    const remove = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      await tx.run(
+        `DELETE FROM generation_checkpoints WHERE job_id = ? AND stage IN (${placeholders})`,
+        [jobId, ...stages]
+      );
+    };
+    if (lease) return this.withIsolatedTransaction(remove);
     await this.executeQuery(
       `DELETE FROM generation_checkpoints WHERE job_id = ? AND stage IN (${placeholders})`,
       [jobId, ...stages]
