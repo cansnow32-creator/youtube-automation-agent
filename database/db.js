@@ -1022,6 +1022,22 @@ class Database {
     }
   }
 
+  async assertGenerationJobLeaseInTransaction(tx, lease, jobId) {
+    if (!lease) return;
+    const prefixes = ['generation:', 'job:'];
+    const prefix = prefixes.find(value =>
+      typeof lease.productionId === 'string' && lease.productionId.startsWith(value)
+    );
+    const leasedJobId = prefix ? lease.productionId.slice(prefix.length) : '';
+    if (!jobId || !leasedJobId || leasedJobId !== String(jobId)) {
+      throw Object.assign(new Error('Generation operation lease does not own the requested job'), {
+        code: 'GENERATION_JOB_LEASE_INVALID',
+        status: 409
+      });
+    }
+    await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+  }
+
   async assertProductionLeaseInTransaction(tx, lease, productionId, allowMissingProduction = false, productionJobIdHint = null) {
     if (!lease) return;
     if (lease.productionId === productionId) {
@@ -1373,7 +1389,7 @@ class Database {
 
   async updateGenerationJob(id, changes = {}, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (lease) await this.assertGenerationJobLeaseInTransaction(tx, lease, id);
       const rows = await tx.all('SELECT * FROM generation_jobs WHERE id = ?', [id]);
       const row = rows[0];
       if (!row) return null;
@@ -1443,7 +1459,7 @@ class Database {
 
   async saveGenerationCheckpoint(jobId, stage, changes = {}, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (lease) await this.assertGenerationJobLeaseInTransaction(tx, lease, jobId);
       const rows = await tx.all(
         'SELECT * FROM generation_checkpoints WHERE job_id = ? AND stage = ?',
         [jobId, stage]
@@ -1528,7 +1544,7 @@ class Database {
     if (!stages.length) return;
     const placeholders = stages.map(() => '?').join(', ');
     const remove = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      if (lease) await this.assertGenerationJobLeaseInTransaction(tx, lease, jobId);
       await tx.run(
         `DELETE FROM generation_checkpoints WHERE job_id = ? AND stage IN (${placeholders})`,
         [jobId, ...stages]
