@@ -2949,7 +2949,29 @@ class Database {
 
   async updateOperatorRun(id, changes = {}, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertLeaseInTransaction(tx, lease, 'operator:active');
+      if (lease) {
+        await this.assertLeaseInTransaction(tx, lease, 'operator:active');
+      } else {
+        const activeLocks = await tx.all(
+          'SELECT owner FROM production_operation_locks WHERE production_id = ? AND expires_at > ?',
+          ['operator:active', Date.now()]
+        );
+        if (activeLocks.length) {
+          if (changes.cancelRequested !== true) {
+            throw Object.assign(new Error('Autonomous operator is owned by another live process'), {
+              code: 'OPERATOR_LEASE_ACTIVE', status: 409
+            });
+          }
+          const cancelResult = await tx.run(
+            `UPDATE operator_runs SET status = 'cancelling', stage = 'cancelling',
+             cancel_requested = 1, updated_at = datetime('now') WHERE id = ?`,
+            [id]
+          );
+          if (cancelResult.changes !== 1) return null;
+          const cancelledRows = await tx.all('SELECT * FROM operator_runs WHERE id = ?', [id]);
+          return cancelledRows[0] ? this.deserializeOperatorRun(cancelledRows[0]) : null;
+        }
+      }
       const rows = await tx.all('SELECT * FROM operator_runs WHERE id = ?', [id]);
       const row = rows[0];
       if (!row) return null;
