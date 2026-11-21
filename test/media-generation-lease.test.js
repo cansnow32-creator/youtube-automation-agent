@@ -164,7 +164,7 @@ async function testPartialAttemptCleanupPreservesReusedClips() {
   }
 }
 
-async function testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence() {
+async function testRemoteProviderTaskIsPreservedWhenLeaseIsLostBeforeTaskPersistence() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-cancel-'));
   const updates = [];
   const cancelled = [];
@@ -219,8 +219,8 @@ async function testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersisten
       }),
       error => error.code === 'GENERATION_JOB_LEASE_LOST'
     );
-    assert.deepEqual(cancelled, ['remote-task-created-before-lease-loss'],
-      'a cancellable remote job is cancelled even when its ID was never persisted locally');
+    assert.deepEqual(cancelled, [],
+      'a stale worker must not cancel a remote task that the next lease owner may reconcile');
     assert.equal(updates.length, 0, 'stale worker must not write the remote task ID after lease loss');
     assert.deepEqual(await fs.readdir(directory), []);
   } finally {
@@ -1032,6 +1032,67 @@ async function testLegacyFailedTaskPollingErrorReconcilesInsteadOfResubmitting()
   }
 }
 
+async function testLeaseLossAfterPersistedOutputPreservesReferencedArtifact() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-persisted-output-'));
+  const outputPath = path.join(directory, 'scene.mp4');
+  let savedTask = null;
+  const task = { id: 'media-persisted-task', status: 'submitting', providerData: {} };
+  const db = {
+    findMediaGenerationTask: async () => null,
+    createMediaGenerationTask: async () => ({ ...task, createdByThisInvocation: true }),
+    updateMediaGenerationTask: async (_id, changes) => {
+      savedTask = {
+        ...task,
+        ...changes,
+        external_task_id: changes.externalTaskId,
+        output_path: changes.outputPath
+      };
+      return savedTask;
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.isValidVideo = async () => true;
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: true },
+    createTask: async () => ({ status: 'succeeded', model: 'test-model', externalTaskId: 'remote-persisted' }),
+    downloadResult: async (_remote, destination) => {
+      await fs.writeFile(destination, Buffer.alloc(1200, 9));
+    },
+    cancelTask: async () => { throw new Error('a persisted provider task must not be cancelled by the stale worker'); }
+  };
+  let checks = 0;
+  try {
+    await assert.rejects(
+      service.generateClip({
+        jobId: 'job-persisted-output',
+        productionId: 'production-persisted-output',
+        scene: { index: 0, prompt: 'persist before lease expires' },
+        provider,
+        outputPath,
+        request: {},
+        assertLease: async () => {
+          checks++;
+          if (checks >= 5) {
+            throw Object.assign(new Error('lease lost immediately after the artifact reference was committed'), {
+              code: 'GENERATION_JOB_LEASE_LOST',
+              status: 409
+            });
+          }
+        }
+      }),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST'
+    );
+    assert.equal(savedTask.status, 'succeeded');
+    assert.equal(savedTask.output_path, outputPath);
+    assert.equal(await fs.access(outputPath).then(() => true, () => false), true,
+      'a file already referenced by the committed media task row must not be deleted on lease loss');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testUnverifiedNewTaskOwnershipBlocksProviderSubmission();
@@ -1046,7 +1107,7 @@ async function main() {
   await testLegacyFailedTaskPollingErrorReconcilesInsteadOfResubmitting();
   await testAttemptScopedClipOutputsAndLeaseLossCleanup();
   await testPartialAttemptCleanupPreservesReusedClips();
-  await testRemoteProviderTaskIsCancelledWhenLeaseLostBeforeTaskPersistence();
+  await testRemoteProviderTaskIsPreservedWhenLeaseIsLostBeforeTaskPersistence();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-fence-'));
   const outputPath = path.join(directory, 'scene.mp4');
   const updates = [];
@@ -1094,6 +1155,8 @@ async function main() {
   assert.equal(await fs.access(outputPath).then(() => true, () => false), false, 'the stale worker does not publish the canonical output');
   assert.deepEqual(await fs.readdir(directory), [], 'the attempt-specific download is cleaned up after lease loss');
   await fs.rm(directory, { recursive: true, force: true });
+
+  await testLeaseLossAfterPersistedOutputPreservesReferencedArtifact();
   process.stdout.write('Media generation lease fence tests passed\\n');
 }
 
