@@ -8,7 +8,8 @@ const { Database } = require('../database/db');
 async function main() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'short-render-cas-'));
   const database = Object.create(Database.prototype);
-  database.db = new sqlite3.Database(path.join(directory, 'shorts.sqlite'));
+  database.dbPath = path.join(directory, 'shorts.sqlite');
+  database.db = new sqlite3.Database(database.dbPath);
   database.db.configure('busyTimeout', 5000);
   try {
     await database.executeQuery(`CREATE TABLE shorts_clips (
@@ -23,6 +24,9 @@ async function main() {
       "INSERT INTO shorts_clips (id, production_id, position, title, description, tags, source_scene_ids, start_seconds, duration, layout, status, inherited_evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ['short-1', 'production-1', 0, 'Test Short', '', '[]', '[]', 0, 30, 'crop', 'proposed', '{}']
     );
+    await database.executeQuery(`CREATE TABLE production_operation_locks (
+      production_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL
+    )`);
 
     const wrongProductionClaim = await database.claimShortClipRender('short-1', 'another-production', 'wrong-production-attempt');
     assert.equal(wrongProductionClaim, null, 'a render claim must be scoped to its owning production');
@@ -74,6 +78,41 @@ async function main() {
     });
     assert.equal(staleScheduleSync, null, 'an old schedule cannot overwrite the current Short status');
     assert.equal((await database.getShortClip('short-1')).status, 'uploading');
+
+    // The clip CAS must also validate the production lease inside the same
+    // SQLite transaction; an assertLease call immediately before SQL is not enough.
+    await database.executeQuery(
+      "INSERT INTO shorts_clips (id, production_id, position, title, description, tags, source_scene_ids, start_seconds, duration, layout, status, inherited_evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ['short-lease', 'production-lease', 1, 'Lease Short', '', '[]', '[]', 0, 30, 'crop', 'proposed', '{}']
+    );
+    await database.executeQuery(
+      'INSERT INTO production_operation_locks (production_id, owner, expires_at) VALUES (?, ?, ?)',
+      ['production-lease', 'current-owner', Date.now() + 60000]
+    );
+    const staleLease = { productionId: 'production-lease', owner: 'old-owner' };
+    const currentLease = { productionId: 'production-lease', owner: 'current-owner' };
+    await assert.rejects(
+      database.claimShortClipRender('short-lease', 'production-lease', 'stale-claim', staleLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.equal((await database.getShortClip('short-lease')).status, 'proposed',
+      'a stale worker cannot claim a Short after losing the production lease');
+    const leasedClaim = await database.claimShortClipRender(
+      'short-lease', 'production-lease', 'current-claim', currentLease
+    );
+    assert.equal(leasedClaim.renderAttemptId, 'current-claim');
+    await assert.rejects(
+      database.updateShortClipForRender('short-lease', 'current-claim', {
+        status: 'rendered', outputPath: '/tmp/stale-lease.mp4'
+      }, staleLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.equal((await database.getShortClip('short-lease')).status, 'rendering',
+      'a stale worker cannot finalize a render after lease takeover');
+    const leaseFinalized = await database.updateShortClipForRender('short-lease', 'current-claim', {
+      status: 'rendered', outputPath: '/tmp/current-lease.mp4'
+    }, currentLease);
+    assert.equal(leaseFinalized.outputPath, '/tmp/current-lease.mp4');
     process.stdout.write('Shorts render and schedule CAS tests passed\\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
