@@ -163,6 +163,12 @@ class MediaGenerationService {
       throw error;
     }
     let task = await this.db.findMediaGenerationTask(jobId, scene.index, provider.id, productionId);
+    if (task && String(task.production_id || '') !== String(productionId || '')) {
+      const error = new Error('The persisted media task belongs to a different production; refusing to reuse or overwrite it');
+      error.code = 'MEDIA_TASK_SCOPE_MISMATCH';
+      error.status = 409;
+      throw error;
+    }
 
     if (task?.status === 'succeeded' && task.output_path) {
       const reusableOutput = await this.isValidVideo(task.output_path);
