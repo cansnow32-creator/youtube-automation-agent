@@ -51,6 +51,7 @@ class PublishingSchedulingAgent {
   async scheduleContent(productionData, options = {}) {
     const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
     const lease = options.lease || assertLease.lease || null;
+    const leaseProductionId = options.leaseProductionId || productionData.id;
     await assertLease();
     try {
       const finalVideo = productionData.assets?.finalVideo;
@@ -98,7 +99,7 @@ class PublishingSchedulingAgent {
       };
       
       await assertLease();
-      const saved = await this.db.saveScheduleEntry(scheduleEntry, lease) || scheduleEntry;
+      const saved = await this.db.saveScheduleEntry(scheduleEntry, lease, leaseProductionId) || scheduleEntry;
       await assertLease();
       this.publishQueue.push(saved);
       this.publishQueue.sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
