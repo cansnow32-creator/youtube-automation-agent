@@ -25,6 +25,7 @@ class GenerationRecoveryService {
     if (!GENERATION_STAGES.includes(stage)) throw new Error(`Unknown generation stage: ${stage}`);
     if (typeof producer !== 'function') throw new Error('A generation stage producer is required');
     const assertLease = typeof options.assertLease === 'function' ? options.assertLease : async () => {};
+    const lease = assertLease.lease || null;
 
     await assertLease();
     await this.assertPrerequisites(jobId, stage, assertLease);
@@ -40,13 +41,13 @@ class GenerationRecoveryService {
       }
       const stageIndex = GENERATION_STAGES.indexOf(stage);
       await assertLease();
-      await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(stageIndex + 1));
+      await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(stageIndex + 1), lease);
       await assertLease();
       await this.db.saveGenerationCheckpoint(jobId, stage, {
         status: 'invalid',
         error: 'The saved artifact is missing or no longer valid',
         completedAt: null
-      });
+      }, lease);
       await assertLease();
     }
 
@@ -62,7 +63,7 @@ class GenerationRecoveryService {
         startedAt,
         completedAt: null,
         incrementAttempt: true
-      });
+      }, lease);
       await assertLease();
       try {
         const artifact = await producer(assertLease);
@@ -76,7 +77,7 @@ class GenerationRecoveryService {
           artifact,
           error: null,
           completedAt: new Date().toISOString()
-        });
+        }, lease);
         await assertLease();
         return artifact;
       } catch (error) {
@@ -87,7 +88,7 @@ class GenerationRecoveryService {
           status: error.code === 'JOB_CANCELLED' ? 'cancelled' : 'failed',
           error: error.message,
           completedAt: new Date().toISOString()
-        });
+        }, lease);
         await assertLease();
         if (error.code === 'JOB_CANCELLED' || attempt >= this.maxAttempts || !this.isRetryable(error)) throw error;
         const delayMs = this.baseDelayMs * (2 ** (attempt - 1));
@@ -202,7 +203,7 @@ class GenerationRecoveryService {
     if (!GENERATION_STAGES.includes(requestedStage)) throw new Error('Resume stage is not supported');
     const index = GENERATION_STAGES.indexOf(requestedStage);
     await assertLease();
-    await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(index));
+    await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(index), lease);
     await assertLease();
   }
 }
