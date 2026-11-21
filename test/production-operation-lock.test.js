@@ -245,6 +245,43 @@ async function run() {
     assert.equal(mediaClaim.task.external_task_id, null);
     await connectionB.releaseProductionOperationLock(generationLockId, 'generation-new');
 
+    const productionJobLock = 'generation:production-manifest-fence';
+    assert.equal(await connectionA.acquireProductionOperationLock(productionJobLock, 'production-job-current', 10000), true);
+    await connectionA.executeQuery(`CREATE TABLE productions (
+      id TEXT PRIMARY KEY, status TEXT, assets TEXT, timeline TEXT,
+      scheduled_publish_time TEXT, priority INTEGER, estimated_duration TEXT
+    )`);
+    await connectionA.executeQuery(`CREATE TABLE production_snapshots (
+      production_id TEXT PRIMARY KEY, strategy TEXT, script TEXT, thumbnail TEXT, seo TEXT
+    )`);
+    const staleProductionLease = { productionId: productionJobLock, owner: 'production-job-stale' };
+    const currentProductionLease = { productionId: productionJobLock, owner: 'production-job-current' };
+    const productionRecord = {
+      id: 'production-row-under-generation-lock', status: 'processing',
+      assets: { video: { visualAssets: [] } }, timeline: { jobId: 'production-manifest-fence' },
+      scheduledPublishTime: null, priority: 50, estimatedDuration: 30,
+      strategy: { topic: 'lease fence' }, script: { title: 'lease fence' },
+      thumbnail: { path: 'thumbnail.jpg' }, seo: { title: 'lease fence' }
+    };
+    await assert.rejects(
+      connectionA.saveProductionData(productionRecord, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await connectionB.saveProductionData(productionRecord, currentProductionLease);
+    await assert.rejects(
+      connectionA.updateProductionData({ ...productionRecord, status: 'failed' }, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await connectionB.updateProductionData({ ...productionRecord, status: 'ready' }, currentProductionLease);
+    assert.equal((await connectionB.getRow('SELECT status FROM productions WHERE id = ?', [productionRecord.id])).status, 'ready');
+    await assert.rejects(
+      connectionA.saveProductionSnapshot(productionRecord, staleProductionLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await connectionB.saveProductionSnapshot(productionRecord, currentProductionLease);
+    assert.ok(await connectionB.getRow('SELECT production_id FROM production_snapshots WHERE production_id = ?', [productionRecord.id]));
+    await connectionB.releaseProductionOperationLock(productionJobLock, 'production-job-current');
+
     await connectionA.executeQuery(`CREATE TABLE production_scenes (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, position INTEGER NOT NULL,
       label TEXT, script_text TEXT, prompt TEXT, duration REAL, asset_type TEXT,
