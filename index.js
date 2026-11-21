@@ -1061,7 +1061,14 @@ class YouTubeAutomationAgent {
     this.app.patch('/api/content/:productionId/shorts/:clipId', protect, async (req, res) => {
       try {
         if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
-        const result = await this.shorts.update(req.params.productionId, req.params.clipId, req.body || {});
+        if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+          return res.status(503).json({ error: 'Production operation lease is required to edit Shorts safely' });
+        }
+        const result = await this.scenes.withProductionOperationLease(
+          req.params.productionId,
+          assertLease => this.shorts.update(req.params.productionId, req.params.clipId, req.body || {}, { assertLease }),
+          'Short edit'
+        );
         return res.json({ success: true, result });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
