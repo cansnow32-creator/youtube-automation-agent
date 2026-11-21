@@ -29,11 +29,11 @@ async function run() {
       status TEXT NOT NULL, approved_at TEXT, inherited_evidence TEXT NOT NULL DEFAULT '{}'
     )`);
 
-    const insertSchedule = async (id, productionId) => database.executeQuery(
+    const insertSchedule = async (id, productionId, shortClipId = null, sourceProductionId = null) => database.executeQuery(
       `INSERT INTO publish_schedule (id, production_id, title, publish_time, status, metadata)
        VALUES (?, ?, 'Test', ?, 'scheduled', ?)`,
       [id, productionId, new Date(Date.now() + 3600000).toISOString(),
-        id.includes('short') ? JSON.stringify({ contentType: 'short', shortClipId: id }) : '{}']
+        shortClipId ? JSON.stringify({ contentType: 'short', shortClipId, sourceProductionId }) : '{}']
     );
 
     await insertSchedule('unapproved-production', 'production-1');
@@ -55,7 +55,7 @@ async function run() {
       'INSERT INTO content_reviews (production_id, status) VALUES (?, ?)',
       ['production-2', 'approved']
     );
-    await insertSchedule('unapproved-short', 'production-2');
+    await insertSchedule('unapproved-short', 'short-2', 'short-2', 'production-2');
     await database.executeQuery(
       `INSERT INTO shorts_clips (id, production_id, schedule_id, status, approved_at, inherited_evidence)
        VALUES ('short-2', 'production-2', 'unapproved-short', 'scheduled', NULL, '{"ready":true}')`
