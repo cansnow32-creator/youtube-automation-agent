@@ -75,9 +75,6 @@ async function run() {
     await database.executeQuery(
       "UPDATE content_reviews SET status = 'approved' WHERE production_id = 'production-2'"
     );
-    await database.executeQuery(`CREATE TABLE production_operation_locks (
-      production_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL
-    )`);
     await database.executeQuery(
       'INSERT INTO production_operation_locks (production_id, owner, expires_at) VALUES (?, ?, ?)',
       ['production-2', 'active-review', Date.now() + 60000]
