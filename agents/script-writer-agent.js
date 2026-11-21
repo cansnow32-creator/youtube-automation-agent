@@ -61,7 +61,7 @@ class ScriptWriterAgent {
         aiScript.metadata.verifiedAppliedLearnings = verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, aiScript);
         aiScript.fullScript = this.formatFullScript(aiScript);
         await assertLease();
-        await this.db.saveScript(aiScript);
+        await this.db.saveScript(aiScript, assertLease.lease || null);
         await assertLease();
         this.logger.info(`Script generated with AI provider: ${aiScript.title}`);
         return aiScript;
@@ -101,7 +101,7 @@ class ScriptWriterAgent {
       script.metadata.verifiedAppliedLearnings = verifyAppliedScriptLearnings(strategy.approvedScriptLearnings, script);
       script.fullScript = this.formatFullScript(script);
       await assertLease();
-      await this.db.saveScript(script);
+      await this.db.saveScript(script, assertLease.lease || null);
       await assertLease();
 
       this.logger.info(`Script generated: ${script.title}`);
