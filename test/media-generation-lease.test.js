@@ -408,6 +408,17 @@ async function testSqliteCanClearPreviousRemoteTaskAndOutputReferences() {
     assert.equal(secondClaim.createdByThisInvocation, false,
       'a second caller must not believe it owns an existing unique task row');
     assert.equal(secondClaim.id, firstClaim.id);
+    const mismatchedProductionClaim = await db.createMediaGenerationTask({
+      jobId: generationJob.id,
+      productionId: 'different-production',
+      sceneIndex: 2,
+      provider: 'test-provider',
+      model: 'test-model',
+      request: { prompt: 'must not replace the original task request' }
+    });
+    assert.equal(mismatchedProductionClaim.createdByThisInvocation, false);
+    assert.equal(mismatchedProductionClaim.production_id, 'production-claim-test',
+      'a duplicate job-scoped claim cannot rebind the existing task to another production');
 
     const manualClaims = await Promise.all([
       db.createMediaGenerationTask({
@@ -1158,8 +1169,45 @@ async function testMediaServiceForwardsLeaseToDatabaseWrites() {
   }
 }
 
+async function testMediaTaskFromDifferentProductionCannotBeReused() {
+  const service = new MediaGenerationService({}, {}, { logger: { info() {}, warn() {}, error() {} } });
+  let providerCalls = 0;
+  service.db = {
+    findMediaGenerationTask: async () => ({
+      id: 'media-wrong-production',
+      production_id: 'production-original',
+      status: 'succeeded',
+      output_path: '/tmp/should-not-be-reused.mp4',
+      providerData: {}
+    }),
+    createMediaGenerationTask: async () => {
+      throw new Error('a mismatched existing task must not be replaced');
+    }
+  };
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    getTask: async () => { providerCalls++; throw new Error('must not query another production task'); },
+    createTask: async () => { providerCalls++; throw new Error('must not submit a provider task'); }
+  };
+  await assert.rejects(
+    service.generateClip({
+      jobId: 'job-cross-production',
+      productionId: 'production-new',
+      scene: { index: 0, prompt: 'scope isolation' },
+      provider,
+      outputPath: path.join(require('node:os').tmpdir(), 'cross-production.mp4'),
+      request: {}
+    }),
+    error => error.code === 'MEDIA_TASK_SCOPE_MISMATCH' && error.status === 409
+  );
+  assert.equal(providerCalls, 0, 'a media task from another production is never reused or queried');
+}
+
 async function main() {
   await testMediaServiceForwardsLeaseToDatabaseWrites();
+  await testMediaTaskFromDifferentProductionCannotBeReused();
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testUnverifiedNewTaskOwnershipBlocksProviderSubmission();
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
