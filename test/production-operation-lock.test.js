@@ -502,6 +502,9 @@ async function run() {
       releaseProductionOperationLock: async () => { resumeReleased = true; }
     };
     resumeLostLease.resumeProductionUnlocked = async (_id, assertLease) => {
+      assert.equal(assertLease.lease.productionId, 'p6',
+        'resumeProduction exposes its production-scoped lease to fenced DB writes');
+      assert.ok(assertLease.lease.owner);
       resumeHeartbeat();
       await assertLease();
       return 'must-not-commit';
@@ -547,6 +550,9 @@ async function run() {
     releaseProductionOperationLock: async () => { jobReleased = true; }
   };
   jobLeaseLost.processContentUnlocked = async (_input, assertLease) => {
+    assert.equal(assertLease.lease.productionId, 'job:job-lost',
+      'processContent exposes its job-scoped lease to production persistence');
+    assert.ok(assertLease.lease.owner);
     jobHeartbeat();
     await assertLease();
     return 'must-not-create';
