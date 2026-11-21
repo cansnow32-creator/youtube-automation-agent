@@ -1746,6 +1746,63 @@ class Database {
     return this.getMediaGenerationTaskById(id);
   }
 
+  async compareAndSetMediaGenerationTask(taskId, expectedStatus, expectedExternalTaskId, changes = {}, lease = null) {
+    return this.withIsolatedTransaction(async tx => {
+      const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+      const row = rows[0];
+      const current = this.parseMediaGenerationTask(row);
+      if (!current) return { updated: false, task: null };
+
+      if (lease) {
+        await this.assertMediaGenerationTaskLeaseInTransaction(tx, lease, row);
+      } else {
+        // Manual reconciliation is allowed only while no worker owns this task's
+        // production or generation job. BEGIN IMMEDIATE makes this check and CAS
+        // one serialized SQLite operation.
+        const lockIds = [...new Set([
+          row.production_id,
+          row.job_id ? `generation:${row.job_id}` : null,
+          row.job_id ? `job:${row.job_id}` : null
+        ].filter(Boolean))];
+        if (lockIds.length) {
+          const placeholders = lockIds.map(() => '?').join(', ');
+          const activeLocks = await tx.all(
+            `SELECT production_id FROM production_operation_locks
+             WHERE production_id IN (${placeholders}) AND expires_at > ?`,
+            [...lockIds, Date.now()]
+          );
+          if (activeLocks.length) {
+            throw Object.assign(new Error('Media task reconciliation is blocked while an active production or generation worker owns this task'), {
+              code: 'MEDIA_TASK_LEASE_ACTIVE',
+              status: 409
+            });
+          }
+        }
+      }
+
+      const result = await tx.run(
+        `UPDATE media_generation_tasks SET
+          model = ?, external_task_id = ?, status = ?, provider_data = ?,
+          output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = ? AND external_task_id IS ?`,
+        [
+          changes.model === undefined ? current.model : changes.model,
+          changes.externalTaskId === undefined ? current.external_task_id : changes.externalTaskId,
+          changes.status === undefined ? current.status : changes.status,
+          JSON.stringify(changes.providerData === undefined ? (current.providerData ?? {}) : (changes.providerData ?? {})),
+          changes.outputPath === undefined ? current.output_path : changes.outputPath,
+          changes.error === undefined ? current.error : changes.error,
+          changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+          taskId,
+          expectedStatus,
+          expectedExternalTaskId ?? null
+        ]
+      );
+      const saved = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+      return { updated: result.changes === 1, task: this.parseMediaGenerationTask(saved[0]) };
+    });
+  }
+
   async listMediaGenerationTasks(jobId) {
     const rows = await this.getAllRows('SELECT * FROM media_generation_tasks WHERE job_id = ? ORDER BY scene_index, created_at', [jobId]);
     return rows.map(row => this.parseMediaGenerationTask(row));
