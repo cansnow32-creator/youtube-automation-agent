@@ -24,7 +24,13 @@ async function main() {
       ['short-1', 'production-1', 0, 'Test Short', '', '[]', '[]', 0, 30, 'crop', 'proposed', '{}']
     );
 
-    await database.updateShortClip('short-1', { status: 'rendering', renderAttemptId: 'attempt-1' });
+    const wrongProductionClaim = await database.claimShortClipRender('short-1', 'another-production', 'wrong-production-attempt');
+    assert.equal(wrongProductionClaim, null, 'a render claim must be scoped to its owning production');
+    const firstClaim = await database.claimShortClipRender('short-1', 'production-1', 'attempt-1');
+    assert.equal(firstClaim.status, 'rendering');
+    assert.equal(firstClaim.renderAttemptId, 'attempt-1');
+    const competingClaim = await database.claimShortClipRender('short-1', 'production-1', 'competing-attempt');
+    assert.equal(competingClaim, null, 'a second worker cannot replace an active render attempt');
     const first = await database.updateShortClipForRender('short-1', 'attempt-1', {
       status: 'rendered',
       outputPath: '/tmp/attempt-1.mp4',
@@ -34,12 +40,9 @@ async function main() {
     assert.equal(first.renderAttemptId, 'attempt-1');
     assert.deepEqual(first.renderMetadata, { width: 1080, height: 1920, duration: 30 });
 
-    await database.updateShortClip('short-1', {
-      status: 'rendering',
-      renderAttemptId: 'attempt-2',
-      outputPath: null,
-      renderMetadata: null
-    });
+    const secondClaim = await database.claimShortClipRender('short-1', 'production-1', 'attempt-2');
+    assert.equal(secondClaim.status, 'rendering');
+    assert.equal(secondClaim.renderAttemptId, 'attempt-2');
     const stale = await database.updateShortClipForRender('short-1', 'attempt-1', {
       status: 'rendered',
       outputPath: '/tmp/stale-attempt.mp4'
