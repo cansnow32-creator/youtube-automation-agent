@@ -28,7 +28,19 @@ class AutonomousChannelOperator {
       error.code = 'OPERATOR_LEASE_ACTIVE';
       throw error;
     }
-    return { productionId: this.operatorLockId, owner, timer: null, lost: false };
+    const lease = { productionId: this.operatorLockId, owner, timer: null, lost: false };
+    lease.timer = setInterval(async () => {
+      try {
+        const ok = await this.db.renewProductionOperationLock(
+          this.operatorLockId, lease.owner, this.operatorLeaseMs
+        );
+        if (!ok) lease.lost = true;
+      } catch (_error) {
+        lease.lost = true;
+      }
+    }, 15000);
+    lease.timer.unref?.();
+    return lease;
   }
 
   async releaseOperatorLease(runId, lease) {
@@ -55,19 +67,7 @@ class AutonomousChannelOperator {
       error.status = 409;
       throw error;
     }
-    if (!lease.timer) {
-      lease.timer = setInterval(async () => {
-        try {
-          const ok = await this.db.renewProductionOperationLock(
-            this.operatorLockId, lease.owner, this.operatorLeaseMs
-          );
-          if (!ok) lease.lost = true;
-        } catch (_error) {
-          lease.lost = true;
-        }
-      }, 15000);
-      lease.timer.unref?.();
-    }
+
   }
 
   async bindApprovedConcept(strategy) {
