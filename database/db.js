@@ -959,7 +959,7 @@ class Database {
   // Production methods
   async saveProductionData(production, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, true);
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, true, production.timeline?.jobId || null);
       await tx.run(
         `INSERT OR REPLACE INTO productions (
           id, status, assets, timeline, scheduled_publish_time,
@@ -1036,7 +1036,7 @@ class Database {
     }
   }
 
-  async assertProductionLeaseInTransaction(tx, lease, productionId, allowMissingProduction = false) {
+  async assertProductionLeaseInTransaction(tx, lease, productionId, allowMissingProduction = false, productionJobIdHint = null) {
     if (!lease) return;
     if (lease.productionId === productionId) {
       await this.assertLeaseInTransaction(tx, lease, lease.productionId);
@@ -1052,6 +1052,11 @@ class Database {
       });
     }
     const jobId = lease.productionId.slice(prefix.length);
+    if (productionJobIdHint && productionJobIdHint !== jobId) {
+      throw Object.assign(new Error('Supplied generation job lease does not match the production payload'), {
+        code: 'SCENE_EDIT_LEASE_INVALID', status: 409
+      });
+    }
     if (!jobId) {
       throw Object.assign(new Error('Generation job lease context is invalid'), {
         code: 'SCENE_EDIT_LEASE_INVALID', status: 409
@@ -1059,8 +1064,8 @@ class Database {
     }
     const rows = await tx.all('SELECT timeline FROM productions WHERE id = ?', [productionId]);
     if (!rows[0]) {
-      if (!allowMissingProduction) {
-        throw Object.assign(new Error('Production does not exist for the supplied generation job lease'), {
+      if (!allowMissingProduction || productionJobIdHint !== jobId) {
+        throw Object.assign(new Error('Production does not exist or is not associated with the supplied generation job lease'), {
           code: 'SCENE_EDIT_LEASE_INVALID', status: 409
         });
       }
@@ -1098,7 +1103,7 @@ class Database {
 
   async updateProductionData(production, lease = null) {
     const persist = async tx => {
-      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id);
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, false, production.timeline?.jobId || null);
       const result = await tx.run(
         `UPDATE productions SET
           status = ?, assets = ?, timeline = ?,
