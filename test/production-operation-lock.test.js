@@ -245,7 +245,7 @@ async function run() {
     assert.equal(mediaClaim.task.external_task_id, null);
     await connectionB.releaseProductionOperationLock(generationLockId, 'generation-new');
 
-    const productionJobLock = 'generation:production-manifest-fence';
+    const productionJobLock = 'job:production-manifest-fence';
     assert.equal(await connectionA.acquireProductionOperationLock(productionJobLock, 'production-job-current', 10000), true);
     await connectionA.executeQuery(`CREATE TABLE productions (
       id TEXT PRIMARY KEY, status TEXT, assets TEXT, timeline TEXT,
