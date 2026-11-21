@@ -200,6 +200,49 @@ async function run() {
     assert.equal(updatedJob.status, 'completed');
     assert.equal(updatedJob.details.accepted, true,
       'the current generation owner can atomically update job state and merge details');
+    await connectionA.executeQuery(`CREATE TABLE media_generation_tasks (
+      id TEXT PRIMARY KEY, job_id TEXT, production_id TEXT, scene_index INTEGER NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL, external_task_id TEXT, status TEXT,
+      request TEXT, provider_data TEXT, output_path TEXT, error TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT, UNIQUE(job_id, scene_index, provider)
+    )`);
+    const staleMediaLease = { productionId: generationLockId, owner: 'generation-old' };
+    const currentMediaLease = { productionId: generationLockId, owner: 'generation-new' };
+    await assert.rejects(
+      connectionA.createMediaGenerationTask({
+        jobId: 'lease-fenced-job', productionId: 'media-production',
+        sceneIndex: 0, provider: 'test-provider', model: 'test-model'
+      }, staleMediaLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const createdMediaTask = await connectionB.createMediaGenerationTask({
+      jobId: 'lease-fenced-job', productionId: 'media-production',
+      sceneIndex: 0, provider: 'test-provider', model: 'test-model'
+    }, currentMediaLease);
+    assert.equal(createdMediaTask.createdByThisInvocation, true);
+    await assert.rejects(
+      connectionA.updateMediaGenerationTask(createdMediaTask.id, {
+        status: 'failed', error: 'stale media worker'
+      }, staleMediaLease),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    await connectionB.updateMediaGenerationTask(createdMediaTask.id, {
+      status: 'failed', externalTaskId: 'remote-current'
+    }, currentMediaLease);
+    await assert.rejects(
+      connectionA.claimMediaGenerationTaskForSubmission(
+        createdMediaTask.id, 'failed', 'remote-current', [], staleMediaLease
+      ),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    const mediaClaim = await connectionB.claimMediaGenerationTaskForSubmission(
+      createdMediaTask.id, 'failed', 'remote-current', [{ externalTaskId: 'remote-current' }], currentMediaLease
+    );
+    assert.equal(mediaClaim.claimed, true,
+      'only the current lease owner may claim a terminal media task for a new provider submission');
+    assert.equal(mediaClaim.task.status, 'submitting');
+    assert.equal(mediaClaim.task.external_task_id, null);
     await connectionB.releaseProductionOperationLock(generationLockId, 'generation-new');
 
     await connectionA.executeQuery(`CREATE TABLE production_scenes (
