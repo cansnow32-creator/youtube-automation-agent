@@ -49,7 +49,11 @@ async function run() {
       ['generation:expired-lease', 'old-worker', now - 1000]
     );
     await database.executeQuery(
-      "INSERT INTO operator_runs (id, status, stage) VALUES ('operator-1', 'running', 'research')"
+      "INSERT INTO operator_runs (id, status, stage) VALUES ('operator-1', 'running', 'research'), ('operator-2', 'queued', 'queued')"
+    );
+    await database.executeQuery(
+      'INSERT INTO production_operation_locks (production_id, owner, expires_at) VALUES (?, ?, ?)',
+      ['operator:active', 'operator-worker', now + 60000]
     );
 
     await database.markInterruptedJobs();
@@ -65,9 +69,13 @@ async function run() {
       'an expired lease does not protect a stale job');
     assert.equal(await status('unleased-job'), 'interrupted',
       'an unleased queued job is recovered as interrupted');
-    const operator = await database.getRow('SELECT status, stage FROM operator_runs WHERE id = ?', ['operator-1']);
-    assert.equal(operator.status, 'interrupted');
-    assert.equal(operator.stage, 'interrupted');
+    const activeOperator = await database.getRow('SELECT status, stage FROM operator_runs WHERE id = ?', ['operator-1']);
+    assert.equal(activeOperator.status, 'running',
+      'startup recovery must preserve an operator run with a live cross-process lease');
+    const staleOperator = await database.getRow('SELECT status, stage FROM operator_runs WHERE id = ?', ['operator-2']);
+    assert.equal(staleOperator.status, 'interrupted',
+      'startup recovery must interrupt an operator run without a live lease');
+    assert.equal(staleOperator.stage, 'interrupted');
     process.stdout.write('Startup generation recovery lease tests passed\\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
