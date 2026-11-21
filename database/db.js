@@ -1532,16 +1532,7 @@ class Database {
     // unrelated productions to see or overwrite one another's remote task rows.
     if (!jobId) {
       const existing = await this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId);
-      if (existing) {
-        await this.executeQuery(
-          `UPDATE media_generation_tasks SET production_id = ?, request = ?, updated_at = datetime('now') WHERE id = ?`,
-          [productionId, JSON.stringify(input.request || {}), existing.id]
-        );
-        return {
-          ...(await this.findMediaGenerationTask(null, input.sceneIndex, input.provider, productionId)),
-          createdByThisInvocation: false
-        };
-      }
+      if (existing) return { ...existing, createdByThisInvocation: false };
     }
 
     const id = this.generateId('media');
@@ -1566,13 +1557,6 @@ class Database {
           JSON.stringify(input.request || {}), productionId, input.sceneIndex, input.provider]
       );
     const createdByThisInvocation = insertResult.changes === 1;
-    if (jobId && !createdByThisInvocation) {
-      await this.executeQuery(
-        `UPDATE media_generation_tasks SET production_id = ?, request = ?, updated_at = datetime('now')
-         WHERE job_id = ? AND scene_index = ? AND provider = ?`,
-        [productionId, JSON.stringify(input.request || {}), jobId, input.sceneIndex, input.provider]
-      );
-    }
     return {
       ...(await this.findMediaGenerationTask(jobId, input.sceneIndex, input.provider, productionId)),
       createdByThisInvocation
