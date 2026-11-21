@@ -427,6 +427,7 @@ class ProductionManagementAgent {
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
     };
+    assertLease.lease = Object.freeze({ productionId, owner });
     const heartbeat = setInterval(() => {
       renewalInFlight = renewalInFlight.then(async () => {
         if (leaseFailure) return;
