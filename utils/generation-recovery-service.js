@@ -202,6 +202,7 @@ class GenerationRecoveryService {
   async resetFrom(jobId, requestedStage, assertLease = async () => {}) {
     if (!GENERATION_STAGES.includes(requestedStage)) throw new Error('Resume stage is not supported');
     const index = GENERATION_STAGES.indexOf(requestedStage);
+    const lease = assertLease.lease || null;
     await assertLease();
     await this.db.deleteGenerationCheckpoints(jobId, GENERATION_STAGES.slice(index), lease);
     await assertLease();
