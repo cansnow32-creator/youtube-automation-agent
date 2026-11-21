@@ -3246,13 +3246,40 @@ class Database {
     return this.getScheduleEntry(id);
   }
 
-  async updateScheduleEntry(entry) {
+  async updateScheduleEntry(entry, lease = null, leaseProductionId = entry.productionId) {
+    const persist = async tx => {
+      if (lease) {
+        await this.assertProductionLeaseInTransaction(tx, lease, leaseProductionId);
+      }
+      const result = await tx.run(
+        `UPDATE publish_schedule SET
+          title = COALESCE(?, title), publish_time = COALESCE(?, publish_time),
+          status = ?, priority = COALESCE(?, priority), metadata = COALESCE(?, metadata),
+          youtube_id = ?, youtube_url = ?, published_at = ?, error_message = ?
+        WHERE id = ? AND production_id = ?`,
+        [
+          entry.title || null,
+          entry.publishTime || entry.publish_time || null,
+          entry.status,
+          entry.priority ?? null,
+          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          entry.youtubeId || null,
+          entry.youtubeUrl || null,
+          entry.publishedAt || null,
+          entry.error || null,
+          entry.id,
+          leaseProductionId
+        ]
+      );
+      await this.requireLeaseWrite(result, lease);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     await this.executeQuery(
-      `UPDATE publish_schedule SET 
+      `UPDATE publish_schedule SET
         title = COALESCE(?, title), publish_time = COALESCE(?, publish_time),
         status = ?, priority = COALESCE(?, priority), metadata = COALESCE(?, metadata),
         youtube_id = ?, youtube_url = ?, published_at = ?, error_message = ?
-      WHERE id = ?`,
+      WHERE id = ? AND production_id = ?`,
       [
         entry.title || null,
         entry.publishTime || entry.publish_time || null,
@@ -3263,7 +3290,8 @@ class Database {
         entry.youtubeUrl || null,
         entry.publishedAt || null,
         entry.error || null,
-        entry.id
+        entry.id,
+        leaseProductionId
       ]
     );
   }
