@@ -948,23 +948,22 @@ class SceneRepairService {
     };
     const timeline = { ...bundle.timeline, sceneRepairAt: new Date().toISOString(), captionsGenerated: new Date().toISOString(), readyForUpload: new Date().toISOString() };
     await assertLease();
-    await this.db.updateProductionData({
-      id: productionId, status: 'ready', assets, timeline,
-      scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
-    }, assertLease.lease);
-    for (const scene of scenes) {
-      await assertLease();
-      await this.db.updateProductionScene(productionId, scene.id, { status: 'ready' }, assertLease.lease);
-    }
-    if (containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia) {
-      await assertLease();
-      await this.db.saveContentProvenance(productionId, { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null }, assertLease.lease);
-    }
     await assertLease();
-    await this.db.saveProductionSceneRevision({
-      productionId, sceneId: scenes[0].id, action: 'rebuild', before: { finalVideo: previousPath },
-      after: { finalVideo: finalPath, captions: captionsPath },
-      costEvidence: { billed: false, reusedScenes: scenes.length }
+    await this.db.finalizeProductionRebuild({
+      production: {
+        id: productionId, status: 'ready', assets, timeline,
+        scheduledPublishTime: bundle.scheduled_publish_time, priority: bundle.priority
+      },
+      sceneIds: scenes.map(scene => scene.id),
+      provenance: containsSyntheticMedia && bundle.provenance && !bundle.provenance.containsSyntheticMedia
+        ? { ...bundle.provenance, containsSyntheticMedia: true, reviewedAt: null }
+        : null,
+      revision: {
+        sceneId: scenes[0].id,
+        before: { finalVideo: previousPath },
+        after: { finalVideo: finalPath, captions: captionsPath },
+        costEvidence: { billed: false, reusedScenes: scenes.length }
+      }
     }, assertLease.lease);
     await assertLease();
     return { productionId, finalVideo: finalPath, previousVideo: previousPath, captions: captionsPath, scenes: scenes.length };
