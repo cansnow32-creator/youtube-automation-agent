@@ -1756,6 +1756,14 @@ class Database {
       if (lease) {
         await this.assertMediaGenerationTaskLeaseInTransaction(tx, lease, row);
       } else {
+        // The lock table is normally created by the lease manager. Ensure it
+        // also exists for older databases before checking manual reconciliation.
+        await tx.run(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+          production_id TEXT PRIMARY KEY,
+          owner TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`);
         // Manual reconciliation is allowed only while no worker owns this task's
         // production or generation job. BEGIN IMMEDIATE makes this check and CAS
         // one serialized SQLite operation.
