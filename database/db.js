@@ -861,24 +861,25 @@ class Database {
   }
 
   // Content Strategy methods
-  async saveContentStrategy(strategy) {
+  async executeLeasedInsert(query, params = [], lease = null) {
+    if (!lease) return this.executeQuery(query, params);
+    return this.withIsolatedTransaction(async tx => {
+      await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      return tx.run(query, params);
+    });
+  }
+
+  async saveContentStrategy(strategy, lease = null) {
     const id = this.generateId('strategy');
-    await this.executeQuery(
+    await this.executeLeasedInsert(
       `INSERT INTO content_strategies (
-        id, topic, angle, target_audience, content_type, keywords, 
+        id, topic, angle, target_audience, content_type, keywords,
         estimated_views, best_publish_time, competitor_analysis
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        strategy.topic,
-        strategy.angle,
-        strategy.targetAudience,
-        strategy.contentType,
-        JSON.stringify(strategy.keywords),
-        strategy.estimatedViews,
-        strategy.bestPublishTime,
-        JSON.stringify(strategy.competitorAnalysis)
-      ]
+      [id, strategy.topic, strategy.angle, strategy.targetAudience, strategy.contentType,
+        JSON.stringify(strategy.keywords), strategy.estimatedViews, strategy.bestPublishTime,
+        JSON.stringify(strategy.competitorAnalysis)],
+      lease
     );
     return id;
   }
@@ -889,74 +890,50 @@ class Database {
   }
 
   // Script methods
-  async saveScript(script) {
+  async saveScript(script, lease = null) {
     const id = this.generateId('script');
-    await this.executeQuery(
+    await this.executeLeasedInsert(
       `INSERT INTO scripts (
-        id, title, hook, introduction, main_content, conclusion, 
+        id, title, hook, introduction, main_content, conclusion,
         call_to_action, full_script, duration, tone, pacing, keywords
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        script.title,
-        JSON.stringify(script.hook),
-        JSON.stringify(script.introduction),
-        JSON.stringify(script.mainContent),
-        JSON.stringify(script.conclusion),
-        JSON.stringify(script.callToAction),
-        script.fullScript,
-        script.duration,
-        script.tone,
-        script.pacing,
-        JSON.stringify(script.keywords)
-      ]
+      [id, script.title, JSON.stringify(script.hook), JSON.stringify(script.introduction),
+        JSON.stringify(script.mainContent), JSON.stringify(script.conclusion),
+        JSON.stringify(script.callToAction), script.fullScript, script.duration, script.tone,
+        script.pacing, JSON.stringify(script.keywords)],
+      lease
     );
     return id;
   }
 
-  // Thumbnail methods
-  async saveThumbnail(thumbnail) {
+  async saveThumbnail(thumbnail, lease = null) {
     const id = this.generateId('thumbnail');
-    await this.executeQuery(
+    await this.executeLeasedInsert(
       `INSERT INTO thumbnails (
         id, path, concept, prompt, dimensions, file_size
       ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        thumbnail.path,
-        JSON.stringify(thumbnail.concept),
-        thumbnail.prompt,
-        JSON.stringify(thumbnail.dimensions),
-        thumbnail.fileSize
-      ]
+      [id, thumbnail.path, JSON.stringify(thumbnail.concept), thumbnail.prompt,
+        JSON.stringify(thumbnail.dimensions), thumbnail.fileSize],
+      lease
     );
     return id;
   }
 
-  // SEO methods
-  async saveSEOData(seoData) {
+  async saveSEOData(seoData, lease = null) {
     const id = this.generateId('seo');
-    await this.executeQuery(
+    await this.executeLeasedInsert(
       `INSERT INTO seo_data (
-        id, title, description, tags, hashtags, chapters, 
+        id, title, description, tags, hashtags, chapters,
         end_screen, seo_score, metadata
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        seoData.title,
-        seoData.description,
-        JSON.stringify(seoData.tags),
-        JSON.stringify(seoData.hashtags),
-        JSON.stringify(seoData.chapters),
-        JSON.stringify(seoData.endScreen),
-        seoData.seoScore,
-        JSON.stringify(seoData.metadata)
-      ]
+      [id, seoData.title, seoData.description, JSON.stringify(seoData.tags),
+        JSON.stringify(seoData.hashtags), JSON.stringify(seoData.chapters),
+        JSON.stringify(seoData.endScreen), seoData.seoScore, JSON.stringify(seoData.metadata)],
+      lease
     );
     return id;
   }
 
-  // Production methods
   async saveProductionData(production, lease = null) {
     const persist = async tx => {
       if (lease) await this.assertProductionLeaseInTransaction(tx, lease, production.id, true, production.timeline?.jobId || null);
