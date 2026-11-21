@@ -3088,7 +3088,22 @@ class Database {
     const result = await this.executeQuery(
       `UPDATE publish_schedule
        SET status = 'uploading', error_message = NULL, upload_started_at = ?, upload_attempt_id = ?
-       WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL`,
+       WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL
+         AND (
+           EXISTS (
+             SELECT 1 FROM content_reviews AS review
+             WHERE review.production_id = publish_schedule.production_id
+               AND review.status = 'approved'
+           )
+           OR EXISTS (
+             SELECT 1 FROM shorts_clips AS clip
+             WHERE clip.schedule_id = publish_schedule.id
+               AND clip.production_id = publish_schedule.production_id
+               AND clip.approved_at IS NOT NULL
+               AND json_extract(clip.inherited_evidence, '$.ready') = 1
+               AND clip.status IN ('scheduled', 'failed', 'uploading', 'reconciliation_required', 'published')
+           )
+         )`,
       [new Date().toISOString(), attemptId, id]
     );
     if (result.changes !== 1) return null;
