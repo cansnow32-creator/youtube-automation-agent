@@ -1093,7 +1093,73 @@ async function testLeaseLossAfterPersistedOutputPreservesReferencedArtifact() {
   }
 }
 
+async function testMediaServiceForwardsLeaseToDatabaseWrites() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-forwarding-'));
+  const lease = Object.freeze({
+    productionId: 'generation:job-lease-forwarding',
+    owner: 'lease-forwarding-owner'
+  });
+  const seenLeases = [];
+  const row = {
+    id: 'media-forwarded-task',
+    status: 'submitting',
+    model: 'test-model',
+    external_task_id: null,
+    output_path: null,
+    providerData: {}
+  };
+  const db = {
+    async findMediaGenerationTask() { return null; },
+    async createMediaGenerationTask(_input, receivedLease) {
+      seenLeases.push(receivedLease);
+      return { ...row, createdByThisInvocation: true };
+    },
+    async updateMediaGenerationTask(_id, changes, receivedLease) {
+      seenLeases.push(receivedLease);
+      return {
+        ...row,
+        ...changes,
+        external_task_id: changes.externalTaskId,
+        output_path: changes.outputPath,
+        providerData: changes.providerData || {}
+      };
+    }
+  };
+  const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
+  service.isValidVideo = async () => true;
+  const provider = {
+    id: 'test-provider',
+    model: 'test-model',
+    capabilities: { cancellation: false },
+    createTask: async () => ({ status: 'succeeded', model: 'test-model', externalTaskId: 'remote-forwarded' }),
+    downloadResult: async (_remote, destination) => {
+      await fs.writeFile(destination, Buffer.alloc(1200, 5));
+    }
+  };
+  const assertLease = async () => {};
+  assertLease.lease = lease;
+
+  try {
+    const result = await service.generateClip({
+      jobId: 'job-lease-forwarding',
+      productionId: 'production-lease-forwarding',
+      scene: { index: 0, prompt: 'forward lease context' },
+      provider,
+      outputPath: path.join(directory, 'scene.mp4'),
+      request: {},
+      assertLease
+    });
+    assert.equal(result.task.status, 'succeeded');
+    assert.ok(seenLeases.length >= 3, 'creation and lifecycle updates all reach the database');
+    assert.ok(seenLeases.every(received => received === lease),
+      'every media task write receives the exact active lease context');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
+  await testMediaServiceForwardsLeaseToDatabaseWrites();
   await testSqliteCanClearPreviousRemoteTaskAndOutputReferences();
   await testUnverifiedNewTaskOwnershipBlocksProviderSubmission();
   await testNonOwningTaskClaimCannotSubmitRemoteProviderJob();
