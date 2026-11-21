@@ -135,7 +135,7 @@ class SEOOptimizerAgent {
       
       // Persist only while this worker still owns the generation job.
       await assertLease();
-      await this.db.saveSEOData(seoData);
+      await this.db.saveSEOData(seoData, assertLease.lease || null);
       await assertLease();
 
       this.logger.info(`SEO optimization complete. Score: ${seoScore}/100`);
