@@ -1206,7 +1206,7 @@ class YouTubeAutomationAgent {
         if (result?.conflict) return res.status(409).json({ error: 'Content with a published or unresolved upload cannot be edited' });
         return res.json({ success: true, result: this.decorateContentBundle(result) });
       } catch (error) {
-        return res.status(400).json({ success: false, error: error.message });
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
       }
     });
 
