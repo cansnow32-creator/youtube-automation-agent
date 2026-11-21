@@ -1237,7 +1237,43 @@ class Database {
     return row ? { ...row, details: JSON.parse(row.details || '{}'), cancelRequested: Boolean(row.cancel_requested) } : null;
   }
 
-  async updateGenerationJob(id, changes = {}) {
+  async updateGenerationJob(id, changes = {}, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      const rows = await tx.all('SELECT * FROM generation_jobs WHERE id = ?', [id]);
+      const row = rows[0];
+      if (!row) return null;
+      const current = {
+        ...row,
+        details: JSON.parse(row.details || '{}'),
+        cancelRequested: Boolean(row.cancel_requested)
+      };
+      const details = { ...(current.details || {}), ...(changes.details || {}) };
+      await tx.run(
+        `UPDATE generation_jobs SET status = ?, stage = ?, progress = ?, production_id = ?,
+          title = ?, error = ?, details = ?, cancel_requested = ?, updated_at = datetime('now'),
+          completed_at = ? WHERE id = ?`,
+        [
+          changes.status ?? current.status,
+          changes.stage ?? current.stage,
+          changes.progress ?? current.progress,
+          changes.productionId ?? current.production_id,
+          changes.title ?? current.title,
+          changes.error === undefined ? current.error : changes.error,
+          JSON.stringify(details),
+          changes.cancelRequested === undefined ? current.cancel_requested : Number(changes.cancelRequested),
+          changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+          id
+        ]
+      );
+      const saved = await tx.all('SELECT * FROM generation_jobs WHERE id = ?', [id]);
+      return saved[0] ? {
+        ...saved[0],
+        details: JSON.parse(saved[0].details || '{}'),
+        cancelRequested: Boolean(saved[0].cancel_requested)
+      } : null;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     const current = await this.getGenerationJob(id);
     if (!current) return null;
     const details = { ...(current.details || {}), ...(changes.details || {}) };
