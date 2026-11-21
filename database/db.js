@@ -1742,7 +1742,7 @@ class Database {
       const current = this.parseProductionScene(rows[0]);
       if (!current) return null;
       const next = { ...current, ...changes };
-      await tx.run(
+      const result = await tx.run(
         `UPDATE production_scenes SET
           position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
           asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
@@ -1776,7 +1776,7 @@ class Database {
     const current = await this.getProductionScene(productionId, sceneId);
     if (!current) return null;
     const next = { ...current, ...changes };
-    await this.executeQuery(
+    const result = await this.executeQuery(
       `UPDATE production_scenes SET
         position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
         asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
