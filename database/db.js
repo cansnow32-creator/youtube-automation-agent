@@ -1082,18 +1082,6 @@ class Database {
     await this.assertLeaseInTransaction(tx, lease, lease.productionId);
   }
 
-  leaseGuard(lease, productionId) {
-    if (!lease) return { sql: '', params: [] };
-    if (lease.productionId !== productionId || !lease.owner) {
-      throw Object.assign(new Error('Production operation lease context is invalid'), { code: 'SCENE_EDIT_LEASE_INVALID', status: 409 });
-    }
-    return {
-      sql: ` AND EXISTS (SELECT 1 FROM production_operation_locks
-        WHERE production_id = ? AND owner = ? AND expires_at > ?)`,
-      params: [productionId, lease.owner, Date.now()]
-    };
-  }
-
   async requireLeaseWrite(result, lease) {
     if (lease && result.changes !== 1) {
       throw Object.assign(new Error('Production operation lease was lost before the database write'), { code: 'SCENE_EDIT_LEASE_LOST', status: 409 });
