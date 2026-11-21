@@ -141,6 +141,40 @@ async function run() {
     // Manifest replacement runs on a dedicated SQLite connection in one
     // BEGIN IMMEDIATE transaction. A stale lease cannot delete existing rows.
     connectionA.dbPath = lockPath;
+    await connectionA.executeQuery(`CREATE TABLE generation_checkpoints (
+      job_id TEXT NOT NULL, stage TEXT NOT NULL, status TEXT DEFAULT 'pending',
+      artifact TEXT, attempt_count INTEGER DEFAULT 0, error TEXT, started_at TEXT,
+      completed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (job_id, stage)
+    )`);
+    const generationLockId = 'generation:lease-fenced-job';
+    assert.equal(await connectionA.acquireProductionOperationLock(generationLockId, 'generation-old', 10000), true);
+    await connectionA.executeQuery(
+      'UPDATE production_operation_locks SET expires_at = ? WHERE production_id = ?',
+      [Date.now() - 1, generationLockId]
+    );
+    assert.equal(await connectionB.acquireProductionOperationLock(generationLockId, 'generation-new', 10000), true);
+    await assert.rejects(
+      connectionA.saveGenerationCheckpoint('lease-fenced-job', 'script', {
+        status: 'completed', artifact: { title: 'stale result' }
+      }, { productionId: generationLockId, owner: 'generation-old' }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.equal(await connectionB.getGenerationCheckpoint('lease-fenced-job', 'script'), null,
+      'a stale generation worker cannot write a checkpoint after lease takeover');
+    await connectionB.saveGenerationCheckpoint('lease-fenced-job', 'script', {
+      status: 'completed', artifact: { title: 'current result' }
+    }, { productionId: generationLockId, owner: 'generation-new' });
+    await assert.rejects(
+      connectionA.deleteGenerationCheckpoints('lease-fenced-job', ['script'], {
+        productionId: generationLockId, owner: 'generation-old'
+      }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.deepEqual((await connectionB.getGenerationCheckpoint('lease-fenced-job', 'script')).artifact,
+      { title: 'current result' }, 'a stale worker cannot delete the current checkpoint');
+    await connectionB.releaseProductionOperationLock(generationLockId, 'generation-new');
+
     await connectionA.executeQuery(`CREATE TABLE production_scenes (
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, position INTEGER NOT NULL,
       label TEXT, script_text TEXT, prompt TEXT, duration REAL, asset_type TEXT,
