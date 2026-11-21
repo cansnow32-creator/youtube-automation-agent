@@ -1983,6 +1983,39 @@ class Database {
     return saved?.status === 'rendering' && saved.renderAttemptId === attemptId ? saved : null;
   }
 
+  async claimShortClipForSchedule(id, productionId, scheduleId, changes = {}, lease = null) {
+    if (!id || !productionId || !scheduleId) {
+      throw new Error('Short schedule claim requires clip, source production, and schedule IDs');
+    }
+    const persist = async tx => {
+      if (lease) await this.assertProductionLeaseInTransaction(tx, lease, productionId);
+      const result = await tx.run(
+        `UPDATE shorts_clips SET
+          status = 'scheduled', schedule_id = ?, publish_time = ?, privacy_status = ?,
+          inherited_evidence = ?, approved_at = ?, error = NULL, updated_at = datetime('now')
+         WHERE id = ? AND production_id = ? AND status = 'rendered' AND schedule_id IS NULL`,
+        [scheduleId, changes.publishTime, changes.privacyStatus || 'private',
+          JSON.stringify(changes.inheritedEvidence || {}), changes.approvedAt || new Date().toISOString(),
+          id, productionId]
+      );
+      if (result.changes !== 1) return null;
+      const rows = await tx.all('SELECT * FROM shorts_clips WHERE id = ?', [id]);
+      return this.parseShortClip(rows[0]);
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
+    const result = await this.executeQuery(
+      `UPDATE shorts_clips SET
+        status = 'scheduled', schedule_id = ?, publish_time = ?, privacy_status = ?,
+        inherited_evidence = ?, approved_at = ?, error = NULL, updated_at = datetime('now')
+       WHERE id = ? AND production_id = ? AND status = 'rendered' AND schedule_id IS NULL`,
+      [scheduleId, changes.publishTime, changes.privacyStatus || 'private',
+        JSON.stringify(changes.inheritedEvidence || {}), changes.approvedAt || new Date().toISOString(),
+        id, productionId]
+    );
+    if (result.changes !== 1) return null;
+    return this.getShortClip(id);
+  }
+
   async updateShortClipForSchedule(id, scheduleId, changes = {}) {
     const result = await this.executeQuery(
       `UPDATE shorts_clips SET
