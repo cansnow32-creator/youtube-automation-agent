@@ -1866,11 +1866,11 @@ class YouTubeAutomationAgent {
         artifact: script,
         error: null,
         completedAt: new Date().toISOString()
-      });
+      }, lease.assertLease.lease || null);
       await lease.assertLease();
       await this.db.updateGenerationJob(jobId, {
         details: { approvedDraftReviewId: currentReview.id, approvedDraftAcceptedAt: new Date().toISOString() }
-      });
+      }, lease.assertLease.lease || null);
       await lease.assertLease();
       const updated = await this.resumeGenerationJob(jobId, { forceHumanApproval: true }, lease);
       transferred = true;
@@ -1985,7 +1985,7 @@ class YouTubeAutomationAgent {
           resumeFrom,
           failedStage: null
         }
-      });
+      }, lease.assertLease.lease || null);
       await lease.assertLease();
       const work = this.runGenerationJob(job.id, input, lease)
         .catch(error => this.logger.error(`Resumed generation job ${job.id} failed:`, error))
@@ -2043,7 +2043,7 @@ class YouTubeAutomationAgent {
   async runGenerationJobUnlocked(jobId, input, assertLease = async () => {}) {
     try {
       await assertLease();
-      await this.db.updateGenerationJob(jobId, { status: 'running', progress: 2, error: null, completedAt: null });
+      await this.db.updateGenerationJob(jobId, { status: 'running', progress: 2, error: null, completedAt: null }, assertLease.lease || null);
       await assertLease();
       const result = await this.generateContent(input.topic, input.style, input.length, {
         jobId,
@@ -2060,7 +2060,7 @@ class YouTubeAutomationAgent {
         title: result.title,
         details: { reviewStatus: result.reviewStatus, qualityScore: result.qualityScore },
         completedAt: new Date().toISOString()
-      });
+      }, assertLease.lease || null);
       await assertLease();
       await this.db.setSetting('last_content_generation', new Date().toISOString());
       await assertLease();
@@ -2088,7 +2088,7 @@ class YouTubeAutomationAgent {
             : {})
         },
         completedAt: new Date().toISOString()
-      });
+      }, assertLease.lease || null);
       await assertLease();
       await this.operator.notify({
         type: cancelled ? 'generation_cancelled' : 'generation_failure',
@@ -2101,7 +2101,7 @@ class YouTubeAutomationAgent {
     }
   }
 
-  async updateJobStage(jobId, stage, progress, details = {}) {
+  async updateJobStage(jobId, stage, progress, details = {}, assertLease = async () => {}) {
     if (!jobId) return;
     const job = await this.db.getGenerationJob(jobId);
     if (job?.cancelRequested) {
@@ -2109,7 +2109,9 @@ class YouTubeAutomationAgent {
       error.code = 'JOB_CANCELLED';
       throw error;
     }
-    await this.db.updateGenerationJob(jobId, { stage, progress, details });
+    await assertLease();
+    await this.db.updateGenerationJob(jobId, { stage, progress, details }, assertLease.lease || null);
+    await assertLease();
   }
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
