@@ -1859,7 +1859,7 @@ class YouTubeAutomationAgent {
         throw error;
       }
       await lease.assertLease();
-      await this.db.saveScript(script);
+      await this.db.saveScript(script, lease.assertLease.lease || null);
       await lease.assertLease();
       await this.db.saveGenerationCheckpoint(jobId, 'script', {
         status: 'completed',
