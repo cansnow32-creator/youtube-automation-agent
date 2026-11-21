@@ -173,6 +173,33 @@ async function run() {
     );
     assert.deepEqual((await connectionB.getGenerationCheckpoint('lease-fenced-job', 'script')).artifact,
       { title: 'current result' }, 'a stale worker cannot delete the current checkpoint');
+
+    await connectionA.executeQuery(`CREATE TABLE generation_jobs (
+      id TEXT PRIMARY KEY, status TEXT, stage TEXT, progress INTEGER, production_id TEXT,
+      title TEXT, error TEXT, details TEXT, cancel_requested INTEGER,
+      updated_at TEXT, completed_at TEXT
+    )`);
+    await connectionA.executeQuery(
+      `INSERT INTO generation_jobs
+        (id, status, stage, progress, details, cancel_requested)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['lease-fenced-job', 'running', 'script', 25, '{}', 0]
+    );
+    await assert.rejects(
+      connectionA.updateGenerationJob('lease-fenced-job', {
+        status: 'failed', stage: 'script', error: 'stale worker'
+      }, { productionId: generationLockId, owner: 'generation-old' }),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST'
+    );
+    assert.equal((await connectionB.getGenerationJob('lease-fenced-job')).status, 'running',
+      'a stale worker cannot overwrite generation job state after lease takeover');
+    const updatedJob = await connectionB.updateGenerationJob('lease-fenced-job', {
+      status: 'completed', stage: 'quality_review', progress: 100,
+      details: { accepted: true }
+    }, { productionId: generationLockId, owner: 'generation-new' });
+    assert.equal(updatedJob.status, 'completed');
+    assert.equal(updatedJob.details.accepted, true,
+      'the current generation owner can atomically update job state and merge details');
     await connectionB.releaseProductionOperationLock(generationLockId, 'generation-new');
 
     await connectionA.executeQuery(`CREATE TABLE production_scenes (
