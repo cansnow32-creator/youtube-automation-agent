@@ -2302,16 +2302,36 @@ class Database {
   }
 
   async markInterruptedJobs() {
-    await this.executeQuery(
-      `UPDATE generation_jobs SET status = 'interrupted',
-       error = 'The application restarted before this job finished', updated_at = datetime('now'),
-       completed_at = datetime('now') WHERE status IN ('queued', 'running')`
-    );
-    await this.executeQuery(
-      `UPDATE operator_runs SET status = 'interrupted', stage = 'interrupted',
-       error = 'The application restarted before this operator run finished', updated_at = datetime('now'),
-       completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')`
-    );
+    return this.withIsolatedTransaction(async tx => {
+      await tx.run(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+        production_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      // A second application instance must not mark a job interrupted while
+      // another process still holds its generation or production-manager lease.
+      await tx.run(
+        `UPDATE generation_jobs SET status = 'interrupted',
+         error = 'The application restarted before this job finished', updated_at = datetime('now'),
+         completed_at = datetime('now')
+         WHERE status IN ('queued', 'running')
+           AND NOT EXISTS (
+             SELECT 1 FROM production_operation_locks AS active_lock
+             WHERE active_lock.production_id IN (
+               'generation:' || generation_jobs.id,
+               'job:' || generation_jobs.id
+             )
+             AND active_lock.expires_at > ?
+           )`,
+        [Date.now()]
+      );
+      await tx.run(
+        `UPDATE operator_runs SET status = 'interrupted', stage = 'interrupted',
+         error = 'The application restarted before this operator run finished', updated_at = datetime('now'),
+         completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')`
+      );
+    });
   }
 
   async saveScriptQualityReview(review = {}) {
