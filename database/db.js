@@ -957,10 +957,30 @@ class Database {
   }
 
   // Production methods
-  async saveProductionData(production) {
+  async saveProductionData(production, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      await tx.run(
+        `INSERT OR REPLACE INTO productions (
+          id, status, assets, timeline, scheduled_publish_time,
+          priority, estimated_duration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          production.id,
+          production.status,
+          JSON.stringify(production.assets),
+          JSON.stringify(production.timeline),
+          production.scheduledPublishTime,
+          production.priority,
+          production.estimatedDuration
+        ]
+      );
+      return production.id;
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     await this.executeQuery(
       `INSERT OR REPLACE INTO productions (
-        id, status, assets, timeline, scheduled_publish_time, 
+        id, status, assets, timeline, scheduled_publish_time,
         priority, estimated_duration
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -973,7 +993,6 @@ class Database {
         production.estimatedDuration
       ]
     );
-  
     return production.id;
   }
 
@@ -1037,10 +1056,12 @@ class Database {
   }
 
   async updateProductionData(production, lease = null) {
-    const guard = this.leaseGuard(lease, production.id);
+    // Generation-job leases are keyed as generation:<jobId>, while a production
+    // row has its own ID. Validate the supplied lease key, not the row ID.
+    const guard = this.leaseGuard(lease, lease?.productionId || production.id);
     const result = await this.executeQuery(
-      `UPDATE productions SET 
-        status = ?, assets = ?, timeline = ?, 
+      `UPDATE productions SET
+        status = ?, assets = ?, timeline = ?,
         scheduled_publish_time = ?, priority = ?
       WHERE id = ?${guard.sql}`,
       [
@@ -1067,7 +1088,23 @@ class Database {
     }));
   }
 
-  async saveProductionSnapshot(production) {
+  async saveProductionSnapshot(production, lease = null) {
+    const persist = async tx => {
+      if (lease) await this.assertLeaseInTransaction(tx, lease, lease.productionId);
+      await tx.run(
+        `INSERT OR REPLACE INTO production_snapshots (
+          production_id, strategy, script, thumbnail, seo
+        ) VALUES (?, ?, ?, ?, ?)`,
+        [
+          production.id,
+          JSON.stringify(production.strategy || {}),
+          JSON.stringify(production.script || {}),
+          JSON.stringify(production.thumbnail || {}),
+          JSON.stringify(production.seo || {})
+        ]
+      );
+    };
+    if (lease) return this.withIsolatedTransaction(persist);
     await this.executeQuery(
       `INSERT OR REPLACE INTO production_snapshots (
         production_id, strategy, script, thumbnail, seo
