@@ -3084,11 +3084,24 @@ class Database {
   }
 
   async claimScheduleEntryForUpload(id) {
+    await this.executeQuery(`CREATE TABLE IF NOT EXISTS production_operation_locks (
+      production_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
     const attemptId = this.generateId('upload_attempt');
     const result = await this.executeQuery(
       `UPDATE publish_schedule
        SET status = 'uploading', error_message = NULL, upload_started_at = ?, upload_attempt_id = ?
        WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM production_operation_locks AS active_lock
+           WHERE active_lock.production_id = CASE
+             WHEN COALESCE(json_extract(publish_schedule.metadata, '$.contentType'), 'long_form') = 'short'
+               THEN json_extract(publish_schedule.metadata, '$.sourceProductionId')
+             ELSE publish_schedule.production_id
+           END
+             AND active_lock.expires_at > ?
+         )
          AND (
            (
              COALESCE(json_extract(publish_schedule.metadata, '$.contentType'), 'long_form') = 'short'
@@ -3116,7 +3129,7 @@ class Database {
              )
            )
          )`,
-      [new Date().toISOString(), attemptId, id]
+      [new Date().toISOString(), attemptId, id, Date.now()]
     );
     if (result.changes !== 1) return null;
     const row = await this.getRow('SELECT * FROM publish_schedule WHERE id = ?', [id]);
