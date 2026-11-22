@@ -41,6 +41,7 @@ async function replaceFileWithRollback(
         await assertLease();
         await fs.rename(backupPath, destinationPath);
       } catch (restoreError) {
+        if (isLeaseFailure(restoreError)) throw restoreError;
         error.restoreError = restoreError;
         error.message += '; previous output restore also failed: ' + restoreError.message;
       }
