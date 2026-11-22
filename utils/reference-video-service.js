@@ -72,8 +72,18 @@ class ReferenceVideoService {
   async getFrame(referenceId, frameIndex) {
     const record = await this.db.getReferenceVideo(referenceId);
     const index = Number.parseInt(frameIndex, 10);
-    if (!record || !Number.isInteger(index) || index < 0 || index >= record.framePaths.length) return null;
-    return record.framePaths[index];
+    if (!record || !Array.isArray(record.framePaths) || !Number.isInteger(index) || index < 0 || index >= record.framePaths.length) return null;
+    try {
+      const [root, candidate] = await Promise.all([
+        fs.realpath(this.dataRoot),
+        fs.realpath(record.framePaths[index])
+      ]);
+      if (!candidate.startsWith(`${root}${path.sep}`)) return null;
+      const stat = await fs.stat(candidate);
+      return stat.isFile() ? candidate : null;
+    } catch (_error) {
+      return null;
+    }
   }
 
   toPublicRecord(record) {
