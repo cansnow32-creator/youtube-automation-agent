@@ -69,7 +69,6 @@ class CineCodeRenderer {
 
     const durations = selectedAssets.map(() => Number((totalDuration / selectedAssets.length).toFixed(3)));
     const rendered = [];
-    const createdPaths = [];
     try {
       for (let index = 0; index < selectedAssets.length; index++) {
         await assertLease();
@@ -153,7 +152,6 @@ class CineCodeRenderer {
             await assertLease();
             await fs.rm(outputPath, { force: true });
             await fs.rename(temporaryPath, outputPath);
-            createdPaths.push(outputPath);
             await assertLease();
             await fs.writeFile(manifestTemp, JSON.stringify({
               fingerprint: renderFingerprint,
@@ -162,7 +160,6 @@ class CineCodeRenderer {
             }, null, 2));
             await assertLease();
             await fs.rename(manifestTemp, manifestPath);
-            createdPaths.push(manifestPath);
             await assertLease();
           } catch (error) {
             if (isLeaseFailure(error)) throw error;
@@ -174,7 +171,6 @@ class CineCodeRenderer {
           await assertLease();
           // Cached and newly rendered scene files remain available to recovery;
           // this renderer does not delete scene outputs when a later stage fails.
-          createdPaths.push(outputPath, manifestPath);
           this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
         }
 
