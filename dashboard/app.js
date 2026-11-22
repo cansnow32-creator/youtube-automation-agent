@@ -21,6 +21,23 @@ function escapeHTML(value) {
     .replaceAll("'", '&#039;');
 }
 
+function safeLocalAssetUrl(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw.startsWith('/') || raw.startsWith('//')) return '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    return parsed.origin === window.location.origin ? `${parsed.pathname}${parsed.search}${parsed.hash}` : '';
+  } catch (_error) { return ''; }
+}
+
+function safeExternalUrl(value) {
+  const raw = String(value ?? '').trim();
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '#';
+    return parsed.href;
+  } catch (_error) { return '#'; }
+}
 function apiKey() {
   return localStorage.getItem('yaa_api_key') || '';
 }
@@ -442,7 +459,7 @@ function renderChannelSnapshot(snapshot) {
       + tile('Subscribers gained', count(recent.subscribersGained), `${count(recent.subscribersLost)} lost`)
       + tile('Net subscribers', `${net > 0 ? '+' : ''}${count(net)}`);
   } else {
-    html += `<div class="empty">${escapeHTML(recent.reason || '28-day analytics are unavailable.')}${recent.activationUrl ? ` <a href="${escapeHTML(recent.activationUrl)}" target="_blank" rel="noopener noreferrer">Enable YouTube Analytics API</a>` : ''}</div>`;
+    html += `<div class="empty">${escapeHTML(recent.reason || '28-day analytics are unavailable.')}${recent.activationUrl ? ` <a href="${escapeHTML(safeExternalUrl(recent.activationUrl))}" target="_blank" rel="noopener noreferrer">Enable YouTube Analytics API</a>` : ''}</div>`;
   }
   container.innerHTML = html;
   note.textContent = 'Whole-channel totals from YouTube, including videos published outside YouTube Automation Agent. Analytics data lags about two days.';
@@ -786,7 +803,7 @@ function renderEngagementDetail() {
     <article class="comment-card">
       <div class="learning-card-heading"><strong>${escapeHTML((flag.categories || []).join(', '))}</strong></div>
       <p class="comment-original">${escapeHTML(comment.text || '')}</p>
-      <a class="text-button" href="${escapeHTML(flag.permalink || '#')}" target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+      <a class="text-button" href="${escapeHTML(safeExternalUrl(flag.permalink || '#'))}" target="_blank" rel="noopener noreferrer">Open on YouTube</a>
     </article>`;
   }).join('') : empty('Nothing flagged as spam, scam, or toxic.');
 }
@@ -1114,7 +1131,7 @@ function renderSourceEditor(source = {}, disabled = false) {
       ], source.status || 'pending')}</select></label>
     </div>
     <label><span>Evidence notes</span><textarea data-field="notes" rows="2" maxlength="1000" ${disabled ? 'disabled' : ''}>${escapeHTML(source.notes || '')}</textarea></label>
-    ${source.url ? `<a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">Open source ↗</a>` : ''}
+    ${source.url ? `<a class="source-link" href="${escapeHTML(safeExternalUrl(source.url))}" target="_blank" rel="noopener">Open source ↗</a>` : ''}
   </article>`;
 }
 
@@ -1205,8 +1222,8 @@ function renderSceneEditor(item, canReview = true) {
         const sourceIds = new Set(scene.provenanceSourceIds || []);
         const preview = scene.assetUrl
           ? scene.assetType === 'video'
-            ? `<video controls preload="metadata"><source src="${escapeHTML(scene.assetUrl)}"></video>`
-            : `<img src="${escapeHTML(scene.assetUrl)}" alt="${escapeHTML(scene.label)} scene asset">`
+            ? `<video controls preload="metadata"><source src="${escapeHTML(safeLocalAssetUrl(scene.assetUrl))}"></video>`
+            : `<img src="${escapeHTML(safeLocalAssetUrl(scene.assetUrl))}" alt="${escapeHTML(scene.label)} scene asset">`
           : '<div class="preview-placeholder">No scene asset</div>';
         return `<article class="scene-card ${scene.locked ? 'locked' : ''}" data-scene-card="${escapeHTML(scene.id)}">
           <div class="scene-card-top">
@@ -1259,7 +1276,7 @@ function renderShortsStudio(item) {
       const rendered = Boolean(clip.assetUrls?.video);
       return `<article class="short-card" data-short-card="${escapeHTML(clip.id)}">
         <div class="short-preview">${rendered
-          ? `<video controls preload="metadata"><source src="${escapeHTML(clip.assetUrls.video)}" type="video/mp4"></video>`
+          ? `<video controls preload="metadata"><source src="${escapeHTML(safeLocalAssetUrl(clip.assetUrls.video))}" type="video/mp4"></video>`
           : `<div class="short-placeholder"><strong>9:16</strong><span>${escapeHTML(label(clip.layout))} layout</span></div>`}</div>
         <div class="short-editor">
           <div class="scene-status-row">${statusChip(clip.status)}<span>${Number(clip.duration || 0).toFixed(0)}s</span><span>${escapeHTML((clip.sourceSceneLabels || []).join(' + '))}</span></div>
@@ -1272,7 +1289,7 @@ function renderShortsStudio(item) {
             <label><span>Privacy</span><select data-short-field="privacyStatus" ${locked ? 'disabled' : ''}><option value="private" ${clip.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${clip.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${clip.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
           </div>
           <p class="short-rationale">${escapeHTML(clip.rationale || '')}${clip.error ? `<br><span class="danger-text">${escapeHTML(clip.error)}</span>` : ''}</p>
-          ${clip.youtubeUrl ? `<a class="source-link" href="${escapeHTML(clip.youtubeUrl)}" target="_blank" rel="noopener">Open published Short ↗</a>` : ''}
+          ${clip.youtubeUrl ? `<a class="source-link" href="${escapeHTML(safeExternalUrl(clip.youtubeUrl))}" target="_blank" rel="noopener">Open published Short ↗</a>` : ''}
           ${!locked ? `<div class="short-actions"><button type="button" class="text-button" data-short-save>Save draft</button><button type="button" class="button secondary small" data-short-render>${rendered ? 'Render again' : 'Render 9:16'}</button><button type="button" class="button primary small" data-short-approve ${!parentApproved || clip.status !== 'rendered' ? 'disabled' : ''} title="${!parentApproved ? 'Approve the source production first' : clip.status !== 'rendered' ? 'Render this Short first' : 'Confirm and schedule this Short'}">Approve &amp; schedule</button></div>` : ''}
         </div>
       </article>`;
@@ -1298,7 +1315,7 @@ async function openContent(productionId) {
       <form id="content-review-form" class="editor content-review-editor">
         <div class="content-layout">
           <div>
-            <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
+            <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${escapeHTML(safeLocalAssetUrl(item.assetUrls.thumbnail))}"><source src="${escapeHTML(safeLocalAssetUrl(item.assetUrls.video))}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${escapeHTML(safeLocalAssetUrl(item.assetUrls.thumbnail))}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
             ${item.schedule?.metadata?.thumbnailUpload?.status === 'failed' ? `<div class="callout error"><strong>Thumbnail upload failed.</strong> ${escapeHTML(item.schedule.metadata.thumbnailUpload.errorMessage || 'The video is already uploaded; retrying here uploads only the thumbnail.')}<div class="form-actions"><button type="button" class="button secondary" data-retry-thumbnail="${escapeHTML(item.id)}">Retry thumbnail upload</button></div></div>` : item.schedule?.metadata?.thumbnailUpload?.status === 'uploaded' ? '<p class="meta-line">✓ YouTube thumbnail uploaded successfully.</p>' : ''}
@@ -1310,7 +1327,7 @@ async function openContent(productionId) {
             ${experiment ? `<section class="experiment-panel">
               <div><p class="eyebrow">APPROVED LEARNING EXPERIMENT</p><strong>${escapeHTML(experiment.hypothesis)}</strong><p>Choose the packaging to ship. Nothing changes on YouTube until this content is approved and published.</p></div>
               <label><span>Title variant</span><select name="selectedTitleVariant">${experiment.titleVariants.map((variant, index) => `<option value="${index}" data-title="${escapeHTML(variant.title)}" ${index === selectedTitleVariant ? 'selected' : ''}>${escapeHTML(variant.label)} — ${escapeHTML(variant.title)}</option>`).join('')}</select></label>
-              <div class="experiment-thumbnails">${experiment.thumbnailVariants.map((variant, index) => `<label class="experiment-thumb ${index === selectedThumbnailVariant ? 'selected' : ''}"><input type="radio" name="selectedThumbnailVariant" value="${index}" ${index === selectedThumbnailVariant ? 'checked' : ''}><img src="${escapeHTML(item.assetUrls.experimentThumbnails?.[index] || '')}" alt="${escapeHTML(variant.label)} thumbnail variant"><span>${escapeHTML(variant.label)}</span></label>`).join('')}</div>
+              <div class="experiment-thumbnails">${experiment.thumbnailVariants.map((variant, index) => `<label class="experiment-thumb ${index === selectedThumbnailVariant ? 'selected' : ''}"><input type="radio" name="selectedThumbnailVariant" value="${index}" ${index === selectedThumbnailVariant ? 'checked' : ''}><img src="${escapeHTML(safeLocalAssetUrl(item.assetUrls.experimentThumbnails?.[index]))}" alt="${escapeHTML(variant.label)} thumbnail variant"><span>${escapeHTML(variant.label)}</span></label>`).join('')}</div>
             </section>` : ''}
           </div>
         </div>
@@ -1327,7 +1344,7 @@ async function openContent(productionId) {
             <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
           </div>
           ${item.schedule && !['published', 'uploading', 'uploaded', 'reconciliation_required'].includes(item.schedule.status) ? `<div class="form-actions"><button type="button" class="button secondary" data-reschedule-content="${escapeHTML(item.id)}">Reschedule</button><button type="button" class="button primary" data-publish-now-content="${escapeHTML(item.id)}">Publish now</button><button type="button" class="button danger" data-delete-schedule="${escapeHTML(item.id)}">Delete schedule</button></div>` : ''}
-          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>`}
+          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(safeExternalUrl(item.schedule?.youtube_url || '#'))}" target="_blank" rel="noopener">Open on YouTube</a>`}
       </form>`;
     $('#content-review-form').dataset.productionId = item.id;
     $('#content-dialog').showModal();
@@ -2198,7 +2215,7 @@ $('#reference-video-form').addEventListener('submit', async event => {
     const reference = data.referenceVideo;
     $('#concept-propose-form [name="referenceVideoId"]').value = reference.id;
     const frames = (reference.frameUrls || []).map((url, index) =>
-      `<img src="${escapeHTML(url)}" alt="Reference frame ${index + 1}" loading="lazy" style="width:100%;max-width:180px;border-radius:10px">`
+      `<img src="${escapeHTML(safeLocalAssetUrl(url))}" alt="Reference frame ${index + 1}" loading="lazy" style="width:100%;max-width:180px;border-radius:10px">`
     ).join('');
     const analysis = reference.analysis?.error
       ? `<p class="callout">${escapeHTML(reference.analysis.error)}</p>`
