@@ -143,10 +143,18 @@ class ProductionManagementAgent {
     }
     let leaseFailure = null;
     let renewalInFlight = Promise.resolve();
+    let leaseExpiresAt = Date.now() + leaseMs;
     const assertLease = async () => {
       await upstreamAssertLease();
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
+      if (Date.now() >= leaseExpiresAt) {
+        leaseFailure = Object.assign(
+          new Error(`Generation job lease expired for ${jobId}`),
+          { code: 'PRODUCTION_JOB_LEASE_LOST', status: 409 }
+        );
+        throw leaseFailure;
+      }
     };
     // This wrapper owns a distinct job:<id> lock in addition to any upstream
     // generation-job lease. Pass its identity to all fenced DB writes.
@@ -160,6 +168,7 @@ class ProductionManagementAgent {
             new Error(`Generation job lease lost for ${jobId}`),
             { code: 'PRODUCTION_JOB_LEASE_LOST', status: 409 }
           );
+          else leaseExpiresAt = Date.now() + leaseMs;
         } catch (cause) {
           leaseFailure = Object.assign(
             new Error(`Generation job lease could not be verified for ${jobId}: ${cause.message}`),
@@ -364,10 +373,18 @@ class ProductionManagementAgent {
 
     let leaseFailure = null;
     let renewalInFlight = Promise.resolve();
+    let leaseExpiresAt = Date.now() + leaseMs;
     const assertLease = async () => {
       await upstreamAssertLease();
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
+      if (Date.now() >= leaseExpiresAt) {
+        leaseFailure = Object.assign(
+          new Error(`Production resume lease expired for ${productionId}`),
+          { code: 'PRODUCTION_RESUME_LEASE_LOST', status: 409 }
+        );
+        throw leaseFailure;
+      }
     };
     assertLease.lease = Object.freeze({ productionId, owner });
     const heartbeat = setInterval(() => {
@@ -380,6 +397,8 @@ class ProductionManagementAgent {
               new Error(`Production resume lease lost for ${productionId}`),
               { code: 'PRODUCTION_RESUME_LEASE_LOST', status: 409 }
             );
+          } else {
+            leaseExpiresAt = Date.now() + leaseMs;
           }
         } catch (cause) {
           leaseFailure = Object.assign(
