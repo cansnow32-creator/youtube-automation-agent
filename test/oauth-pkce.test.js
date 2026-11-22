@@ -3,7 +3,9 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { google } = require('googleapis');
 const { ModernAuth } = require('../modern-auth');
+const { OAuthServer } = require('../oauth-server');
 
 function request(port, pathname, method = 'GET') {
   return new Promise((resolve, reject) => {
@@ -27,6 +29,7 @@ async function run() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agenttube-oauth-pkce-'));
   const auth = new ModernAuth();
   auth.tokensPath = path.join(tempDir, 'tokens.json');
+  fs.writeFileSync(auth.tokensPath, JSON.stringify({ youtube: { refresh_token: 'existing-refresh-token' } }));
   auth.oauthState = 'expected-state-value';
   auth.codeVerifier = 'test-pkce-verifier';
   auth.callbackHandled = false;
@@ -54,6 +57,19 @@ async function run() {
   auth.rejectAuth = rejectAuth;
 
   try {
+    assert.strictEqual(OAuthServer.prototype.generateAuthUrl.constructor.name, 'AsyncFunction', 'legacy OAuth URL generation must be async when using PKCE');
+    const pkceClient = new google.auth.OAuth2('test-client', 'test-secret', 'http://127.0.0.1/callback');
+    const generated = await pkceClient.generateCodeVerifierAsync();
+    assert.match(generated.codeVerifier, /^[A-Za-z0-9._~-]{43,128}$/);
+    assert.match(generated.codeChallenge, /^[A-Za-z0-9_-]{43}$/);
+    const authorizeUrl = new URL(pkceClient.generateAuthUrl({
+      scope: ['https://www.googleapis.com/auth/youtube.upload'],
+      code_challenge_method: 'S256',
+      code_challenge: generated.codeChallenge
+    }));
+    assert.strictEqual(authorizeUrl.searchParams.get('code_challenge_method'), 'S256');
+    assert.strictEqual(authorizeUrl.searchParams.get('code_challenge'), generated.codeChallenge);
+
     await auth.startTempServer({
       uri: 'http://127.0.0.1:0/callback',
       hostname: '127.0.0.1',
@@ -79,14 +95,14 @@ async function run() {
     const replay = await request(port, '/callback?code=replay-code&state=expected-state-value');
     assert.strictEqual(replay.status, 409, 'a second valid callback must not be processed');
 
-    resolveExchange({ tokens: { access_token: 'test-access-token', refresh_token: 'test-refresh-token' } });
+    resolveExchange({ tokens: { access_token: 'test-access-token' } });
     const callbackResponse = await firstCallback;
     assert.strictEqual(callbackResponse.status, 200);
     const saved = await authResult;
     assert.strictEqual(saved.access_token, 'test-access-token');
 
     const persisted = JSON.parse(fs.readFileSync(auth.tokensPath, 'utf8'));
-    assert.strictEqual(persisted.youtube.refresh_token, 'test-refresh-token');
+    assert.strictEqual(persisted.youtube.refresh_token, 'existing-refresh-token', 're-consent must preserve the existing refresh token when Google omits it');
     if (process.platform !== 'win32') {
       assert.strictEqual(fs.statSync(auth.tokensPath).mode & 0o777, 0o600, 'token file must be private');
     }
