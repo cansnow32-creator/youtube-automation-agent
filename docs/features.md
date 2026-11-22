@@ -134,7 +134,7 @@ When three or more commenters ask for the same thing, the analysis mines an **au
 
 ## Automation schedule
 
-The scheduler starts with `npm start` and uses the server's local time.
+The scheduler starts with `npm start` and uses the server's local time. The publishing queue is checked every 15 minutes, but **automatic uploads are disabled by default**. Scheduled videos stay queued until an operator publishes them manually, unless you explicitly set `AUTO_PUBLISH_ENABLED=true` in `.env`. This opt-in does not bypass content approval, readiness, or unresolved-upload reconciliation checks.
 
 | When | Job |
 | --- | --- |
