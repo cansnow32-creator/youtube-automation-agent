@@ -5,6 +5,7 @@ function makeAgent(queue, options = {}) {
   const agent = Object.create(PublishingSchedulingAgent.prototype);
   agent.publishQueue = options.initialQueue || [];
   agent.activePublishes = new Map();
+  agent.autoPublishEnabled = options.autoPublishEnabled !== false;
   agent.logger = { info() {}, warn() {}, error() {}, success() {} };
   agent.db = {
     getPublishQueue: options.getPublishQueue || (async () => queue.map(entry => ({ ...entry }))),
@@ -21,6 +22,38 @@ function dueEntry(id = 'overdue-1') {
     publishTime: new Date(Date.now() - 60_000).toISOString(),
     status: 'scheduled'
   };
+}
+
+async function testAutomaticPublishingIsDisabledByDefault() {
+  const previous = process.env.AUTO_PUBLISH_ENABLED;
+  delete process.env.AUTO_PUBLISH_ENABLED;
+  let queueReads = 0;
+  let publishCalls = 0;
+  try {
+    const agent = new PublishingSchedulingAgent({
+      getPublishQueue: async () => { queueReads++; return [dueEntry('must-stay-queued')]; }
+    }, {});
+    agent.publishContent = async () => { publishCalls++; };
+    assert.equal(agent.autoPublishEnabled, false, 'automatic publishing must default to disabled');
+    assert.equal(await agent.processPublishQueue(), 0);
+    assert.equal(queueReads, 0, 'disabled queue processing must not even load due uploads');
+    assert.equal(publishCalls, 0, 'disabled queue processing must never call the upload path');
+  } finally {
+    if (previous === undefined) delete process.env.AUTO_PUBLISH_ENABLED;
+    else process.env.AUTO_PUBLISH_ENABLED = previous;
+  }
+}
+
+async function testAutomaticPublishingRequiresExplicitEnvironmentOptIn() {
+  const previous = process.env.AUTO_PUBLISH_ENABLED;
+  process.env.AUTO_PUBLISH_ENABLED = 'true';
+  try {
+    const agent = new PublishingSchedulingAgent({}, {});
+    assert.equal(agent.autoPublishEnabled, true, 'only an explicit true value enables automatic publishing');
+  } finally {
+    if (previous === undefined) delete process.env.AUTO_PUBLISH_ENABLED;
+    else process.env.AUTO_PUBLISH_ENABLED = previous;
+  }
 }
 
 async function testOverdueRowsAreReloadedAfterRestart() {
@@ -80,6 +113,8 @@ async function testConcurrentQueueTicksShareOnePublishOperation() {
 }
 
 async function main() {
+  await testAutomaticPublishingIsDisabledByDefault();
+  await testAutomaticPublishingRequiresExplicitEnvironmentOptIn();
   await testOverdueRowsAreReloadedAfterRestart();
   await testInvalidPublishTimeFailsClosed();
   await testDatabaseReadFailureDiscardsStaleQueue();
