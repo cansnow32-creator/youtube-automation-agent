@@ -34,27 +34,6 @@ async function removeAttemptFiles(paths = []) {
     .map(filePath => fs.rm(filePath, { force: true, recursive: true }).catch(() => {})));
 }
 
-function getVideoAttemptSidecarPaths(outputPath) {
-  const resolved = path.resolve(outputPath);
-  const extension = path.extname(resolved);
-  const stem = extension ? resolved.slice(0, -extension.length) : resolved;
-  const hybridVisual = stem + '_hybrid_visual.mp4';
-  const paths = [
-    resolved,
-    resolved + '.info',
-    resolved + '.assembly.json',
-    resolved + '.assembly.json.tmp',
-    hybridVisual,
-    stem + '_hybrid_visual_rendering.mp4',
-    hybridVisual + '.render.json',
-    hybridVisual + '.render.json.tmp',
-    stem + '_finalizing.mp4',
-    stem + '_visual.mp4',
-    stem + '_slides'
-  ];
-  // Per-scene CineCode outputs have independent attempt ownership.
-  return paths;
-}
 
 // Turns an image provider SDK error into one readable line that leads with the
 // fix when the cause is recognisable. @google/genai puts the raw JSON error
