@@ -92,6 +92,31 @@ async function run() {
     const audioFilesAfterLeaseLoss = await fs.readdir(path.join(leaseDir, 'audio'));
     assert.deepEqual(audioFilesAfterLeaseLoss, [], 'lost lease must not publish a shared narration cache file');
 
+    const segmentDir = path.join(directory, 'scene-audio-lease');
+    let segmentLeaseChecks = 0;
+    let ffmpegReceivedLease = false;
+    const segmentService = new SceneRepairService({}, {
+      isUsableAudioFile: async () => true
+    }, {
+      dataRoot: segmentDir,
+      runFFmpeg: async (_args, options = {}) => {
+        ffmpegReceivedLease = typeof options.assertLease === 'function';
+        await options.assertLease?.();
+      }
+    });
+    const segmentScene = { position: 0, duration: 8 };
+    await assert.rejects(
+      segmentService.initializeAudioSegments({ id: 'segment-lease-production', assets: { audio: { path: audioPath } } }, [segmentScene], async () => {
+        segmentLeaseChecks++;
+        if (segmentLeaseChecks >= 3) {
+          throw Object.assign(new Error('lease lost during FFmpeg'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+        }
+      }),
+      error => error.code === 'SCENE_REBUILD_LEASE_LOST'
+    );
+    assert.equal(ffmpegReceivedLease, true, 'scene narration FFmpeg must receive the active lease assertion');
+    assert.equal(segmentScene.audioPath, undefined, 'a scene audio segment must not be published after lease loss');
+
     const fallbackPath = path.join(directory, 'full-narration.mp3');
     await fs.writeFile(fallbackPath, Buffer.from('fallback-audio'));
     const fallbackOne = await service.buildRebuildFingerprint([{ ...scenes[0], audioPath: null }], fallbackPath);
