@@ -126,7 +126,7 @@ Models, keys, env vars, clip limits, and the `.env` essentials are in the [provi
 
 ## Automation
 
-The scheduler starts with `npm start` and uses the server's local time. **Automatic uploads from the scheduled queue are disabled by default.** The queue is checked every 15 minutes, but due videos remain queued unless you explicitly set `AUTO_PUBLISH_ENABLED=true` in `.env`. Manual publishing from the dashboard remains subject to the existing content-review and readiness gates.
+The scheduler starts with `npm start` and uses the server's local time. **Unattended daily content generation and automatic uploads are both disabled by default.** Set `AUTO_GENERATION_ENABLED=true` to allow the 06:00 daily generation task, and set `AUTO_PUBLISH_ENABLED=true` separately to allow the 15-minute queue task to upload due videos. Neither opt-in bypasses concept approval, content review, readiness, or unresolved-upload reconciliation. Manual dashboard/operator production and manual publishing remain available through their explicit actions and existing gates.
 
 | When | What runs |
 | --- | --- |
