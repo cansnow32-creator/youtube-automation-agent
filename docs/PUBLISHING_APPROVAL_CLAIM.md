@@ -14,3 +14,7 @@ Editing the content editor data after approval now revokes the prior approval, c
 ## Shorts edit serialization
 
 Short draft edits use the same source-production operation lease as Short approval and rendering. The edit route acquires the lease before reading the clip, and the database update rechecks the lease, source-production identity, and editable clip status in one isolated SQLite transaction. This prevents an edit from racing approval and changing a Short after its schedule has been attached. A stale owner or a clip that has entered rendering/approval/scheduling is rejected with a conflict.
+
+## Scene edit and review invalidation lease
+
+Scene text/prompt/duration edits, timeline reorder, visual regeneration, narration regeneration, intentional-silence changes, and scene asset replacement now execute their mutation and subsequent review invalidation inside one source-production operation lease. The API calls the corresponding unlocked scene-service operation with the shared lease assertion, then refreshes the review using that same lease before releasing it. This closes the gap where an approval request could acquire the lock between a completed scene mutation and a separately locked review refresh, and approve against stale review state. If the edit fails, review invalidation is not attempted; if the lease is lost, the refresh cannot commit.
