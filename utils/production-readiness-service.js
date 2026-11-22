@@ -14,6 +14,11 @@ const { YOUTUBE_SCOPES } = require('../modern-auth');
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+function isSupportedNodeVersion(version) {
+  const major = Number(String(version || '').split('.')[0]);
+  return Number.isInteger(major) && major >= 22;
+}
+
 class ProductionReadinessService {
   constructor(db, credentialManager, options = {}) {
     this.db = db;
@@ -153,9 +158,8 @@ class ProductionReadinessService {
   }
 
   async probeLocalRuntime() {
-    const [major, minor] = process.versions.node.split('.').map(Number);
-    if (major < 20 || (major === 20 && minor < 17)) {
-      throw new Error(`Node.js 20.17 or newer is required; detected ${process.versions.node}`);
+    if (!isSupportedNodeVersion(process.versions.node)) {
+      throw new Error(`Node.js 22 or newer is required; detected ${process.versions.node}`);
     }
 
     const dataDirectory = path.resolve(__dirname, '..', 'data');
@@ -432,7 +436,7 @@ class ProductionReadinessService {
       image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
-      local_runtime: 'Install Node.js 20.17 or newer, close apps that may lock the data folder, verify write permissions, and rerun the check.',
+      local_runtime: 'Install Node.js 22 or newer, close apps that may lock the data folder, verify write permissions, and rerun the check.',
       video_assembly: 'Install a full FFmpeg build with libx264, AAC, zoompan and vignette support. On Windows, run winget install Gyan.FFmpeg, restart the terminal, and configure FFMPEG_PATH / FFPROBE_PATH if needed.',
       youtube_access: 'Reconnect YouTube in npm run walkthrough and ensure the Google account owns a channel.',
       upload_metadata: 'Edit the queued title, description, category, language, and tags before publishing.'
@@ -441,4 +445,4 @@ class ProductionReadinessService {
   }
 }
 
-module.exports = { ProductionReadinessService, STALE_AFTER_MS };
+module.exports = { ProductionReadinessService, STALE_AFTER_MS, isSupportedNodeVersion };
