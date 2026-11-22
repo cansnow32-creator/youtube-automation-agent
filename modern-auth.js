@@ -29,6 +29,8 @@ class ModernAuth {
     this.tokensPath = path.join(__dirname, 'config', 'tokens.json');
     this.server = null;
     this.oauthState = null;
+    this.codeVerifier = null;
+    this.callbackHandled = false;
   }
 
   async authenticate() {
@@ -48,6 +50,9 @@ class ModernAuth {
       );
 
       this.oauthState = crypto.randomBytes(32).toString('hex');
+      this.callbackHandled = false;
+      const pkce = await oauth2Client.generateCodeVerifierAsync();
+      this.codeVerifier = pkce.codeVerifier;
 
       const scopes = YOUTUBE_SCOPES;
 
@@ -68,7 +73,9 @@ class ModernAuth {
         access_type: 'offline',
         scope: scopes,
         prompt: 'consent',
-        state: this.oauthState
+        state: this.oauthState,
+        code_challenge_method: 'S256',
+        code_challenge: pkce.codeChallenge
       });
 
       console.log(chalk.cyan('🔗 Please visit this URL to authorize:'));
@@ -137,6 +144,11 @@ class ModernAuth {
       const url = new URL(req.url, redirect.uri);
       
       if (url.pathname === redirect.pathname) {
+        if (req.method !== 'GET') {
+          res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8', Allow: 'GET' });
+          res.end('Method not allowed.');
+          return;
+        }
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
         const state = url.searchParams.get('state');
@@ -147,16 +159,27 @@ class ModernAuth {
           return;
         }
         
-        if (error) {
-          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-          res.end(`Authorization error: ${error}. You can close this window.`);
-          this.rejectAuth(new Error(`Authorization error: ${error}`));
+        if (this.callbackHandled) {
+          res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('OAuth callback has already been handled.');
           return;
         }
-        
-        if (code) {
-          try {
-            const { tokens } = await oauth2Client.getToken(code);
+        if (error) {
+          this.callbackHandled = true;
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Authorization was not completed. You can close this window.');
+          this.cleanup();
+          this.rejectAuth(new Error('Authorization was not completed by the provider'));
+          return;
+        }
+        if (!code) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Missing authorization code.');
+          return;
+        }
+        this.callbackHandled = true;
+        try {
+            const { tokens } = await oauth2Client.getToken({ code, codeVerifier: this.codeVerifier });
             
             // Google may omit refresh_token on later authorizations. Keep the existing
             // one so a re-consent cannot silently break unattended access.
@@ -189,11 +212,11 @@ class ModernAuth {
             this.cleanup();
             this.resolveAuth(savedTokens);
             
-          } catch (tokenError) {
+        } catch (_tokenError) {
             res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end(`Token exchange failed: ${tokenError.message}`);
-            this.rejectAuth(tokenError);
-          }
+            res.end('Token exchange failed. Check the local application log.');
+            this.cleanup();
+            this.rejectAuth(new Error('OAuth token exchange failed'));
         }
       } else {
         res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -226,6 +249,8 @@ class ModernAuth {
       this.server = null;
     }
     this.oauthState = null;
+    this.codeVerifier = null;
+    this.callbackHandled = false;
   }
 
   async testAuthentication() {
