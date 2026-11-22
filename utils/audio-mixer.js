@@ -7,6 +7,11 @@ const {
   getAudioInfo
 } = require('./ffmpeg');
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
 const LICENSE_TYPES = new Set([
   'user_owned',
   'public_domain',
@@ -124,7 +129,8 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
         };
       }
     }
-  } catch (_cacheError) {
+  } catch (cacheError) {
+    if (isLeaseFailure(cacheError)) throw cacheError;
     // Missing, stale, or invalid cache: perform a fresh mix.
   }
   await assertLease();
@@ -197,10 +203,7 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     await assertLease();
     return result;
   } catch (error) {
-    const code = String(error?.code || '').toUpperCase();
-    if (code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED')) {
-      throw error;
-    }
+    if (isLeaseFailure(error)) throw error;
     // A generic provider/FFmpeg failure may only clean up after ownership is
     // re-verified. Unique temp names prevent this worker touching another attempt.
     await assertLease();
