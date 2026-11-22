@@ -6,12 +6,17 @@ const { Logger } = require('../utils/logger');
 const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
 
 class PublishingSchedulingAgent {
-  constructor(db, credentials) {
+  constructor(db, credentials, options = {}) {
     this.db = db;
     this.credentials = credentials;
     this.logger = new Logger('PublishingScheduling');
     this.youtube = null;
     this.publishQueue = [];
+    // Queue-driven uploads are opt-in. Manual publish actions remain available
+    // after the existing content-review and readiness checks.
+    this.autoPublishEnabled = options.autoPublishEnabled === undefined
+      ? String(process.env.AUTO_PUBLISH_ENABLED || '').trim().toLowerCase() === 'true'
+      : options.autoPublishEnabled === true;
     // Prevent overlapping publish requests for the same item in this process.
     this.activePublishes = new Map();
   }
@@ -916,6 +921,12 @@ class PublishingSchedulingAgent {
   }
 
   async processPublishQueue() {
+    // A scheduled time is not consent to enable autonomous uploads. Require an
+    // explicit environment or constructor opt-in before processing due items.
+    if (this.autoPublishEnabled !== true) {
+      this.logger.info('Automatic publishing is disabled; scheduled videos remain queued for manual review/publishing.');
+      return 0;
+    }
     // Refresh on every scheduler tick so overdue rows and schedules created by
     // other processes are visible after restart or while this process is running.
     if (!await this.loadPublishQueue()) return 0;
