@@ -7,7 +7,7 @@ const { CineCodeRenderer } = require('../utils/cinecode-renderer');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { checkFFmpeg, runFFmpeg, getMediaDuration } = require('../utils/ffmpeg');
 
-async function testCineCodeLeaseLossCleansPublishedScene() {
+async function testCineCodeLeaseLossPreservesPublishedScene() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-lease-loss-'));
   const imagePath = path.join(directory, 'source.png');
   await sharp({ create: { width: 32, height: 32, channels: 3, background: '#345678' } }).png().toFile(imagePath);
@@ -30,8 +30,8 @@ async function testCineCodeLeaseLossCleansPublishedScene() {
         aspectRatio: '16:9',
         assertLease: async () => {
           leaseChecks += 1;
-          // The scene has been atomically published; loss must remove its output and manifest.
-          if (leaseChecks >= 11) {
+          // The scene is atomically published at check 12; a stale renderer must preserve it.
+          if (leaseChecks >= 12) {
             throw Object.assign(new Error('generation lease lost during CineCode render'), {
               code: 'GENERATION_JOB_LEASE_LOST',
               status: 409
@@ -41,16 +41,19 @@ async function testCineCodeLeaseLossCleansPublishedScene() {
       }),
       error => error.code === 'GENERATION_JOB_LEASE_LOST'
     );
+    const outputPath = path.join(directory, 'lease-attempt_cinecode_scene_01.mp4');
+    assert.equal(await fs.access(outputPath).then(() => true, () => false), true,
+      'a published CineCode scene must remain available for recovery after lease loss');
     const files = await fs.readdir(directory);
-    assert.deepEqual(files.sort(), ['source.png'],
-      'CineCode must remove a just-published scene and any partial manifest after lease loss');
+    assert.deepEqual(files.sort(), ['lease-attempt_cinecode_scene_01.mp4', 'source.png'],
+      'only the atomically published scene and source image should remain');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
 }
 
 async function run() {
-  await testCineCodeLeaseLossCleansPublishedScene();
+  await testCineCodeLeaseLossPreservesPublishedScene();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cinecode-renderer-'));
   const imageOne = path.join(directory, 'one.png');
   const imageTwo = path.join(directory, 'two.png');
