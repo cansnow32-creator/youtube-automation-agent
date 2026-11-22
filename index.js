@@ -1761,30 +1761,34 @@ class YouTubeAutomationAgent {
     });
 
     this.app.put('/api/settings', protect, async (req, res) => {
+      const updates = {};
       const allowed = ['approval_required', 'notification_enabled', 'channel_timezone', 'max_daily_posts', 'content_buffer_days'];
       for (const key of allowed) {
-        if (req.body?.[key] !== undefined) await this.db.setSetting(key, String(req.body[key]));
+        if (req.body?.[key] !== undefined) updates[key] = String(req.body[key]);
       }
       const provider = req.body?.video_provider;
       if (provider !== undefined) {
         const supported = ['slideshow', 'cinecode', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
         if (!supported.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
-        await this.db.setSetting('video_provider', provider);
+        updates.video_provider = provider;
       }
       const mode = req.body?.video_generation_mode;
       if (mode !== undefined) {
         if (!['hybrid', 'slideshow'].includes(mode)) return res.status(400).json({ error: 'Unsupported video generation mode' });
-        await this.db.setSetting('video_generation_mode', mode);
+        updates.video_generation_mode = mode;
       }
       if (req.body?.video_clip_duration !== undefined) {
         const value = Number(req.body.video_clip_duration);
         if (!Number.isInteger(value) || value < 3 || value > 30) return res.status(400).json({ error: 'Clip duration must be between 3 and 30 seconds' });
-        await this.db.setSetting('video_clip_duration', String(value));
+        updates.video_clip_duration = String(value);
       }
       if (req.body?.video_max_generated_seconds !== undefined) {
         const value = Number(req.body.video_max_generated_seconds);
         if (!Number.isInteger(value) || value < 0 || value > 600) return res.status(400).json({ error: 'Generated seconds cap must be between 0 and 600' });
-        await this.db.setSetting('video_max_generated_seconds', String(value));
+        updates.video_max_generated_seconds = String(value);
+      }
+      for (const [key, value] of Object.entries(updates)) {
+        await this.db.setSetting(key, value);
       }
       return res.json({ success: true, result: await this.db.getAllSettings() });
     });
