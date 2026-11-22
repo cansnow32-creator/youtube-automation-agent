@@ -40,10 +40,11 @@ class ProductionReadinessService {
         message: 'Run the verified readiness check before relying on autonomous production.'
       };
     }
-    const age = this.now().getTime() - new Date(latest.completed_at || latest.created_at).getTime();
+    const completedAt = latest.completed_at || latest.created_at;
+    const age = completedAt ? this.now().getTime() - new Date(completedAt).getTime() : NaN;
     return {
       ...latest,
-      stale: age > STALE_AFTER_MS,
+      stale: !Number.isFinite(age) || age < 0 || age > STALE_AFTER_MS,
       blockingFailures: latest.checks.filter(check => check.blocking && check.status === 'failed').map(check => check.id)
     };
   }
