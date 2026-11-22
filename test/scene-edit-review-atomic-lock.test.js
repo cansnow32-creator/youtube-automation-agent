@@ -25,7 +25,9 @@ async function run() {
     }
   };
 
+  let reviewCalled = false;
   agent.refreshContentReviewUnlocked = async (productionId, notes, assertLease) => {
+    reviewCalled = true;
     assert.equal(productionId, 'production-1');
     assert.equal(notes, 'Scene changes require review');
     await assertLease();
@@ -55,7 +57,7 @@ async function run() {
   ]);
   assert.equal(lockActive, false);
 
-  let reviewCalled = false;
+  reviewCalled = false;
   await assert.rejects(() => agent.runSceneEditWithReview(
     'production-1',
     async () => { throw new Error('edit failed'); },
