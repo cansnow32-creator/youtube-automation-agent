@@ -28,6 +28,16 @@ async function run() {
       id TEXT PRIMARY KEY, production_id TEXT NOT NULL, schedule_id TEXT,
       status TEXT NOT NULL, approved_at TEXT, inherited_evidence TEXT NOT NULL DEFAULT '{}'
     )`);
+    await database.executeQuery(`CREATE TABLE readiness_runs (
+      id TEXT PRIMARY KEY, status TEXT NOT NULL, checks TEXT NOT NULL, summary TEXT NOT NULL,
+      started_at TEXT NOT NULL, completed_at TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const addReadiness = (id, status = 'passed', checks = [], completedAt = new Date().toISOString()) =>
+      database.executeQuery(
+        'INSERT INTO readiness_runs (id, status, checks, summary, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, status, typeof checks === 'string' ? checks : JSON.stringify(checks), '{}', completedAt, completedAt]
+      );
+    await addReadiness('readiness-initial');
 
     const insertSchedule = async (id, productionId, shortClipId = null, sourceProductionId = null) => database.executeQuery(
       `INSERT INTO publish_schedule (id, production_id, title, publish_time, status, metadata)
@@ -47,6 +57,12 @@ async function run() {
     await database.executeQuery(
       "UPDATE content_reviews SET status = 'approved' WHERE production_id = 'production-1'"
     );
+    await addReadiness('readiness-newer-failed', 'failed', [
+      { id: 'video_assembly', blocking: true, status: 'failed' }
+    ], new Date(Date.now() + 1000).toISOString());
+    assert.equal(await database.claimScheduleEntryForUpload('unapproved-production'), null,
+      'the newest failed readiness run must block upload even when an older run passed');
+    await addReadiness('readiness-restored', 'passed', [], new Date(Date.now() + 2000).toISOString());
     const approvedProduction = await database.claimScheduleEntryForUpload('unapproved-production');
     assert.equal(approvedProduction.status, 'uploading');
     assert.ok(approvedProduction.uploadAttemptId);
@@ -90,7 +106,21 @@ async function run() {
     await insertSchedule('no-approval-evidence', 'production-3');
     assert.equal(await database.claimScheduleEntryForUpload('no-approval-evidence'), null,
       'a schedule without a matching approved production or Short must fail closed');
-    process.stdout.write('Publishing approval claim tests passedfailed: ${error.stack || error.message}\\nfailed: ${error.stack || error.message}\\nn');
+    await database.executeQuery(
+      'INSERT INTO content_reviews (production_id, status) VALUES (?, ?)',
+      ['production-3', 'approved']
+    );
+    await insertSchedule('malformed-readiness', 'production-3');
+    await addReadiness('readiness-malformed', 'passed', '{not-json}', new Date(Date.now() + 3000).toISOString());
+    assert.equal(await database.claimScheduleEntryForUpload('malformed-readiness'), null,
+      'malformed readiness evidence must fail closed without breaking the claim query');
+
+    await addReadiness('readiness-warning', 'warning', [], new Date(Date.now() + 4000).toISOString());
+    const warningReadinessClaim = await database.claimScheduleEntryForUpload('malformed-readiness');
+    assert.equal(warningReadinessClaim.status, 'uploading',
+      'a fresh warning readiness run without blocking failures may allow upload');
+
+    process.stdout.write('Publishing approval claim tests passed\\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
@@ -98,6 +128,6 @@ async function run() {
 }
 
 run().catch(error => {
-  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}failed: ${error.stack || error.message}\\nfailed: ${error.stack || error.message}\\nn`);
+  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}\\n`);
   process.exitCode = 1;
 });
