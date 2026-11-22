@@ -34,6 +34,40 @@ async function removeAttemptFiles(paths = []) {
     .map(filePath => fs.rm(filePath, { force: true, recursive: true }).catch(() => {})));
 }
 
+async function replaceFileWithRollback(tempPath, destinationPath, token, assertLease = async () => {}) {
+  const backupPath = destinationPath + '.' + token + '.backup';
+  let backedUp = false;
+  await assertLease();
+  try {
+    await fs.rename(destinationPath, backupPath);
+    backedUp = true;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  try {
+    await assertLease();
+    await fs.rename(tempPath, destinationPath);
+    await assertLease();
+  } catch (error) {
+    if (isLeaseFailure(error)) throw error;
+    if (backedUp) {
+      try {
+        await assertLease();
+        await fs.rename(backupPath, destinationPath);
+      } catch (restoreError) {
+        if (isLeaseFailure(restoreError)) throw restoreError;
+        error.restoreError = restoreError;
+        error.message += '; previous output restore also failed: ' + restoreError.message;
+      }
+    }
+    throw error;
+  }
+  if (backedUp) {
+    await assertLease();
+    await fs.unlink(backupPath).catch(() => {});
+  }
+}
+
 
 // Turns an image provider SDK error into one readable line that leads with the
 // fix when the cause is recognisable. @google/genai puts the raw JSON error
@@ -737,8 +771,7 @@ class AIVideoGenerator {
         await assertLease();
         await this.validateRenderedVideo(visualTempPath, assertLease);
         await assertLease();
-        await fs.rm(visualPath, { force: true });
-        await fs.rename(visualTempPath, visualPath);
+        await replaceFileWithRollback(visualTempPath, visualPath, renderAttemptId, assertLease);
         await assertLease();
         await fs.writeFile(visualManifestTempPath, JSON.stringify({
           version: 1,
@@ -747,8 +780,7 @@ class AIVideoGenerator {
           renderedAt: new Date().toISOString()
         }, null, 2));
         await assertLease();
-        await fs.rm(visualManifestPath, { force: true });
-        await fs.rename(visualManifestTempPath, visualManifestPath);
+        await replaceFileWithRollback(visualManifestTempPath, visualManifestPath, renderAttemptId, assertLease);
         await assertLease();
       }
 
@@ -782,8 +814,7 @@ class AIVideoGenerator {
       await assertLease();
       await this.validateRenderedVideo(finalTempPath, assertLease);
       await assertLease();
-      await fs.rm(outputPath, { force: true });
-      await fs.rename(finalTempPath, outputPath);
+      await replaceFileWithRollback(finalTempPath, outputPath, renderAttemptId, assertLease);
       await assertLease();
       await fs.writeFile(assemblyManifestTempPath, JSON.stringify({
         version: 1,
@@ -793,8 +824,7 @@ class AIVideoGenerator {
         assembledAt: new Date().toISOString()
       }, null, 2));
       await assertLease();
-      await fs.rm(assemblyManifestPath, { force: true });
-      await fs.rename(assemblyManifestTempPath, assemblyManifestPath);
+      await replaceFileWithRollback(assemblyManifestTempPath, assemblyManifestPath, renderAttemptId, assertLease);
       await assertLease();
       return outputPath;
     } catch (error) {
