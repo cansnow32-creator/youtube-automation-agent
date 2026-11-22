@@ -25,8 +25,13 @@ class OAuthServer {
         return;
       }
       
+      if (this.callbackHandled) {
+        res.status(409).type('text').send('OAuth callback has already been handled.');
+        return;
+      }
       if (error) {
-        res.status(400).type('text').send(`Authentication error: ${error}`);
+        this.callbackHandled = true;
+        res.status(400).type('text').send('Authorization was not completed by the provider.');
         return;
       }
 
@@ -62,7 +67,10 @@ class OAuthServer {
         
         // Close the server after successful auth
         setTimeout(() => {
-          this.server.close();
+          this.server?.close();
+          this.server = null;
+          this.codeVerifier = null;
+          this.oauthState = null;
           this.startMainApplication();
         }, 2000);
         
@@ -133,11 +141,14 @@ class OAuthServer {
   start() {
     this.server = this.app.listen(8080, '127.0.0.1', () => {
       console.log(chalk.cyan('\n🔐 OAuth callback server started on http://localhost:8080'));
-      this.generateAuthUrl();
+      this.generateAuthUrl().catch(error => {
+        console.error(chalk.red('OAuth setup failed:'), error.message);
+        this.server?.close();
+      });
     });
   }
 
-  generateAuthUrl() {
+  async generateAuthUrl() {
     const credentialsPath = path.join(__dirname, 'config', 'credentials.json');
     const credentials = JSON.parse(fs.readFileSync(credentialsPath));
     
