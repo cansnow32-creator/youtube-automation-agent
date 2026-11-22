@@ -1476,6 +1476,8 @@ class AIVideoGenerator {
         await assertLease();
         paths.push(assetPath);
       } catch (error) {
+        if (isLeaseFailure(error)) throw error;
+        await assertLease();
         await fs.unlink(assetPath).catch(() => {});
         await removeAttemptFiles(paths);
         throw error;
@@ -1501,6 +1503,8 @@ class AIVideoGenerator {
       await assertLease();
       return infoPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await removeAttemptFiles([infoPath]);
       throw error;
     }
