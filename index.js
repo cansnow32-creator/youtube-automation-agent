@@ -1405,30 +1405,31 @@ class YouTubeAutomationAgent {
 
     this.app.put('/api/content/:productionId/provenance', protect, async (req, res) => {
       try {
-        const bundle = await this.db.getProductionBundle(req.params.productionId);
-        if (!bundle) return res.status(404).json({ error: 'Content not found' });
-        if (bundle.review_status === 'approved' || bundle.schedule) {
-          return res.status(409).json({ error: 'Provenance is locked after content is approved or scheduled' });
+        if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+          return res.status(503).json({ error: 'Production operation lock is required to update provenance safely' });
         }
-        if (!this.provenance) this.provenance = new ProvenanceService(this.db);
-        await this.provenance.review(bundle.id, req.body || {});
-        const updated = await this.db.getProductionBundle(bundle.id);
-        const profile = await this.db.getChannelProfile() || {};
-        const quality = await this.operator.runQualityChecks({
-          ...updated,
-          scheduledPublishTime: updated.scheduled_publish_time
-        }, profile);
-        const reviewStatus = quality.passed ? 'needs_review' : 'needs_attention';
-        const result = await this.db.saveContentReview(bundle.id, {
-          status: reviewStatus,
-          editorData: updated.editorData,
-          qualityChecks: quality.checks,
-          reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
-          reviewedAt: null
-        });
+        const result = await this.scenes.withProductionOperationLease(
+          req.params.productionId,
+          async assertLease => {
+            await assertLease();
+            const bundle = await this.db.getProductionBundle(req.params.productionId);
+            if (!bundle) return { missing: true };
+            if (bundle.review_status === 'approved' || bundle.schedule) return { conflict: true };
+            if (!this.provenance) this.provenance = new ProvenanceService(this.db);
+            await this.provenance.review(bundle.id, req.body || {}, assertLease.lease);
+            return this.refreshContentReviewUnlocked(
+              bundle.id,
+              'Provenance changed; verify sources and claims again before approval',
+              assertLease
+            );
+          },
+          'provenance update and content-review invalidation'
+        );
+        if (result?.missing) return res.status(404).json({ error: 'Content not found' });
+        if (result?.conflict) return res.status(409).json({ error: 'Provenance is locked after content is approved or scheduled' });
         return res.json({ success: true, result: this.decorateContentBundle(result) });
       } catch (error) {
-        return res.status(error.status || 400).json({ success: false, error: error.message });
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
       }
     });
 
