@@ -150,11 +150,15 @@ async function run() {
         await options.assertLease?.();
       }
     });
+    let cacheLeaseChecks = 0;
     await assert.rejects(
       cacheLeaseService.rebuildNarration('cached-lease-production', [{
         narrationStatus: 'current', audioPath, duration: 8
       }], null, 'cached-fingerprint', async () => {
-        throw Object.assign(new Error('lease lost during cached mix validation'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+        cacheLeaseChecks++;
+        if (cacheLeaseChecks >= 2) {
+          throw Object.assign(new Error('lease lost during cached mix validation'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+        }
       }, 'cached-attempt'),
       error => error.code === 'SCENE_REBUILD_LEASE_LOST'
     );
