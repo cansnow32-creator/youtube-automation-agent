@@ -883,7 +883,7 @@ class SceneRepairService {
       if (typeof this.videoGenerator.validateRenderedVideo !== 'function') {
         throw this.error('Video generator cannot validate rendered repair output', 503, 'VIDEO_VALIDATION_UNAVAILABLE');
       }
-      return this.videoGenerator.validateRenderedVideo(filePath);
+      return this.videoGenerator.validateRenderedVideo(filePath, assertLease);
     };
     let visualReady = false;
     try {
