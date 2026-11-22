@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
 const crypto = require('crypto');
-const { YOUTUBE_SCOPES } = require('./modern-auth');
+const { YOUTUBE_SCOPES, preserveRefreshToken } = require('./modern-auth');
 
 class OAuthServer {
   constructor() {
@@ -32,6 +32,9 @@ class OAuthServer {
       if (error) {
         this.callbackHandled = true;
         res.status(400).type('text').send('Authorization was not completed by the provider.');
+        this.codeVerifier = null;
+        this.oauthState = null;
+        this.server?.close();
         return;
       }
 
@@ -76,7 +79,11 @@ class OAuthServer {
         
       } catch (error) {
         console.error(chalk.red('Token exchange failed:'), error);
-        res.status(500).type('text').send(`Token exchange failed: ${error.message}`);
+        console.error(chalk.red('Token exchange failed:'), error.message);
+        res.status(500).type('text').send('Token exchange failed. Check the local application log.');
+        this.codeVerifier = null;
+        this.oauthState = null;
+        this.server?.close();
       }
     });
 
@@ -112,10 +119,17 @@ class OAuthServer {
     );
 
     const { tokens } = await oauth2Client.getToken({ code, codeVerifier: this.codeVerifier });
-    
-    // Save tokens
+    let previousTokens = {};
+    try {
+      previousTokens = JSON.parse(fs.readFileSync(tokensPath, 'utf8')).youtube || {};
+    } catch (_error) {
+      // First authorization: there is no previous token to preserve.
+    }
+    const savedTokens = preserveRefreshToken(previousTokens, tokens);
+
+    // Save tokens without dropping a refresh token omitted by Google on re-consent.
     const tokenData = {
-      youtube: tokens
+      youtube: savedTokens
     };
     
     fs.writeFileSync(tokensPath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
