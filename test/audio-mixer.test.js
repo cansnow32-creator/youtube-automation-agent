@@ -256,7 +256,7 @@ async function testFailedMixPreservesExistingOutput(directory) {
   await assert.rejects(fs.stat(temporary), { code: 'ENOENT' });
 }
 
-async function testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory) {
+async function testLeaseLossAfterMixPublishPreservesAttemptOutput(directory) {
   const source = path.join(directory, 'lease-source.mp4');
   const music = path.join(directory, 'lease-music.wav');
   const output = path.join(directory, 'lease-mixed.mp4');
@@ -267,7 +267,7 @@ async function testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory) {
     mixBackgroundMusic(source, output, licensedMusic({ path: music }), {
       assertLease: async () => {
         leaseChecks += 1;
-        if (leaseChecks === 6) {
+        if (leaseChecks === 7) {
           throw Object.assign(new Error('generation lease lost after mix publish'), {
             code: 'GENERATION_JOB_LEASE_LOST'
           });
@@ -283,9 +283,14 @@ async function testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory) {
     }),
     error => error.code === 'GENERATION_JOB_LEASE_LOST'
   );
-  for (const filePath of [output, output + '.mix.json', output + '.mix.json.tmp', output + '.mixing.mp4']) {
+  assert.equal(await fs.access(output).then(() => true, () => false), true,
+    'a completed mix published before lease loss must remain available for recovery');
+  for (const filePath of [output + '.mix.json', output + '.mix.json.tmp']) {
     await assert.rejects(fs.access(filePath), { code: 'ENOENT' });
   }
+  const files = await fs.readdir(directory);
+  assert.equal(files.some(name => name.startsWith('lease-mixed.mp4.') && name.endsWith('.mixing.mp4')), false,
+    'the completed temporary output is atomically renamed before lease loss');
 }
 
 async function testRealFFmpegMix(directory) {
@@ -336,7 +341,7 @@ async function run() {
     await testProductionIntegration(directory);
     await testFailedMixPreservesExistingOutput(directory);
     await testMusicMixCache(directory);
-    await testLeaseLossAfterMixPublishCleansAttemptArtifacts(directory);
+    await testLeaseLossAfterMixPublishPreservesAttemptOutput(directory);
     await testRealFFmpegMix(directory);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
