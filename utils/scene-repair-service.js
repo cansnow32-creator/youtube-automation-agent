@@ -899,7 +899,7 @@ class SceneRepairService {
       try {
         await this.videoGenerator.renderMediaTimeline(scenes.map(scene => ({
           type: scene.assetType, path: scene.assetPath, duration: scene.duration
-        })), visualTempPath);
+        })), visualTempPath, {}, assertLease);
         await validateVideo(visualTempPath);
         await assertLease();
         await replaceFileWithRollback(visualTempPath, visualPath, attemptId, assertLease);
@@ -927,7 +927,10 @@ class SceneRepairService {
       await assertLease();
       await fs.unlink(finalTempPath).catch(() => {});
       try {
-        await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
+        await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, {
+          allowSilent: allIntentionalSilence,
+          assertLease
+        });
         await validateVideo(finalTempPath);
         await assertLease();
         await replaceFileWithRollback(finalTempPath, finalPath, attemptId, assertLease);
