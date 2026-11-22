@@ -178,6 +178,8 @@ class SceneRepairService {
     this.getMediaDuration = options.getMediaDuration || getMediaDuration;
     this.runFFmpeg = options.runFFmpeg || runFFmpeg;
     this.activeRebuilds = new Set();
+    this.operationLeaseMs = Number(options.operationLeaseMs) > 0 ? Number(options.operationLeaseMs) : 2 * 60 * 60 * 1000;
+    this.operationLeaseHeartbeatMs = Number(options.operationLeaseHeartbeatMs) > 0 ? Number(options.operationLeaseHeartbeatMs) : 60 * 1000;
   }
 
   async withProductionOperationLease(productionId, operation, label = 'scene operation') {
@@ -191,23 +193,33 @@ class SceneRepairService {
     let heartbeat = null;
     let renewalInFlight = Promise.resolve();
     let leaseFailure = null;
+    let leaseExpiresAt = 0;
     const assertLease = async () => {
       await renewalInFlight;
       if (leaseFailure) throw leaseFailure;
+      // Timers may not run while this process is suspended or the event loop is
+      // blocked. Refuse filesystem publication once the last confirmed lease
+      // deadline has passed, even before the heartbeat callback gets CPU time.
+      if (leaseExpiresAt && Date.now() >= leaseExpiresAt) {
+        leaseFailure = this.error(`The ${label} lease expired before this operation could commit further changes`, 409, 'SCENE_EDIT_LEASE_LOST');
+        throw leaseFailure;
+      }
     };
     assertLease.lease = Object.freeze({ productionId, owner });
     try {
-      acquired = await this.db.acquireProductionOperationLock(productionId, owner);
+      acquired = await this.db.acquireProductionOperationLock(productionId, owner, this.operationLeaseMs);
       if (!acquired) throw this.error('Another operation is already changing this production', 409, 'SCENE_EDIT_IN_PROGRESS');
+      leaseExpiresAt = Date.now() + this.operationLeaseMs;
       heartbeat = setInterval(() => {
         renewalInFlight = renewalInFlight.then(async () => {
           if (!acquired || leaseFailure) return;
-          const renewed = await this.db.renewProductionOperationLock(productionId, owner);
+          const renewed = await this.db.renewProductionOperationLock(productionId, owner, this.operationLeaseMs);
           if (!renewed) leaseFailure = this.error(`The ${label} lease was lost; this operation cannot commit further changes`, 409, 'SCENE_EDIT_LEASE_LOST');
+          else leaseExpiresAt = Date.now() + this.operationLeaseMs;
         }).catch(error => {
           leaseFailure = this.error(`The ${label} lease could not be verified: ${error.message}`, 503, 'SCENE_EDIT_LEASE_UNVERIFIED');
         });
-      }, 60 * 1000);
+      }, this.operationLeaseHeartbeatMs);
       heartbeat.unref?.();
       await assertLease();
       return await operation(assertLease);
