@@ -531,7 +531,6 @@ class AIVideoGenerator {
     this.logger.info('Generating video from assets...');
     this.lastVideoResult = null;
     let selectedProvider = null;
-    let providerOutputPaths = [];
     const attemptId = String(options.attemptId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '');
 
     try {
@@ -557,7 +556,6 @@ class AIVideoGenerator {
           aspectRatio: configuredSettings.aspectRatio,
           assertLease
         });
-        providerOutputPaths = rendered.clips.map(clip => clip.path);
         await assertLease();
         const produced = await this.generateHybridVideo(
           rendered.clips,
@@ -596,7 +594,6 @@ class AIVideoGenerator {
           attemptId,
           assertLease
         });
-        providerOutputPaths = generated.clips.filter(clip => !clip.reused).map(clip => clip.path);
         await assertLease();
         if (generated.clips.length) {
           const produced = await this.generateHybridVideo(
@@ -631,28 +628,10 @@ class AIVideoGenerator {
       this.lastVideoResult = { requestedProvider: selectedProvider || 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
-      if (isLeaseFailure(error)) {
-        await removeAttemptFiles([
-          ...getVideoAttemptSidecarPaths(outputPath),
-          ...providerOutputPaths,
-          ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
-        ]);
-        throw error;
-      }
-
-      // Provider-generated clips that were reused from an earlier persisted task
-      // are excluded from providerOutputPaths; discard only new clips before fallback.
-      await removeAttemptFiles(providerOutputPaths);
-      try {
-        await assertLease();
-      } catch (leaseError) {
-        await removeAttemptFiles([
-          ...getVideoAttemptSidecarPaths(outputPath),
-          ...providerOutputPaths,
-          ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
-        ]);
-        throw leaseError;
-      }
+      // Media-provider clips are independently persisted on media_generation_tasks,
+      // and CineCode scene outputs are attempt-scoped. A lease-losing worker must
+      // not delete either set: recovery may inspect or reuse those files.
+      await assertLease();
 
       const reason = error && error.message ? error.message : String(error);
       if (selectedProvider === 'cinecode') {
