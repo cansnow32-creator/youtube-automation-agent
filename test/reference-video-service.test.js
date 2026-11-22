@@ -11,8 +11,9 @@ async function run() {
     async saveReferenceVideo(record) { records.set(record.id, record); return record; },
     async getReferenceVideo(id) { return records.get(id) || null; }
   };
+  const referenceRoot = path.join(directory, 'references');
   const service = new ReferenceVideoService(db, {
-    dataRoot: directory,
+    dataRoot: referenceRoot,
     getMediaDuration: async () => 12,
     runFFmpeg: async args => fs.writeFile(args.at(-1), Buffer.from('sample-frame'))
   });
@@ -24,8 +25,18 @@ async function run() {
     assert.equal(record.durationSeconds, 12);
     assert.equal(record.framePaths.length, 6);
     assert.match(record.originalName, /sample_reference\.mp4/);
-    assert.equal(await service.getFrame(record.id, 0), record.framePaths[0]);
+    const originalFrame = record.framePaths[0];
+    assert.equal(await service.getFrame(record.id, 0), originalFrame);
     assert.equal(await service.getFrame(record.id, 99), null);
+    const outsideFile = path.join(directory, 'outside.jpg');
+    await fs.writeFile(outsideFile, Buffer.from('outside-data'));
+    record.framePaths[0] = outsideFile;
+    assert.equal(await service.getFrame(record.id, 0), null, 'database paths outside the reference root must not be served');
+    const symlinkPath = path.join(path.dirname(originalFrame), 'external-frame.jpg');
+    await fs.symlink(outsideFile, symlinkPath);
+    record.framePaths[0] = symlinkPath;
+    assert.equal(await service.getFrame(record.id, 0), null, 'symlinks escaping the reference root must not be served');
+    record.framePaths[0] = originalFrame;
     const publicRecord = service.toPublicRecord(record);
     assert.equal(publicRecord.frameUrls.length, 6);
     assert.equal('filePath' in publicRecord, false);
