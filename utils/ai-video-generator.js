@@ -358,6 +358,7 @@ class AIVideoGenerator {
       this.logger.info(`Generated ${attemptPaths.length} visual assets`);
       return attemptPaths;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
       // Do not clean attempt outputs until ownership is re-verified. A stale
       // worker must leave generated files for the next owner to inspect/reuse.
       await assertLease();
@@ -414,6 +415,7 @@ class AIVideoGenerator {
         await fs.rename(attemptPath, imagePath);
         return imagePath;
       } catch (error) {
+        if (isLeaseFailure(error)) throw error;
         // A provider attempt may have completed just as the lease expired.
         // Verify ownership before deleting its private partial output.
         await assertLease();
@@ -630,6 +632,7 @@ class AIVideoGenerator {
       this.lastVideoResult = { requestedProvider: selectedProvider || 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
       // Media-provider clips are independently persisted on media_generation_tasks,
       // and CineCode scene outputs are attempt-scoped. A lease-losing worker must
       // not delete either set: recovery may inspect or reuse those files.
@@ -978,15 +981,15 @@ class AIVideoGenerator {
       await assertLease();
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) {
+        leaseLost = true;
+        throw error;
+      }
       try {
         await assertLease();
       } catch (leaseError) {
         leaseLost = true;
         throw leaseError;
-      }
-      if (isLeaseFailure(error)) {
-        leaseLost = true;
-        throw error;
       }
       await removeAttemptFiles([videoPath, outputPath, outputPath + '.info']);
       throw error;
