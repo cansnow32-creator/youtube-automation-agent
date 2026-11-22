@@ -3133,6 +3133,33 @@ class Database {
       `UPDATE publish_schedule
        SET status = 'uploading', error_message = NULL, upload_started_at = ?, upload_attempt_id = ?
        WHERE id = ? AND status IN ('scheduled', 'paused', 'failed') AND youtube_id IS NULL
+         AND EXISTS (
+           SELECT 1 FROM readiness_runs AS readiness
+           WHERE readiness.id = (
+             SELECT latest.id FROM readiness_runs AS latest
+             ORDER BY latest.completed_at DESC LIMIT 1
+           )
+             AND readiness.status IN ('passed', 'warning')
+             AND readiness.completed_at IS NOT NULL
+             AND julianday(readiness.completed_at) IS NOT NULL
+             AND julianday(readiness.completed_at) <= julianday('now')
+             AND julianday(readiness.completed_at) >= julianday('now', '-24 hours')
+             AND CASE
+               WHEN json_valid(readiness.checks) THEN
+                 CASE
+                   WHEN json_type(readiness.checks) = 'array' THEN
+                     NOT EXISTS (
+                       SELECT 1
+                       FROM json_each(readiness.checks) AS check_item
+                       WHERE check_item.type = 'object'
+                         AND json_extract(check_item.value, '$.blocking') = 1
+                         AND json_extract(check_item.value, '$.status') = 'failed'
+                     )
+                   ELSE 0
+                 END
+               ELSE 0
+             END = 1
+         )
          AND NOT EXISTS (
            SELECT 1 FROM production_operation_locks AS active_lock
            WHERE active_lock.production_id = CASE
