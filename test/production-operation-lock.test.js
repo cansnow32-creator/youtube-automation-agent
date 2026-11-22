@@ -572,6 +572,60 @@ async function run() {
     global.clearInterval = resumeClearInterval;
   }
 
+  // Simulate a process pause longer than the two-hour lease. Heartbeat
+  // timers cannot run while the event loop is suspended, so the local deadline
+  // must fence the worker before it performs further writes.
+  const originalNow = Date.now;
+  const originalLeaseSetInterval = global.setInterval;
+  const originalLeaseClearInterval = global.clearInterval;
+  let fakeNow = 1_000_000;
+  Date.now = () => fakeNow;
+  global.setInterval = () => ({ unref() {} });
+  global.clearInterval = () => {};
+  try {
+    let expiredJobReleased = false;
+    const expiredJobAgent = Object.create(ProductionManagementAgent.prototype);
+    expiredJobAgent.logger = { error() {} };
+    expiredJobAgent.db = {
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => true,
+      releaseProductionOperationLock: async () => { expiredJobReleased = true; }
+    };
+    expiredJobAgent.processContentUnlocked = async (_input, assertLease) => {
+      fakeNow += 2 * 60 * 60 * 1000 + 1;
+      await assertLease();
+      return 'must-not-commit';
+    };
+    await assert.rejects(
+      expiredJobAgent.processContent({ jobId: 'paused-job' }),
+      error => error.code === 'PRODUCTION_JOB_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(expiredJobReleased, true, 'expired generation lease is released by its owner');
+
+    let expiredResumeReleased = false;
+    const expiredResumeAgent = Object.create(ProductionManagementAgent.prototype);
+    expiredResumeAgent.logger = { error() {} };
+    expiredResumeAgent.db = {
+      acquireProductionOperationLock: async () => true,
+      renewProductionOperationLock: async () => true,
+      releaseProductionOperationLock: async () => { expiredResumeReleased = true; }
+    };
+    expiredResumeAgent.resumeProductionUnlocked = async (_id, assertLease) => {
+      fakeNow += 2 * 60 * 60 * 1000 + 1;
+      await assertLease();
+      return 'must-not-commit';
+    };
+    await assert.rejects(
+      expiredResumeAgent.resumeProduction('paused-production'),
+      error => error.code === 'PRODUCTION_RESUME_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(expiredResumeReleased, true, 'expired resume lease is released by its owner');
+  } finally {
+    Date.now = originalNow;
+    global.setInterval = originalLeaseSetInterval;
+    global.clearInterval = originalLeaseClearInterval;
+  }
+
   // A generation worker that loses its lease must not write either script
   // artifact. If ownership is lost between the two writes, the TTS file must
   // remain unpublished as well.
