@@ -39,12 +39,12 @@ function safeExternalUrl(value) {
   } catch (_error) { return '#'; }
 }
 function apiKey() {
-  return localStorage.getItem('yaa_api_key') || '';
+  return sessionStorage.getItem('yaa_api_key') || '';
 }
 
 function requestApiKey() {
-  const key = prompt('Enter the API_KEY value from your .env. It stays in this browser only.', apiKey());
-  if (key !== null) localStorage.setItem('yaa_api_key', key.trim());
+  const key = prompt('Enter the API_KEY value from your .env. It stays in this browser session only.', '');
+  if (key !== null) sessionStorage.setItem('yaa_api_key', key.trim());
   return key;
 }
 
