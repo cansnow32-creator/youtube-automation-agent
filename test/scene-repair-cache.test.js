@@ -30,6 +30,23 @@ async function run() {
     assert.equal(failingService.activeRebuilds.has('retryable-production'), false,
       'rebuild lock must always be released after failure');
 
+    let expiredLeaseReleased = false;
+    const expiryService = new SceneRepairService({
+      acquireProductionOperationLock: async (_id, _owner, leaseMs) => leaseMs === 15,
+      renewProductionOperationLock: async () => true,
+      releaseProductionOperationLock: async () => { expiredLeaseReleased = true; }
+    }, {}, { dataRoot: directory, operationLeaseMs: 15, operationLeaseHeartbeatMs: 5 });
+    await assert.rejects(
+      expiryService.withProductionOperationLease('paused-production', async assertLease => {
+        const started = Date.now();
+        // Simulate a suspended/blocking event loop: heartbeat cannot run.
+        while (Date.now() - started < 30) { /* intentional busy wait */ }
+        await assertLease();
+      }, 'paused scene operation'),
+      error => error.code === 'SCENE_EDIT_LEASE_LOST' && error.status === 409
+    );
+    assert.equal(expiredLeaseReleased, true, 'expired lease owner must release only its own lock');
+
     const cleanupRoot = path.join(directory, 'cleanup');
     const cleanupService = new SceneRepairService({}, {}, { dataRoot: cleanupRoot });
     await fs.mkdir(path.join(cleanupRoot, 'videos'), { recursive: true });
