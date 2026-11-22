@@ -1044,7 +1044,7 @@ class SceneRepairService {
         const duration = await this.getMediaDuration(outputPath);
         if (Number.isFinite(duration) && duration > 0) {
           await assertLease();
-          await this.runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
+          await this.runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-'], { assertLease });
           await assertLease();
           return outputPath;
         }
@@ -1070,7 +1070,7 @@ class SceneRepairService {
       if (!stat.isFile() || stat.size <= 0) throw new Error('Narration mix output is empty');
       const duration = await this.getMediaDuration(tempPath);
       if (!Number.isFinite(duration) || duration <= 0) throw new Error('Narration mix output has invalid duration');
-      await this.runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
+      await this.runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-'], { assertLease });
       // The FFmpeg render may outlive the lease; verify ownership immediately before publishing this immutable attempt file.
       await assertLease();
       await replaceFileWithRollback(tempPath, outputPath, undefined, assertLease);
