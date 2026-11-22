@@ -53,10 +53,8 @@ function getVideoAttemptSidecarPaths(videoPath) {
     stem + '_visual.mp4',
     stem + '_slides'
   ];
-  for (let index = 1; index <= 20; index++) {
-    const scenePath = `${stem}_cinecode_scene_${String(index).padStart(2, '0')}.mp4`;
-    paths.push(scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp');
-  }
+  // CineCode scene outputs are independently attempt-scoped and may be reused
+  // by recovery; this helper owns only the final assembly and its sidecars.
   return paths;
 }
 
