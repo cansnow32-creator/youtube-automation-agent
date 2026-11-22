@@ -134,7 +134,7 @@ When three or more commenters ask for the same thing, the analysis mines an **au
 
 ## Automation schedule
 
-The scheduler starts with `npm start` and uses the server's local time. The publishing queue is checked every 15 minutes, but **automatic uploads are disabled by default**. Scheduled videos stay queued until an operator publishes them manually, unless you explicitly set `AUTO_PUBLISH_ENABLED=true` in `.env`. This opt-in does not bypass content approval, readiness, or unresolved-upload reconciliation checks.
+The scheduler starts with `npm start` and uses the server's local time. **Unattended daily content generation and automatic uploads are disabled by default.** Set `AUTO_GENERATION_ENABLED=true` to allow the 06:00 daily generation task, and set `AUTO_PUBLISH_ENABLED=true` separately to allow the 15-minute queue task to upload due videos. Neither opt-in bypasses approved-concept, content-review, readiness, or unresolved-upload reconciliation checks. Explicit manual production and publishing actions remain available through their existing gates.
 
 | When | Job |
 | --- | --- |
