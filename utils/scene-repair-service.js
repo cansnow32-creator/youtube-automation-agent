@@ -14,9 +14,15 @@ function isLeaseFailure(error) {
   return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
 }
 
-async function replaceFileWithRollback(tempPath, destinationPath, token = crypto.randomUUID()) {
-  const backupPath = `${destinationPath}.${token}.backup`;
+async function replaceFileWithRollback(
+  tempPath,
+  destinationPath,
+  token = crypto.randomUUID(),
+  assertLease = async () => {}
+) {
+  const backupPath = destinationPath + '.' + token + '.backup';
   let backedUp = false;
+  await assertLease();
   try {
     await fs.rename(destinationPath, backupPath);
     backedUp = true;
@@ -25,20 +31,27 @@ async function replaceFileWithRollback(tempPath, destinationPath, token = crypto
   }
 
   try {
+    await assertLease();
     await fs.rename(tempPath, destinationPath);
+    await assertLease();
   } catch (error) {
+    if (isLeaseFailure(error)) throw error;
     if (backedUp) {
       try {
+        await assertLease();
         await fs.rename(backupPath, destinationPath);
       } catch (restoreError) {
         error.restoreError = restoreError;
-        error.message += `; previous output restore also failed: ${restoreError.message}`;
+        error.message += '; previous output restore also failed: ' + restoreError.message;
       }
     }
     throw error;
   }
 
-  if (backedUp) await fs.unlink(backupPath).catch(() => {});
+  if (backedUp) {
+    await assertLease();
+    await fs.unlink(backupPath).catch(() => {});
+  }
 }
 
 function textFromSection(section = {}) {
@@ -888,7 +901,7 @@ class SceneRepairService {
         })), visualTempPath);
         await validateVideo(visualTempPath);
         await assertLease();
-        await replaceFileWithRollback(visualTempPath, visualPath, attemptId);
+        await replaceFileWithRollback(visualTempPath, visualPath, attemptId, assertLease);
       } catch (error) {
         if (isLeaseFailure(error)) throw error;
         await assertLease();
@@ -916,7 +929,7 @@ class SceneRepairService {
         await this.videoGenerator.addAudioToVideo(visualPath, audioPath, finalTempPath, { allowSilent: allIntentionalSilence });
         await validateVideo(finalTempPath);
         await assertLease();
-        await replaceFileWithRollback(finalTempPath, finalPath, attemptId);
+        await replaceFileWithRollback(finalTempPath, finalPath, attemptId, assertLease);
       } catch (error) {
         if (isLeaseFailure(error)) throw error;
         await assertLease();
@@ -931,7 +944,7 @@ class SceneRepairService {
       const captionsTempPath = `${captionsPath}.${attemptId}.writing`;
       await fs.writeFile(captionsTempPath, captions);
       await assertLease();
-      await replaceFileWithRollback(captionsTempPath, captionsPath, attemptId);
+      await replaceFileWithRollback(captionsTempPath, captionsPath, attemptId, assertLease);
     }
     const stats = await fs.stat(finalPath);
     const previousPath = bundle.assets?.finalVideo?.path || null;
@@ -1056,7 +1069,7 @@ class SceneRepairService {
       await this.runFFmpeg(['-v', 'error', '-i', tempPath, '-f', 'null', '-']);
       // The FFmpeg render may outlive the lease; verify ownership immediately before publishing this immutable attempt file.
       await assertLease();
-      await replaceFileWithRollback(tempPath, outputPath);
+      await replaceFileWithRollback(tempPath, outputPath, undefined, assertLease);
       return outputPath;
     } catch (error) {
       if (isLeaseFailure(error)) throw error;
