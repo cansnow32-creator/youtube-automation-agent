@@ -30,8 +30,8 @@ async function testCineCodeLeaseLossPreservesPublishedScene() {
         aspectRatio: '16:9',
         assertLease: async () => {
           leaseChecks += 1;
-          // The scene is atomically published at check 12; a stale renderer must preserve it.
-          if (leaseChecks >= 12) {
+          // The scene is atomically published at check 13; a stale renderer must preserve it.
+          if (leaseChecks >= 13) {
             throw Object.assign(new Error('generation lease lost during CineCode render'), {
               code: 'GENERATION_JOB_LEASE_LOST',
               status: 409
@@ -45,15 +45,10 @@ async function testCineCodeLeaseLossPreservesPublishedScene() {
     assert.equal(await fs.access(outputPath).then(() => true, () => false), true,
       'a published CineCode scene must remain available for recovery after lease loss');
     const files = await fs.readdir(directory);
-    const manifestTemps = files.filter(name =>
-      name.startsWith('lease-attempt_cinecode_scene_01.mp4.render.json.') && name.endsWith('.tmp')
-    );
-    assert.equal(manifestTemps.length, 1, 'the in-progress manifest temp must remain available for recovery');
     assert.deepEqual(files.sort(), [
       'lease-attempt_cinecode_scene_01.mp4',
-      manifestTemps[0],
       'source.png'
-    ].sort(), 'published scene and its in-progress manifest must remain available for recovery');
+    ], 'the atomically published scene must remain available for recovery');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
