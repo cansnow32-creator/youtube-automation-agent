@@ -1172,17 +1172,8 @@ class ProductionManagementAgent {
         }
       );
       if (producedPath && typeof producedPath === 'string') generatedPaths.push(...getVideoAttemptSidecarPaths(producedPath));
-      const providerScenes = this.aiVideoGenerator.lastVideoResult?.scenes || [];
-      for (const scene of providerScenes) {
-        if (scene.path && scene.reused !== true) {
-          generatedPaths.push(
-            scene.path,
-            scene.path + '.rendering.mp4',
-            scene.path + '.render.json',
-            scene.path + '.render.json.tmp'
-          );
-        }
-      }
+      // Provider scene clips are independently persisted on media_generation_tasks.
+      // They are not owned by this final-assembly attempt and must survive its cleanup.
       await assertLease();
 
       // The generator falls back to a placeholder .info file when it cannot render.
@@ -1373,6 +1364,9 @@ class ProductionManagementAgent {
       this.logger.info('AI video assembly complete');
       return finalVideoPath;
     } catch (error) {
+      // A stale worker has no authority to delete attempt files: the next lease
+      // owner may be validating or reusing them during recovery.
+      await assertLease();
       await removeAttemptFiles(generatedPaths, [
         productionData.assets.audio?.path,
         productionData.assets.captions?.path,
@@ -1381,9 +1375,6 @@ class ProductionManagementAgent {
         previousBackgroundMusic?.path
       ]);
       productionData.assets.backgroundMusic = previousBackgroundMusic;
-      // Lease loss must propagate after attempt-local files are removed; it is
-      // not a normal rendering failure and must never create a fallback artifact.
-      await assertLease();
       this.logger.error('AI video assembly failed:', error);
       return await this.simulateVideoAssembly(productionData, error.message || String(error), assertLease);
     }
