@@ -375,7 +375,7 @@ class AIVideoGenerator {
       providers.push({
         name: 'OpenAI',
         model: OPENAI_IMAGE_MODEL,
-        run: outputPath => this.generateOpenAIImage(prompt, outputPath)
+        run: outputPath => this.generateOpenAIImage(prompt, outputPath, assertLease)
       });
     }
     if (this.gemini) {
@@ -435,7 +435,7 @@ class AIVideoGenerator {
     return process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
   }
 
-  async generateOpenAIImage(prompt, imagePath) {
+  async generateOpenAIImage(prompt, imagePath, assertLease = async () => {}) {
     const response = await this.openai.images.generate({
       model: OPENAI_IMAGE_MODEL,
       prompt: prompt,
@@ -448,7 +448,7 @@ class AIVideoGenerator {
       const buffer = Buffer.from(response.data[0].b64_json, 'base64');
       await fs.writeFile(imagePath, buffer);
     } else {
-      await this.downloadImage(response.data[0].url, imagePath);
+      await this.downloadImage(response.data[0].url, imagePath, assertLease);
     }
 
     return imagePath;
@@ -511,7 +511,7 @@ class AIVideoGenerator {
     return `${prompt}, ${enhancement}, high quality, 16:9 aspect ratio, digital art`;
   }
 
-  async downloadImage(url, outputPath) {
+  async downloadImage(url, outputPath, assertLease = async () => {}) {
     const response = await axios({
       method: 'GET',
       url,
@@ -522,6 +522,8 @@ class AIVideoGenerator {
       await pipeline(response.data, require('fs').createWriteStream(outputPath));
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(outputPath).catch(() => {});
       throw error;
     }
@@ -1524,6 +1526,8 @@ class AIVideoGenerator {
       }, null, 2));
       await assertLease();
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(thumbnailPath).catch(() => {});
       throw error;
     }
