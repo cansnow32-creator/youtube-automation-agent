@@ -24,6 +24,21 @@ async function main() {
       youtube_id TEXT, youtube_url TEXT, published_at TEXT, error_message TEXT, upload_started_at TEXT, upload_attempt_id TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
+    await dbA.executeQuery(`CREATE TABLE content_reviews (
+      production_id TEXT PRIMARY KEY, status TEXT NOT NULL
+    )`);
+    await dbA.executeQuery(`CREATE TABLE readiness_runs (
+      id TEXT PRIMARY KEY, status TEXT NOT NULL, checks TEXT NOT NULL, summary TEXT NOT NULL,
+      started_at TEXT NOT NULL, completed_at TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const readinessTime = new Date().toISOString();
+    await dbA.executeQuery(
+      'INSERT INTO readiness_runs (id, status, checks, summary, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ['readiness-cas', 'passed', '[]', '{}', readinessTime, readinessTime]
+    );
+    await dbA.executeQuery(
+      "INSERT INTO content_reviews (production_id, status) VALUES ('production-race', 'approved')"
+    );
     const scheduleDraft = suffix => ({
       productionId: 'production-race',
       title: `Concurrent schedule ${suffix}`,
@@ -48,6 +63,9 @@ async function main() {
     await dbA.executeQuery(
       "INSERT INTO publish_schedule (id, production_id, title, publish_time, status, priority, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
       ['schedule-1', 'short-1', 'Short title', new Date(Date.now() + 60000).toISOString(), 'scheduled', 60, JSON.stringify({ shortClipId: 'short-1' })]
+    );
+    await dbA.executeQuery(
+      "INSERT INTO content_reviews (production_id, status) VALUES ('short-1', 'approved')"
     );
 
     const claims = await Promise.all([
