@@ -71,7 +71,7 @@ async function testNarrationUsesAttemptScopedOutputsAndPreservesEarlierAttempt()
   }
 }
 
-async function testNarrationOutputIsRemovedAfterLeaseLoss() {
+async function testNarrationOutputIsPreservedAfterLeaseLoss() {
   const tempDir = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'agenttube-audio-lease-'));
   const id = 'audio-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
@@ -105,7 +105,7 @@ async function testNarrationOutputIsRemovedAfterLeaseLoss() {
     await fs.writeFile(ttsPath, 'Narration');
     await assert.rejects(agent.generateAudioNarration(production, assertLease),
       error => error.code === 'GENERATION_JOB_LEASE_LOST');
-    await assert.rejects(fs.access(audioPath), { code: 'ENOENT' });
+    assert.equal(await fs.access(audioPath).then(() => true, () => false), true, 'generated audio must remain for recovery after lease loss');
     assert.equal(production.assets.audio, null, 'stale audio must not be added to production metadata');
   } finally {
     await fs.rm(audioPath, { force: true });
@@ -144,7 +144,7 @@ async function testCaptionsUseAttemptScopedPathsAndPreserveEarlierAttempt() {
   }
 }
 
-async function testCaptionOutputIsRemovedAfterLeaseLoss() {
+async function testCaptionOutputIsPreservedAfterLeaseLoss() {
   const id = 'caption-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
   const captionsPath = path.join(__dirname, '..', 'data', 'captions', id + '_' + attemptId + '_captions.srt');
@@ -166,7 +166,7 @@ async function testCaptionOutputIsRemovedAfterLeaseLoss() {
   try {
     await assert.rejects(agent.generateCaptions(production, assertLease),
       error => error.code === 'GENERATION_JOB_LEASE_LOST');
-    await assert.rejects(fs.access(captionsPath), { code: 'ENOENT' });
+    assert.equal(await fs.access(captionsPath).then(() => true, () => false), true, 'generated captions must remain for recovery after lease loss');
     assert.equal(production.assets.captions, null);
   } finally {
     await fs.rm(captionsPath, { force: true });
@@ -222,7 +222,7 @@ async function testFinalVideoOutputIsPreservedAfterLeaseLossForRecovery() {
   }
 }
 
-async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
+async function testThumbnailFallbackOutputIsPreservedAfterLeaseLoss() {
   const tempDir = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'agenttube-thumbnail-lease-'));
   const sourcePath = path.join(tempDir, 'source.jpg');
   const marker = 'thumbnail_lease_' + crypto.randomUUID();
@@ -250,7 +250,7 @@ async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
       agent.processThumbnail({ path: sourcePath }, { title: 'Lease test' }, assertLease),
       error => error.code === 'GENERATION_JOB_LEASE_LOST'
     );
-    await assert.rejects(fs.access(expectedOutput), { code: 'ENOENT' });
+    assert.equal(await fs.access(expectedOutput).then(() => true, () => false), true, 'generated thumbnail must remain for recovery after lease loss');
   } finally {
     crypto.randomUUID = originalRandomUUID;
     Date.now = originalDateNow;
@@ -259,7 +259,7 @@ async function testThumbnailFallbackOutputIsRemovedAfterLeaseLoss() {
   }
 }
 
-async function testSimulationArtifactIsRemovedAfterLeaseLoss() {
+async function testSimulationArtifactIsPreservedAfterLeaseLoss() {
   const id = 'simulation-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
   const placeholderPath = path.join(__dirname, '..', 'data', 'videos', id + '_' + attemptId + '_final.mp4.assembly.json');
@@ -278,7 +278,7 @@ async function testSimulationArtifactIsRemovedAfterLeaseLoss() {
       assertions += 1;
       if (assertions >= 2) throw createLeaseLostError();
     }), error => error.code === 'GENERATION_JOB_LEASE_LOST');
-    await assert.rejects(fs.access(placeholderPath), { code: 'ENOENT' });
+    assert.equal(await fs.access(placeholderPath).then(() => true, () => false), true, 'simulation artifact must remain for recovery after lease loss');
     assert.equal(production.assets.finalVideo, null);
   } finally {
     await fs.rm(placeholderPath, { force: true });
@@ -300,12 +300,12 @@ function testVideoAttemptCleanupExcludesIndependentCineCodeSceneArtifacts() {
 async function run() {
   testVideoAttemptCleanupExcludesIndependentCineCodeSceneArtifacts();
   await testNarrationUsesAttemptScopedOutputsAndPreservesEarlierAttempt();
-  await testNarrationOutputIsRemovedAfterLeaseLoss();
+  await testNarrationOutputIsPreservedAfterLeaseLoss();
   await testCaptionsUseAttemptScopedPathsAndPreserveEarlierAttempt();
-  await testCaptionOutputIsRemovedAfterLeaseLoss();
+  await testCaptionOutputIsPreservedAfterLeaseLoss();
   await testFinalVideoOutputIsPreservedAfterLeaseLossForRecovery();
-  await testThumbnailFallbackOutputIsRemovedAfterLeaseLoss();
-  await testSimulationArtifactIsRemovedAfterLeaseLoss();
+  await testThumbnailFallbackOutputIsPreservedAfterLeaseLoss();
+  await testSimulationArtifactIsPreservedAfterLeaseLoss();
   console.log('Production attempt-scoped media artifact tests passed');
 }
 
