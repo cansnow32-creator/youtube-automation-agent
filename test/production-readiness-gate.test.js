@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { checkFFmpeg } = require('../utils/ffmpeg');
-const { ProductionReadinessService } = require('../utils/production-readiness-service');
+const { ProductionReadinessService, isSupportedNodeVersion } = require('../utils/production-readiness-service');
 
 const NOW = new Date('2026-11-19T12:00:00.000Z');
 
@@ -22,6 +22,10 @@ async function rejectsWithStatus(promise, status, message) {
 }
 
 async function run() {
+  assert.equal(isSupportedNodeVersion('20.17.0'), false);
+  assert.equal(isSupportedNodeVersion('21.9.0'), false);
+  assert.equal(isSupportedNodeVersion('22.0.0'), true);
+  assert.equal(isSupportedNodeVersion('24.1.0'), true);
   const unverified = serviceWith(null);
   await rejectsWithStatus(
     unverified.assertReady('Autonomous production'),
