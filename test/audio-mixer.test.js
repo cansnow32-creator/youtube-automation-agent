@@ -234,7 +234,6 @@ async function testFailedMixPreservesExistingOutput(directory) {
   const source = path.join(directory, 'failure-source.mp4');
   const music = path.join(directory, 'failure-music.wav');
   const output = path.join(directory, 'existing-output.mp4');
-  const temporary = `${output}.mixing.mp4`;
   await fs.writeFile(source, 'source');
   await fs.writeFile(music, 'music');
   await fs.writeFile(output, 'previous-valid-output');
@@ -253,7 +252,9 @@ async function testFailedMixPreservesExistingOutput(directory) {
 
   assert.equal(await fs.readFile(output, 'utf8'), 'previous-valid-output',
     'a failed mix must not destroy the previously existing output');
-  await assert.rejects(fs.stat(temporary), { code: 'ENOENT' });
+  const files = await fs.readdir(directory);
+  assert.equal(files.some(name => name.startsWith('existing-output.mp4.') && name.endsWith('.mixing.mp4')), false,
+    'the failed attempt private mix file must be removed while the lease is still valid');
 }
 
 async function testLeaseLossAfterMixPublishPreservesAttemptOutput(directory) {
