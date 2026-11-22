@@ -5,7 +5,7 @@ const path = require('path');
 const { MediaGenerationService } = require('../utils/media-generation-service');
 const { Database } = require('../database/db');
 
-async function testAttemptScopedClipOutputsAndLeaseLossCleanup() {
+async function testAttemptScopedClipOutputsAndLeaseLossPreservesPersistedOutput() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-attempt-'));
   const db = {};
   const service = new MediaGenerationService(db, {}, { logger: { info() {}, warn() {}, error() {} } });
@@ -80,15 +80,15 @@ async function testAttemptScopedClipOutputsAndLeaseLossCleanup() {
       error => error.code === 'GENERATION_JOB_LEASE_LOST'
     );
     assert.equal(createdPaths.length, 1);
-    assert.equal(await fs.access(createdPaths[0]).then(() => true, () => false), false,
-      'partial clip sets from an abandoned attempt are removed');
-    assert.deepEqual(await fs.readdir(directory), []);
+    assert.equal(await fs.access(createdPaths[0]).then(() => true, () => false), true,
+      'a clip returned by generateClip represents a persisted task output and must survive outer lease loss');
+    assert.deepEqual(await fs.readdir(directory), [path.basename(createdPaths[0])]);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
 }
 
-async function testPartialAttemptCleanupPreservesReusedClips() {
+async function testLeaseLossPreservesReusedAndNewlyPersistedClips() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-reuse-'));
   const reusedPath = path.join(directory, 'previously-persisted.mp4');
   await fs.writeFile(reusedPath, Buffer.alloc(1200, 3));
@@ -156,9 +156,9 @@ async function testPartialAttemptCleanupPreservesReusedClips() {
     assert.equal(await fs.access(reusedPath).then(() => true, () => false), true,
       'a clip reused from a persisted task must not be deleted');
     assert.ok(newPath);
-    assert.equal(await fs.access(newPath).then(() => true, () => false), false,
-      'new attempt output must be removed after lease loss');
-    assert.deepEqual((await fs.readdir(directory)).sort(), ['previously-persisted.mp4']);
+    assert.equal(await fs.access(newPath).then(() => true, () => false), true,
+      'a newly generated clip returned by generateClip is already persisted and must survive lease loss');
+    assert.deepEqual((await fs.readdir(directory)).sort(), ['previously-persisted.mp4', path.basename(newPath)].sort());
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -1222,8 +1222,8 @@ async function main() {
   await testConcurrentTerminalRetryClaimCannotSubmitSecondRemoteJob();
   await testTerminalTaskRetryWritesAheadAndPreservesSubmissionHistory();
   await testLegacyFailedTaskPollingErrorReconcilesInsteadOfResubmitting();
-  await testAttemptScopedClipOutputsAndLeaseLossCleanup();
-  await testPartialAttemptCleanupPreservesReusedClips();
+  await testAttemptScopedClipOutputsAndLeaseLossPreservesPersistedOutput();
+  await testLeaseLossPreservesReusedAndNewlyPersistedClips();
   await testRemoteProviderTaskIsPreservedWhenLeaseIsLostBeforeTaskPersistence();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'media-lease-fence-'));
   const outputPath = path.join(directory, 'scene.mp4');
