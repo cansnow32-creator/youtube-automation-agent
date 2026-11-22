@@ -7,11 +7,6 @@ const { runFFmpeg } = require('./ffmpeg');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
-async function removeAttemptOutputs(paths = []) {
-  await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
-    .map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
-}
-
 class MediaGenerationService {
   constructor(db, credentials = {}, options = {}) {
     this.db = db;
@@ -107,7 +102,6 @@ class MediaGenerationService {
     const scenes = this.buildScenePlan(script, visualAssets, effectiveSettings);
     const safeAttemptId = String(attemptId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '');
     const clips = [];
-    const attemptOutputPaths = [];
     try {
       for (const scene of scenes) {
         await assertLease();
@@ -132,7 +126,6 @@ class MediaGenerationService {
           },
           assertLease
         });
-        if (!result.reused) attemptOutputPaths.push(result.outputPath);
         await assertLease();
         clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id, reused: result.reused === true });
       }
@@ -144,9 +137,9 @@ class MediaGenerationService {
         attemptId: safeAttemptId
       };
     } catch (error) {
-      // This invocation cannot return a complete clip set. Remove only the
-      // outputs created during this attempt; reused persisted clips are untouched.
-      await removeAttemptOutputs(attemptOutputPaths);
+      // Each non-reused output returned by generateClip has already been committed
+      // to its durable media-task row. Keep it for the next lease owner to reuse,
+      // even when a later scene fails or this worker loses its lease.
       throw error;
     }
   }
