@@ -137,6 +137,29 @@ async function run() {
     assert.equal(mixCalls.length, 2, 'narration mix should render and validate its output');
     assert.ok(mixCalls.every(call => call.hasLease), 'render and validation FFmpeg calls must both receive lease assertion');
 
+    const cacheLeaseDir = path.join(directory, 'narration-cache-lease');
+    await fs.mkdir(path.join(cacheLeaseDir, 'audio'), { recursive: true });
+    const cachedMixPath = path.join(cacheLeaseDir, 'audio', 'cached-lease-production_scene_mix_cached-fingerprint_cached-attempt.m4a');
+    await fs.writeFile(cachedMixPath, 'cached-mix');
+    let cacheValidationCalls = 0;
+    const cacheLeaseService = new SceneRepairService({}, {}, {
+      dataRoot: cacheLeaseDir,
+      getMediaDuration: async () => 8,
+      runFFmpeg: async (_args, options = {}) => {
+        cacheValidationCalls++;
+        await options.assertLease?.();
+      }
+    });
+    await assert.rejects(
+      cacheLeaseService.rebuildNarration('cached-lease-production', [{
+        narrationStatus: 'current', audioPath, duration: 8
+      }], null, 'cached-fingerprint', async () => {
+        throw Object.assign(new Error('lease lost during cached mix validation'), { code: 'SCENE_REBUILD_LEASE_LOST' });
+      }, 'cached-attempt'),
+      error => error.code === 'SCENE_REBUILD_LEASE_LOST'
+    );
+    assert.equal(cacheValidationCalls, 1, 'lease loss during cache validation must not start a replacement render');
+
     const fallbackPath = path.join(directory, 'full-narration.mp3');
     await fs.writeFile(fallbackPath, Buffer.from('fallback-audio'));
     const fallbackOne = await service.buildRebuildFingerprint([{ ...scenes[0], audioPath: null }], fallbackPath);
