@@ -347,6 +347,8 @@ class ThumbnailDesignerAgent {
         .toFile(outputPath);
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(outputPath).catch(() => {});
       throw error;
     }
@@ -381,6 +383,8 @@ class ThumbnailDesignerAgent {
       }
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(outputPath).catch(() => {});
       throw error;
     }
@@ -421,13 +425,13 @@ class ThumbnailDesignerAgent {
         await assertLease();
         const { label, concept: variantConcept } = concepts[index];
         const suffix = 'experiment_' + crypto.randomUUID() + '_' + (index + 1);
-        const base = await this.createThumbnail(variantConcept, suffix);
+        const base = await this.createThumbnail(variantConcept, suffix, assertLease);
         generatedPaths.push(base);
         await assertLease();
-        const overlay = await this.addTextOverlay(base, variantConcept, suffix);
+        const overlay = await this.addTextOverlay(base, variantConcept, suffix, assertLease);
         generatedPaths.push(overlay);
         await assertLease();
-        const optimized = await this.optimizeForYouTube(overlay, suffix);
+        const optimized = await this.optimizeForYouTube(overlay, suffix, assertLease);
         generatedPaths.push(optimized);
         await assertLease();
         variants.push({ label, path: optimized, concept: variantConcept });
