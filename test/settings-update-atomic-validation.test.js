@@ -46,8 +46,18 @@ async function main() {
   assert.equal(invalid.statusCode, 400);
   assert.deepEqual(agent.db.writes, [], 'invalid settings must not leave earlier fields partially persisted');
 
+  const invalidBoolean = await invoke(handler, { approval_required: 'sometimes' });
+  assert.equal(invalidBoolean.statusCode, 400);
+  const invalidTimezone = await invoke(handler, { channel_timezone: 'Mars/Olympus' });
+  assert.equal(invalidTimezone.statusCode, 400);
+  assert.deepEqual(agent.db.writes, [], 'invalid booleans and time zones must be rejected before any writes');
+  assert.throws(() => agent.validateProfile({ timezone: 'Mars/Olympus' }), /valid IANA time zone/);
+  assert.equal(agent.validateProfile({ timezone: 'Europe/Istanbul' }).timezone, 'Europe/Istanbul');
+
   const valid = await invoke(handler, {
     approval_required: true,
+    notification_enabled: false,
+    channel_timezone: 'Europe/Istanbul',
     video_provider: 'cinecode',
     video_generation_mode: 'hybrid',
     video_clip_duration: 12,
@@ -56,6 +66,8 @@ async function main() {
   assert.equal(valid.statusCode, 200);
   assert.deepEqual(agent.db.writes, [
     ['approval_required', 'true'],
+    ['notification_enabled', 'false'],
+    ['channel_timezone', 'Europe/Istanbul'],
     ['video_provider', 'cinecode'],
     ['video_generation_mode', 'hybrid'],
     ['video_clip_duration', '12'],
