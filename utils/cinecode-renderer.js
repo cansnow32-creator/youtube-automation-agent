@@ -11,6 +11,40 @@ function isLeaseFailure(error) {
   return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
 }
 
+async function replaceFileWithRollback(tempPath, destinationPath, token, assertLease = async () => {}) {
+  const backupPath = destinationPath + '.' + token + '.backup';
+  let backedUp = false;
+  await assertLease();
+  try {
+    await fs.rename(destinationPath, backupPath);
+    backedUp = true;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  try {
+    await assertLease();
+    await fs.rename(tempPath, destinationPath);
+    await assertLease();
+  } catch (error) {
+    if (isLeaseFailure(error)) throw error;
+    if (backedUp) {
+      try {
+        await assertLease();
+        await fs.rename(backupPath, destinationPath);
+      } catch (restoreError) {
+        if (isLeaseFailure(restoreError)) throw restoreError;
+        error.restoreError = restoreError;
+        error.message += '; previous output restore also failed: ' + restoreError.message;
+      }
+    }
+    throw error;
+  }
+  if (backedUp) {
+    await assertLease();
+    await fs.unlink(backupPath).catch(() => {});
+  }
+}
+
 async function removeAttemptFiles(paths = []) {
   await Promise.all([...new Set(paths.filter(value => typeof value === 'string' && value))]
     .map(filePath => fs.rm(filePath, { force: true }).catch(() => {})));
@@ -106,8 +140,9 @@ class CineCodeRenderer {
         ].join(',');
         const outputPath = path.join(outputDir, `${prefix}_cinecode_scene_${String(index + 1).padStart(2, '0')}.mp4`);
         const manifestPath = `${outputPath}.render.json`;
-        const temporaryPath = `${outputPath}.rendering.mp4`;
-        const manifestTemp = `${manifestPath}.tmp`;
+        const renderAttemptId = crypto.randomUUID();
+        const temporaryPath = `${outputPath}.${renderAttemptId}.rendering.mp4`;
+        const manifestTemp = `${manifestPath}.${renderAttemptId}.tmp`;
         const imageFingerprint = {
           path: path.resolve(imagePath),
           size: imageStats.size,
@@ -150,8 +185,7 @@ class CineCodeRenderer {
             const outputStats = await fs.stat(temporaryPath);
             if (!outputStats.isFile() || outputStats.size <= 0) throw new Error(`CineCode failed to render scene ${index + 1}`);
             await assertLease();
-            await fs.rm(outputPath, { force: true });
-            await fs.rename(temporaryPath, outputPath);
+            await replaceFileWithRollback(temporaryPath, outputPath, renderAttemptId, assertLease);
             await assertLease();
             await fs.writeFile(manifestTemp, JSON.stringify({
               fingerprint: renderFingerprint,
@@ -159,7 +193,7 @@ class CineCodeRenderer {
               renderedAt: new Date().toISOString()
             }, null, 2));
             await assertLease();
-            await fs.rename(manifestTemp, manifestPath);
+            await replaceFileWithRollback(manifestTemp, manifestPath, renderAttemptId, assertLease);
             await assertLease();
           } catch (error) {
             if (isLeaseFailure(error)) throw error;
