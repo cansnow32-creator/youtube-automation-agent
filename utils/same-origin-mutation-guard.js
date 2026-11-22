@@ -18,19 +18,19 @@ function isLoopbackRequestHostname(hostname) {
   const octets = hostname.split('.');
   return octets.length === 4 &&
     octets[0] === '127' &&
-    octets.every(part => /^\\d{1,3}$/.test(part) && Number(part) <= 255);
+    octets.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 function createLoopbackSameOriginGuard() {
   return (req, res, next) => {
     const requestHost = parseHostHeader(req.get('host'));
     if (!requestHost || !isLoopbackRequestHostname(requestHost.hostname)) {
-      return res.status(403).json({ success: false, error: 'Mutating requests must use a loopback Host header' });
+      return res.status(403).json({ success: false, error: 'Requests must use a loopback Host header' });
     }
 
     const fetchSite = String(req.get('sec-fetch-site') || '').toLowerCase();
     if (fetchSite === 'cross-site') {
-      return res.status(403).json({ success: false, error: 'Cross-site state-changing requests are not allowed' });
+      return res.status(403).json({ success: false, error: 'Cross-site requests are not allowed' });
     }
 
     const origin = req.get('origin');
@@ -45,10 +45,10 @@ function createLoopbackSameOriginGuard() {
       if (
         parsedOrigin.origin === 'null' ||
         parsedOrigin.protocol !== 'http:' ||
-        !isLoopbackRequestHostname(parsedOrigin.hostname.replace(/^\\[|\\]$/g, '').toLowerCase()) ||
+        !isLoopbackRequestHostname(parsedOrigin.hostname.replace(/^\[|\]$/g, '').toLowerCase()) ||
         parsedOrigin.host.toLowerCase() !== requestHost.authority
       ) {
-        return res.status(403).json({ success: false, error: 'Cross-origin state-changing requests are not allowed' });
+        return res.status(403).json({ success: false, error: 'Cross-origin requests are not allowed' });
       }
     }
 
