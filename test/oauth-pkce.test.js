@@ -58,6 +58,7 @@ async function run() {
 
   try {
     assert.strictEqual(OAuthServer.prototype.generateAuthUrl.constructor.name, 'AsyncFunction', 'legacy OAuth URL generation must be async when using PKCE');
+    assert.strictEqual(new OAuthServer().redirectUri, 'http://127.0.0.1:8080/auth/callback', 'legacy OAuth redirect must match its bound loopback callback');
     const pkceClient = new google.auth.OAuth2('test-client', 'test-secret', 'http://127.0.0.1/callback');
     const generated = await pkceClient.generateCodeVerifierAsync();
     assert.match(generated.codeVerifier, /^[A-Za-z0-9._~-]{43,128}$/);
