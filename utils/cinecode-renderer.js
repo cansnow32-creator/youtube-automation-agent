@@ -165,17 +165,15 @@ class CineCodeRenderer {
             createdPaths.push(manifestPath);
             await assertLease();
           } catch (error) {
+            if (isLeaseFailure(error)) throw error;
+            await assertLease();
             await removeAttemptFiles([temporaryPath, manifestTemp, outputPath, manifestPath]);
-            if (isLeaseFailure(error)) {
-              await removeAttemptFiles(createdPaths);
-              createdPaths.length = 0;
-            }
             throw error;
           }
         } else {
           await assertLease();
-          // Cached scene files belong to this uncommitted attempt prefix too.
-          // Keep them for a normal retry, but remove them if this worker loses its lease.
+          // Cached and newly rendered scene files remain available to recovery;
+          // this renderer does not delete scene outputs when a later stage fails.
           createdPaths.push(outputPath, manifestPath);
           this.logger.info(`CineCode reusing completed scene ${index + 1}/${selectedAssets.length}`);
         }
@@ -206,7 +204,8 @@ class CineCodeRenderer {
         colorGrade: grade
       };
     } catch (error) {
-      if (isLeaseFailure(error)) await removeAttemptFiles(createdPaths);
+      // Scene outputs are attempt-scoped recovery artifacts. A stale renderer
+      // must never delete them after losing ownership.
       throw error;
     }
   }
