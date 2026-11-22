@@ -358,10 +358,11 @@ class AIVideoGenerator {
       this.logger.info(`Generated ${attemptPaths.length} visual assets`);
       return attemptPaths;
     } catch (error) {
+      // Do not clean attempt outputs until ownership is re-verified. A stale
+      // worker must leave generated files for the next owner to inspect/reuse.
+      await assertLease();
       await removeAttemptFiles(attemptPaths);
       if (isLeaseFailure(error)) throw error;
-      // A provider failure is recoverable only while this worker still owns the lease.
-      await assertLease();
       this.logger.error('Visual asset generation failed:', error);
       return await this.simulateVisualAssets(prompt, style, count, assertLease);
     }
@@ -413,10 +414,11 @@ class AIVideoGenerator {
         await fs.rename(attemptPath, imagePath);
         return imagePath;
       } catch (error) {
+        // A provider attempt may have completed just as the lease expired.
+        // Verify ownership before deleting its private partial output.
+        await assertLease();
         await fs.unlink(attemptPath).catch(() => {});
         if (isLeaseFailure(error)) throw error;
-        // Do not start another provider attempt after ownership has expired.
-        await assertLease();
         const description = describeImageProviderError(provider.name, provider.model, error);
         failures.push(description);
         if (index < providers.length - 1) {
@@ -660,14 +662,7 @@ class AIVideoGenerator {
         };
         return produced;
       } catch (fallbackError) {
-        if (isLeaseFailure(fallbackError)) {
-          await removeAttemptFiles([
-            ...getVideoAttemptSidecarPaths(outputPath),
-            ...providerOutputPaths,
-            ...providerOutputPaths.flatMap(filePath => [filePath + '.rendering.mp4', filePath + '.render.json', filePath + '.render.json.tmp'])
-          ]);
-          throw fallbackError;
-        }
+        if (isLeaseFailure(fallbackError)) throw fallbackError;
         this.logger.error(`Local slideshow fallback failed: ${fallbackError.message}`, fallbackError);
         await assertLease();
         const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath, assertLease);
@@ -698,13 +693,15 @@ class AIVideoGenerator {
     if (!segments.length) throw new Error('No usable provider clips or still images were generated');
 
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
-    const visualTempPath = visualPath.replace(/\.mp4$/i, '_rendering.mp4');
+    const renderAttemptId = crypto.randomUUID();
+    const visualTempPath = visualPath.replace(/\.mp4$/i, '') + '_' + renderAttemptId + '_rendering.mp4';
     const visualManifestPath = visualPath + '.render.json';
-    const visualManifestTempPath = visualManifestPath + '.tmp';
-    const finalTempPath = outputPath.replace(/\.mp4$/i, '_finalizing.mp4');
+    const visualManifestTempPath = visualManifestPath + '.' + renderAttemptId + '.tmp';
+    const finalTempPath = outputPath.replace(/\.mp4$/i, '') + '_' + renderAttemptId + '_finalizing.mp4';
     const assemblyManifestPath = outputPath + '.assembly.json';
-    const assemblyManifestTempPath = assemblyManifestPath + '.tmp';
+    const assemblyManifestTempPath = assemblyManifestPath + '.' + renderAttemptId + '.tmp';
     const sourceFingerprint = [];
+    let leaseLost = false;
     for (const segment of segments) {
       await assertLease();
       const stats = await fs.stat(segment.path);
@@ -821,12 +818,22 @@ class AIVideoGenerator {
       return outputPath;
     } catch (error) {
       if (isLeaseFailure(error)) {
-        await removeAttemptFiles([visualPath, visualManifestPath, outputPath, assemblyManifestPath]);
+        leaseLost = true;
+        throw error;
+      }
+      try {
+        await assertLease();
+      } catch (leaseError) {
+        leaseLost = true;
+        throw leaseError;
       }
       throw error;
     } finally {
-      // These per-process temps are always safe to delete here.
-      await removeAttemptFiles([visualTempPath, finalTempPath, visualManifestTempPath, assemblyManifestTempPath]);
+      // Temps are unique to this invocation. If ownership is lost, preserve them
+      // for forensic/recovery handling instead of allowing a stale worker to clean.
+      if (!leaseLost) {
+        await removeAttemptFiles([visualTempPath, finalTempPath, visualManifestTempPath, assemblyManifestTempPath]);
+      }
     }
   }
 
@@ -929,6 +936,7 @@ class AIVideoGenerator {
     const outputStem = path.basename(outputPath, path.extname(outputPath));
     const slidesDir = path.join(path.dirname(outputPath), `${outputStem}_slides`);
     const videoPath = outputPath.replace('.mp4', '_visual.mp4');
+    let leaseLost = false;
 
     try {
       await assertLease();
@@ -970,11 +978,21 @@ class AIVideoGenerator {
       await assertLease();
       return outputPath;
     } catch (error) {
+      try {
+        await assertLease();
+      } catch (leaseError) {
+        leaseLost = true;
+        throw leaseError;
+      }
+      if (isLeaseFailure(error)) {
+        leaseLost = true;
+        throw error;
+      }
       await removeAttemptFiles([videoPath, outputPath, outputPath + '.info']);
       throw error;
     } finally {
       await browser.close().catch(() => {});
-      await this.cleanupDirectory(slidesDir);
+      if (!leaseLost) await this.cleanupDirectory(slidesDir);
     }
   }
 
@@ -1337,6 +1355,8 @@ class AIVideoGenerator {
       this.logger.info('Audio added to video successfully');
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await removeAttemptFiles([muxPath, outputPublished ? outputPath : null]);
       throw error;
     }
