@@ -12,6 +12,11 @@ const { requireApprovedVideoConcept } = require('../utils/approved-video-concept
 const { createProductionWorkflow, runProductionStage, prepareProductionWorkflowForResume } = require('../utils/production-stage-workflow');
 const { assertScriptQualityGate } = require('../utils/script-quality-gate');
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
 function getArtifactAttemptId(productionData) {
   if (!productionData.timeline || typeof productionData.timeline !== 'object') {
     productionData.timeline = {};
@@ -630,6 +635,7 @@ class ProductionManagementAgent {
       }
     } catch (error) {
       // Do not turn lease loss into a thumbnail fallback write.
+      if (isLeaseFailure(error)) throw error;
       await assertLease();
       this.logger.error('AI thumbnail generation failed:', error);
     }
@@ -649,6 +655,8 @@ class ProductionManagementAgent {
         await fs.writeFile(productionThumbnailPath, originalBuffer);
         await assertLease();
       } catch (error) {
+        if (isLeaseFailure(error)) throw error;
+        await assertLease();
         await fs.rm(productionThumbnailPath, { force: true }).catch(() => {});
         throw error;
       }
@@ -800,6 +808,7 @@ class ProductionManagementAgent {
       } catch (error) {
         // Lease loss/unverifiable ownership is not a provider failure and must
         // never be swallowed into the retry/fallback path.
+        if (isLeaseFailure(error)) throw error;
         await assertLease();
         failures.push({ sceneIndex, message: String(error?.message || error).slice(0, 300) });
         this.logger.warn(`Visual scene ${sceneIndex + 1}/${visualPrompts.length} failed: ${error.message}`);
@@ -993,9 +1002,10 @@ class ProductionManagementAgent {
       return usable ? generatedPath : await this.simulateAudioGeneration(productionData, new Error('No live narration provider returned usable audio'), assertLease);
     } catch (error) {
       // Provider/FFmpeg work can finish after the generation lease expires.
-      // Remove only this attempt's files; never touch the previously persisted audio path.
-      await removeAttemptFiles([generatedPath, audioPath, audioPath + '.pcm']);
+      // A stale worker leaves its outputs for recovery instead of deleting them.
+      if (isLeaseFailure(error)) throw error;
       await assertLease();
+      await removeAttemptFiles([generatedPath, audioPath, audioPath + '.pcm']);
       this.logger.error('AI audio generation failed:', error);
       return await this.simulateAudioGeneration(productionData, error, assertLease);
     }
@@ -1046,6 +1056,8 @@ class ProductionManagementAgent {
       productionData.timeline.captionsGenerated = new Date().toISOString();
       return captionsPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await removeAttemptFiles([captionsPath]);
       throw error;
     }
@@ -1461,6 +1473,8 @@ class ProductionManagementAgent {
       }, null, 2));
       await assertLease();
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await removeAttemptFiles([placeholderPath]);
       throw error;
     }
