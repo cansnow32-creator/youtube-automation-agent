@@ -45,8 +45,11 @@ async function testCineCodeLeaseLossPreservesPublishedScene() {
     assert.equal(await fs.access(outputPath).then(() => true, () => false), true,
       'a published CineCode scene must remain available for recovery after lease loss');
     const files = await fs.readdir(directory);
-    assert.deepEqual(files.sort(), ['lease-attempt_cinecode_scene_01.mp4', 'source.png'],
-      'only the atomically published scene and source image should remain');
+    assert.deepEqual(files.sort(), [
+      'lease-attempt_cinecode_scene_01.mp4',
+      'lease-attempt_cinecode_scene_01.mp4.render.json.tmp',
+      'source.png'
+    ], 'published scene and its in-progress manifest must remain available for recovery');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
