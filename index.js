@@ -1015,8 +1015,12 @@ class YouTubeAutomationAgent {
     this.app.patch('/api/content/:productionId/scenes/:sceneId', protect, async (req, res) => {
       try {
         if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
-        const result = await this.scenes.updateScene(req.params.productionId, req.params.sceneId, req.body || {});
-        await this.refreshContentReview(req.params.productionId, 'Scene changes require review before scheduling');
+        const result = await this.runSceneEditWithReview(
+          req.params.productionId,
+          assertLease => this.scenes.updateSceneUnlocked(req.params.productionId, req.params.sceneId, req.body || {}, assertLease),
+          'Scene changes require review before scheduling',
+          'scene edit and review invalidation'
+        );
         return res.json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
@@ -1026,8 +1030,12 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/scenes/reorder', protect, async (req, res) => {
       try {
         if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
-        const result = await this.scenes.reorder(req.params.productionId, req.body?.sceneIds);
-        await this.refreshContentReview(req.params.productionId, 'Timeline order changed; rebuild and review before scheduling');
+        const result = await this.runSceneEditWithReview(
+          req.params.productionId,
+          assertLease => this.scenes.reorderUnlocked(req.params.productionId, req.body?.sceneIds, assertLease),
+          'Timeline order changed; rebuild and review before scheduling',
+          'scene reorder and review invalidation'
+        );
         return res.json({ success: true, result: result.map(scene => this.scenes.decorateScene(scene, req.params.productionId)) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
@@ -1037,8 +1045,12 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/scenes/:sceneId/regenerate', protect, async (req, res) => {
       try {
         if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
-        const result = await this.scenes.regenerate(req.params.productionId, req.params.sceneId, req.body || {});
-        await this.refreshContentReview(req.params.productionId, 'Regenerated scene must be rebuilt and reviewed');
+        const result = await this.runSceneEditWithReview(
+          req.params.productionId,
+          assertLease => this.scenes.regenerateUnlocked(req.params.productionId, req.params.sceneId, req.body || {}, assertLease),
+          'Regenerated scene must be rebuilt and reviewed',
+          'scene regeneration and review invalidation'
+        );
         return res.status(202).json({ success: true, result: {
           ...result,
           scene: this.scenes.decorateScene(result.scene, req.params.productionId)
@@ -2577,29 +2589,49 @@ class YouTubeAutomationAgent {
     );
   }
 
-  async refreshContentReview(productionId, reviewNotes) {
-    if (!this.scenes?.withProductionOperationLease) {
-      throw new Error('Scene operation lease is required to refresh content review safely');
+  async runSceneEditWithReview(productionId, edit, reviewNotes, label = 'scene edit and review refresh') {
+    if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+      const error = new Error('Scene operation lease is required to edit content and invalidate its review atomically');
+      error.status = 503;
+      error.code = 'SCENE_EDIT_LOCK_UNAVAILABLE';
+      throw error;
     }
     return this.scenes.withProductionOperationLease(productionId, async assertLease => {
-      await assertLease();
-      const bundle = await this.db.getProductionBundle(productionId);
-      if (!bundle) return null;
-      const profile = await this.db.getChannelProfile() || {};
-      const quality = await this.operator.runQualityChecks({
-        ...bundle,
-        scheduledPublishTime: bundle.scheduled_publish_time
-      }, profile);
-      await assertLease();
-      const status = quality.passed ? 'needs_review' : 'needs_attention';
-      return this.db.saveContentReview(productionId, {
-        status,
-        editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
-        qualityChecks: quality.checks,
-        reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
-        reviewedAt: null
-      }, assertLease.lease);
-    }, 'content review refresh');
+      const result = await edit(assertLease);
+      await this.refreshContentReviewUnlocked(productionId, reviewNotes, assertLease);
+      return result;
+    }, label);
+  }
+
+  async refreshContentReview(productionId, reviewNotes) {
+    if (typeof this.scenes?.withProductionOperationLease !== 'function') {
+      throw new Error('Scene operation lease is required to refresh content review safely');
+    }
+    return this.scenes.withProductionOperationLease(
+      productionId,
+      assertLease => this.refreshContentReviewUnlocked(productionId, reviewNotes, assertLease),
+      'content review refresh'
+    );
+  }
+
+  async refreshContentReviewUnlocked(productionId, reviewNotes, assertLease = async () => {}) {
+    await assertLease();
+    const bundle = await this.db.getProductionBundle(productionId);
+    if (!bundle) return null;
+    const profile = await this.db.getChannelProfile() || {};
+    const quality = await this.operator.runQualityChecks({
+      ...bundle,
+      scheduledPublishTime: bundle.scheduled_publish_time
+    }, profile);
+    await assertLease();
+    const status = quality.passed ? 'needs_review' : 'needs_attention';
+    return this.db.saveContentReview(productionId, {
+      status,
+      editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
+      qualityChecks: quality.checks,
+      reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
+      reviewedAt: null
+    }, assertLease.lease);
   }
 
   async approveContent(productionId, input) {
