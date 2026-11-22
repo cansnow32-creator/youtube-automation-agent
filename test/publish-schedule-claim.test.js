@@ -130,7 +130,7 @@ async function main() {
       ...recorded, status: 'failed', error: 'late stale failure'
     }, firstAttemptId);
     assert.equal(staleAfterFinalize, null, 'a late stale failure cannot downgrade a newer published schedule');
-    process.stdout.write('Publish schedule upload claim CAS tests passed\\n');
+    process.stdout.write('Publish schedule upload claim CAS tests passed\n');
   } finally {
     await Promise.all([close(dbA.db), close(dbB.db)]);
     await fs.rm(directory, { recursive: true, force: true });
