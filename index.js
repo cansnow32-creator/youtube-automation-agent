@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const { createLoopbackSameOriginGuard } = require('./utils/same-origin-mutation-guard');
 const { buildContentReviewAfterEdit } = require('./utils/content-review-edit');
 const path = require('path');
 const fs = require('fs').promises;
@@ -393,6 +394,9 @@ class YouTubeAutomationAgent {
   setupAPI() {
     this.app.use(express.json({ limit: '1mb' }));
     this.app.use(express.static(path.join(__dirname, 'dashboard')));
+    // Dynamic routes are loopback-only and reject cross-origin browser requests.
+    // This complements API_KEY; it does not replace authentication for remote hosting.
+    this.app.use(createLoopbackSameOriginGuard());
 
     if (!process.env.API_KEY) {
       this.logger.warn('API_KEY is not set; mutating API routes are unprotected');
