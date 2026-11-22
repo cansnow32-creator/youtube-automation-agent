@@ -52,10 +52,7 @@ function getVideoAttemptSidecarPaths(outputPath) {
     stem + '_visual.mp4',
     stem + '_slides'
   ];
-  for (let index = 1; index <= 20; index++) {
-    const scenePath = `${stem}_cinecode_scene_${String(index).padStart(2, '0')}.mp4`;
-    paths.push(scenePath, scenePath + '.rendering.mp4', scenePath + '.render.json', scenePath + '.render.json.tmp');
-  }
+  // Per-scene CineCode outputs have independent attempt ownership.
   return paths;
 }
 
