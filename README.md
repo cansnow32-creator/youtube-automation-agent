@@ -126,7 +126,7 @@ Models, keys, env vars, clip limits, and the `.env` essentials are in the [provi
 
 ## Automation
 
-The scheduler starts with `npm start` and uses the server's local time.
+The scheduler starts with `npm start` and uses the server's local time. **Automatic uploads from the scheduled queue are disabled by default.** The queue is checked every 15 minutes, but due videos remain queued unless you explicitly set `AUTO_PUBLISH_ENABLED=true` in `.env`. Manual publishing from the dashboard remains subject to the existing content-review and readiness gates.
 
 | When | What runs |
 | --- | --- |
