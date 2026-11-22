@@ -44,6 +44,28 @@ async function run() {
     /older than 24 hours/
   );
 
+  const invalidTimestamp = serviceWith({
+    status: 'passed',
+    completed_at: 'not-a-date',
+    checks: []
+  });
+  await rejectsWithStatus(
+    invalidTimestamp.assertReady('Autonomous production'),
+    409,
+    /older than 24 hours/
+  );
+
+  const futureTimestamp = serviceWith({
+    status: 'passed',
+    completed_at: '2026-11-20T12:00:00.000Z',
+    checks: []
+  });
+  await rejectsWithStatus(
+    futureTimestamp.assertReady('Autonomous production'),
+    409,
+    /older than 24 hours/
+  );
+
   const failed = serviceWith({
     status: 'failed',
     completed_at: NOW.toISOString(),
