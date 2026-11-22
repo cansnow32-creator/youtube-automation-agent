@@ -11,6 +11,11 @@ class DailyAutomation {
     this.healthCheckInterval = null;
     this.lastHealthCheck = null;
     this.generateContent = options.generateContent || null;
+    // Scheduled production is opt-in; manual dashboard/operator actions remain
+    // available without enabling unattended daily generation.
+    this.autoGenerationEnabled = options.autoGenerationEnabled === undefined
+      ? String(process.env.AUTO_GENERATION_ENABLED || '').trim().toLowerCase() === 'true'
+      : options.autoGenerationEnabled === true;
     this.engagement = options.engagement || null;
     this.experiments = options.experiments || null;
   }
@@ -117,6 +122,10 @@ class DailyAutomation {
   }
 
   async runDailyContentGeneration() {
+    if (this.autoGenerationEnabled !== true) {
+      this.logger.info('Scheduled content generation is disabled; use an explicit manual production action or set AUTO_GENERATION_ENABLED=true.');
+      return { skipped: true, reason: 'AUTO_GENERATION_DISABLED' };
+    }
     try {
       this.logger.info('Starting daily content generation...');
       
