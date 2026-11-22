@@ -128,7 +128,7 @@
         ? action('Resume automation', 'Unpause the scheduler', '#automation-toggle', 'resume unpause automation play')
         : action('Pause automation', 'Halt scheduled generation', '#automation-toggle', 'pause halt automation stop'),
       action('Refresh dashboard data', 'Pull latest state now', '#refresh-button', 'refresh reload sync data'),
-      action('Set dashboard API key', 'Store access key in this browser', '#api-key-button', 'api key auth credentials')
+      action('Set dashboard API key', 'Store access key for this browser session', '#api-key-button', 'api key auth credentials')
     );
     return cmds;
   }
