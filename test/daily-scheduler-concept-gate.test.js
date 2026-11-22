@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { DailyAutomation } = require('../schedules/daily-automation');
 
-function makeScheduler(concepts, generateContent) {
+function makeScheduler(concepts, generateContent, options = {}) {
   const events = [];
   const settings = new Map([['content_buffer_days', '3'], ['posting_frequency', 'daily']]);
   const db = {
@@ -14,13 +14,45 @@ function makeScheduler(concepts, generateContent) {
   };
   const scheduler = new DailyAutomation({
     publishing: { async getUpcomingSchedule() { return []; } }
-  }, db, { generateContent });
+  }, db, { generateContent, autoGenerationEnabled: options.autoGenerationEnabled ?? true });
   scheduler.logAutomationEvent = async (type, status, data) => events.push({ type, status, data });
   scheduler.sendFailureNotification = async () => {};
   return { scheduler, events };
 }
 
+async function testScheduledGenerationIsDisabledByDefault() {
+  const previous = process.env.AUTO_GENERATION_ENABLED;
+  delete process.env.AUTO_GENERATION_ENABLED;
+  let generationCalls = 0;
+  try {
+    const scheduler = new DailyAutomation({}, {
+      async listVideoConcepts() { return [{ id: 'approved', status: 'approved', concept: {} }]; }
+    }, { generateContent: async () => { generationCalls++; return { id: 'unexpected-job' }; } });
+    assert.equal(scheduler.autoGenerationEnabled, false, 'scheduled generation must default to disabled');
+    const result = await scheduler.runDailyContentGeneration();
+    assert.deepEqual(result, { skipped: true, reason: 'AUTO_GENERATION_DISABLED' });
+    assert.equal(generationCalls, 0, 'scheduled generation must not queue production without opt-in');
+  } finally {
+    if (previous === undefined) delete process.env.AUTO_GENERATION_ENABLED;
+    else process.env.AUTO_GENERATION_ENABLED = previous;
+  }
+}
+
+async function testScheduledGenerationRequiresExplicitEnvironmentOptIn() {
+  const previous = process.env.AUTO_GENERATION_ENABLED;
+  process.env.AUTO_GENERATION_ENABLED = 'true';
+  try {
+    const scheduler = new DailyAutomation({}, {});
+    assert.equal(scheduler.autoGenerationEnabled, true, 'only explicit true enables unattended daily generation');
+  } finally {
+    if (previous === undefined) delete process.env.AUTO_GENERATION_ENABLED;
+    else process.env.AUTO_GENERATION_ENABLED = previous;
+  }
+}
+
 async function run() {
+  await testScheduledGenerationIsDisabledByDefault();
+  await testScheduledGenerationRequiresExplicitEnvironmentOptIn();
   let queued = false;
   const blocked = makeScheduler([], async () => {
     queued = true;
