@@ -173,7 +173,7 @@ async function testCaptionOutputIsRemovedAfterLeaseLoss() {
   }
 }
 
-async function testFinalVideoPartialOutputIsRemovedAfterLeaseLoss() {
+async function testFinalVideoOutputIsPreservedAfterLeaseLossForRecovery() {
   const id = 'video-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
   const outputPath = path.join(__dirname, '..', 'data', 'videos', id + '_' + attemptId + '_final.mp4');
@@ -212,7 +212,8 @@ async function testFinalVideoPartialOutputIsRemovedAfterLeaseLoss() {
   try {
     await assert.rejects(agent.assembleVideo(production, assertLease),
       error => error.code === 'GENERATION_JOB_LEASE_LOST');
-    await assert.rejects(fs.access(outputPath), { code: 'ENOENT' });
+    assert.equal(await fs.access(outputPath).then(() => true, () => false), true,
+      'the next lease owner may validate or reuse the attempt-scoped output');
     assert.equal(production.assets.finalVideo, previousFinal,
       'the previously persisted final video reference must remain intact');
   } finally {
@@ -302,7 +303,7 @@ async function run() {
   await testNarrationOutputIsRemovedAfterLeaseLoss();
   await testCaptionsUseAttemptScopedPathsAndPreserveEarlierAttempt();
   await testCaptionOutputIsRemovedAfterLeaseLoss();
-  await testFinalVideoPartialOutputIsRemovedAfterLeaseLoss();
+  await testFinalVideoOutputIsPreservedAfterLeaseLossForRecovery();
   await testThumbnailFallbackOutputIsRemovedAfterLeaseLoss();
   await testSimulationArtifactIsRemovedAfterLeaseLoss();
   console.log('Production attempt-scoped media artifact tests passed');
