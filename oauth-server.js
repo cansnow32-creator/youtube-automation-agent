@@ -11,6 +11,8 @@ class OAuthServer {
     this.app = express();
     this.server = null;
     this.oauthState = null;
+    this.codeVerifier = null;
+    this.callbackHandled = false;
     this.setupRoutes();
   }
 
@@ -33,6 +35,15 @@ class OAuthServer {
         return;
       }
 
+      if (this.callbackHandled) {
+        res.status(409).type('text').send('OAuth callback has already been handled.');
+        return;
+      }
+      if (!code) {
+        res.status(400).type('text').send('Missing authorization code.');
+        return;
+      }
+      this.callbackHandled = true;
       try {
         // Exchange code for tokens
         await this.exchangeCodeForTokens(code);
@@ -92,7 +103,7 @@ class OAuthServer {
       credentials.youtube.redirect_uris[0]
     );
 
-    const { tokens } = await oauth2Client.getToken(code);
+    const { tokens } = await oauth2Client.getToken({ code, codeVerifier: this.codeVerifier });
     
     // Save tokens
     const tokenData = {
@@ -137,6 +148,9 @@ class OAuthServer {
     );
 
     this.oauthState = crypto.randomBytes(32).toString('hex');
+    this.callbackHandled = false;
+    const pkce = await oauth2Client.generateCodeVerifierAsync();
+    this.codeVerifier = pkce.codeVerifier;
 
     const scopes = YOUTUBE_SCOPES;
 
@@ -144,7 +158,9 @@ class OAuthServer {
       access_type: 'offline',
       scope: scopes,
       prompt: 'consent',
-      state: this.oauthState
+      state: this.oauthState,
+      code_challenge_method: 'S256',
+      code_challenge: pkce.codeChallenge
     });
 
     console.log(chalk.cyan.bold('\n🎬 YouTube Automation Agent - OAuth Setup'));
