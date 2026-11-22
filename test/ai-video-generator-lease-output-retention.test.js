@@ -37,7 +37,7 @@ async function run() {
   let leaseChecks = 0;
   const assertLease = async () => {
     leaseChecks += 1;
-    if (leaseChecks >= 4) {
+    if (leaseChecks >= 3) {
       throw Object.assign(new Error('generation lease lost after media task persisted its output'), {
         code: 'GENERATION_JOB_LEASE_LOST',
         status: 409
