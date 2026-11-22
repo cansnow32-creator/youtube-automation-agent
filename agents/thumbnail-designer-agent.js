@@ -4,6 +4,11 @@ const crypto = require('crypto');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
 class ThumbnailDesignerAgent {
   constructor(db, credentials) {
     this.db = db;
@@ -40,15 +45,15 @@ class ThumbnailDesignerAgent {
       const prompt = await this.createPrompt(concept);
       await assertLease();
 
-      const thumbnailPath = await this.createThumbnail(concept, suffix);
+      const thumbnailPath = await this.createThumbnail(concept, suffix, assertLease);
       generatedPaths.push(thumbnailPath);
       await assertLease();
 
-      const finalThumbnail = await this.addTextOverlay(thumbnailPath, concept, suffix);
+      const finalThumbnail = await this.addTextOverlay(thumbnailPath, concept, suffix, assertLease);
       generatedPaths.push(finalThumbnail);
       await assertLease();
 
-      const optimizedThumbnail = await this.optimizeForYouTube(finalThumbnail, suffix);
+      const optimizedThumbnail = await this.optimizeForYouTube(finalThumbnail, suffix, assertLease);
       generatedPaths.push(optimizedThumbnail);
       await assertLease();
 
@@ -73,6 +78,8 @@ class ThumbnailDesignerAgent {
       this.logger.info('Thumbnail generated successfully');
       return thumbnailData;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       for (const generatedPath of generatedPaths) {
         if (generatedPath !== savedPath) await fs.unlink(generatedPath).catch(() => {});
       }
@@ -236,7 +243,7 @@ class ThumbnailDesignerAgent {
     return prompt;
   }
 
-  async createThumbnail(concept, suffix = '') {
+  async createThumbnail(concept, suffix = '', assertLease = async () => {}) {
     // Create a base thumbnail using Sharp
     const width = 1280;
     const height = 720;
@@ -264,6 +271,8 @@ class ThumbnailDesignerAgent {
         .toFile(outputPath);
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(outputPath).catch(() => {});
       throw error;
     }
@@ -288,7 +297,7 @@ class ThumbnailDesignerAgent {
     return colors[color] || '#000000';
   }
 
-  async addTextOverlay(imagePath, concept, suffix = '') {
+  async addTextOverlay(imagePath, concept, suffix = '', assertLease = async () => {}) {
     const marker = suffix ? `_${suffix}` : '';
     const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_final${marker}_${Date.now()}.png`);
     
@@ -343,7 +352,7 @@ class ThumbnailDesignerAgent {
     }
   }
 
-  async optimizeForYouTube(imagePath, suffix = '') {
+  async optimizeForYouTube(imagePath, suffix = '', assertLease = async () => {}) {
     const marker = suffix ? `_${suffix}` : '';
     const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_optimized${marker}_${Date.now()}.jpg`);
     
@@ -430,6 +439,8 @@ class ThumbnailDesignerAgent {
       }
       return variants;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       for (const generatedPath of generatedPaths) await fs.unlink(generatedPath).catch(() => {});
       throw error;
     }
