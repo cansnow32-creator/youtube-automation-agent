@@ -1,7 +1,5 @@
 'use strict';
 
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
 function parseHostHeader(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
@@ -23,10 +21,8 @@ function isLoopbackRequestHostname(hostname) {
     octets.every(part => /^\\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
-function createSameOriginMutationGuard() {
+function createLoopbackSameOriginGuard() {
   return (req, res, next) => {
-    if (SAFE_METHODS.has(String(req.method || 'GET').toUpperCase())) return next();
-
     const requestHost = parseHostHeader(req.get('host'));
     if (!requestHost || !isLoopbackRequestHostname(requestHost.hostname)) {
       return res.status(403).json({ success: false, error: 'Mutating requests must use a loopback Host header' });
@@ -60,4 +56,4 @@ function createSameOriginMutationGuard() {
   };
 }
 
-module.exports = { createSameOriginMutationGuard, isLoopbackRequestHostname, parseHostHeader };
+module.exports = { createLoopbackSameOriginGuard, isLoopbackRequestHostname, parseHostHeader };
