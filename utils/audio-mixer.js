@@ -92,9 +92,10 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
   const filters = videoInfo.hasAudio
     ? `[0:a:0]volume=1.0[narration];[1:a:0]${musicFilters}[music];[narration][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[mixed]`
     : `[1:a:0]${musicFilters},alimiter=limit=0.95[mixed]`;
-  const temporaryPath = `${outputPath}.mixing.mp4`;
   const manifestPath = `${outputPath}.mix.json`;
-  const manifestTempPath = `${manifestPath}.tmp`;
+  const mixAttemptId = crypto.randomUUID();
+  const temporaryPath = `${outputPath}.${mixAttemptId}.mixing.mp4`;
+  const manifestTempPath = `${manifestPath}.${mixAttemptId}.tmp`;
   const [videoHash, musicHash] = await Promise.all([hashFile(videoPath), hashFile(musicPath)]);
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
     videoHash, musicHash, volume, fadeIn, fadeOut, loop: music.loop !== false,
@@ -196,14 +197,15 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     await assertLease();
     return result;
   } catch (error) {
-    await fileSystem.rm(temporaryPath, { force: true }).catch(() => {});
-    if (String(error?.code || '').toUpperCase().includes('LEASE') ||
-        String(error?.code || '').toUpperCase().includes('LOCK_LOST') ||
-        String(error?.code || '').toUpperCase().includes('LOCK_UNVERIFIED')) {
-      await Promise.all([outputPath, manifestPath, manifestTempPath].map(filePath =>
-        fileSystem.rm(filePath, { force: true }).catch(() => {})
-      ));
+    const code = String(error?.code || '').toUpperCase();
+    if (code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED')) {
+      throw error;
     }
+    // A generic provider/FFmpeg failure may only clean up after ownership is
+    // re-verified. Unique temp names prevent this worker touching another attempt.
+    await assertLease();
+    await fileSystem.rm(temporaryPath, { force: true }).catch(() => {});
+    await fileSystem.rm(manifestTempPath, { force: true }).catch(() => {});
     throw error;
   }
 }
