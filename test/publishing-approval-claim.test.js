@@ -145,7 +145,7 @@ async function run() {
     assert.equal(warningReadinessClaim.status, 'uploading',
       'a fresh warning readiness run without blocking failures may allow upload');
 
-    process.stdout.write('Publishing approval claim tests passed\\n');
+    process.stdout.write('Publishing approval claim tests passed\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
@@ -153,6 +153,6 @@ async function run() {
 }
 
 run().catch(error => {
-  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}\\n`);
+  process.stderr.write(`Publishing approval claim tests failed: ${error.stack || error.message}\n`);
   process.exitCode = 1;
 });
