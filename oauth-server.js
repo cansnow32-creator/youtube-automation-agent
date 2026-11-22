@@ -13,6 +13,7 @@ class OAuthServer {
     this.oauthState = null;
     this.codeVerifier = null;
     this.callbackHandled = false;
+    this.redirectUri = 'http://127.0.0.1:8080/auth/callback';
     this.setupRoutes();
   }
 
@@ -105,7 +106,7 @@ class OAuthServer {
     const oauth2Client = new google.auth.OAuth2(
       credentials.youtube.client_id,
       credentials.youtube.client_secret,
-      credentials.youtube.redirect_uris[0]
+      this.redirectUri
     );
 
     const { tokens } = await oauth2Client.getToken({ code, codeVerifier: this.codeVerifier });
