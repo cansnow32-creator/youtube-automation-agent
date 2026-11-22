@@ -1428,9 +1428,9 @@ class AIVideoGenerator {
         fileSize: await this.getFileSize(thumbnailPath)
       };
     } catch (error) {
-      if (thumbnailPath) await fs.unlink(thumbnailPath).catch(() => {});
       if (isLeaseFailure(error)) throw error;
       await assertLease();
+      if (thumbnailPath) await fs.unlink(thumbnailPath).catch(() => {});
       this.logger.error('Thumbnail generation failed:', error);
       return await this.simulateThumbnailGeneration(script, style, assertLease);
     }
