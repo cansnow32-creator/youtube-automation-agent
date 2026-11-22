@@ -1049,7 +1049,8 @@ class SceneRepairService {
           return outputPath;
         }
       }
-    } catch (_error) {
+    } catch (error) {
+      if (isLeaseFailure(error)) throw error;
       // Missing or corrupt cached narration mix is rebuilt below.
     }
     const tempPath = `${outputPath}.${crypto.randomUUID()}.writing.m4a`;
