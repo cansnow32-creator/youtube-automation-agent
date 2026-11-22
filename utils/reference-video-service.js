@@ -78,7 +78,8 @@ class ReferenceVideoService {
         fs.realpath(this.dataRoot),
         fs.realpath(record.framePaths[index])
       ]);
-      if (!candidate.startsWith(`${root}${path.sep}`)) return null;
+      const relative = path.relative(root, candidate);
+      if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
       const stat = await fs.stat(candidate);
       return stat.isFile() ? candidate : null;
     } catch (_error) {
