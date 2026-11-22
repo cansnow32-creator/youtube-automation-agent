@@ -39,15 +39,6 @@ class OAuthServer {
       }
 
       if (!code) {
-        res.send(`<h1>❌ No Authorization Code</h1><p>No authorization code received</p>`);
-        return;
-      }
-
-      if (this.callbackHandled) {
-        res.status(409).type('text').send('OAuth callback has already been handled.');
-        return;
-      }
-      if (!code) {
         res.status(400).type('text').send('Missing authorization code.');
         return;
       }
@@ -78,7 +69,6 @@ class OAuthServer {
         }, 2000);
         
       } catch (error) {
-        console.error(chalk.red('Token exchange failed:'), error);
         console.error(chalk.red('Token exchange failed:'), error.message);
         res.status(500).type('text').send('Token exchange failed. Check the local application log.');
         this.codeVerifier = null;
