@@ -1126,8 +1126,12 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/scenes/:sceneId/narration', protect, async (req, res) => {
       try {
         if (!this.scenes) return res.status(503).json({ error: 'Narration recovery requires completed setup' });
-        const result = await this.scenes.regenerateNarration(req.params.productionId, req.params.sceneId, req.body || {});
-        await this.refreshContentReview(req.params.productionId, 'Narration regenerated; rebuild the final video before approval');
+        const result = await this.runSceneEditWithReview(
+          req.params.productionId,
+          assertLease => this.scenes.regenerateNarrationUnlocked(req.params.productionId, req.params.sceneId, req.body || {}, assertLease),
+          'Narration regenerated; rebuild the final video before approval',
+          'narration regeneration and review invalidation'
+        );
         return res.status(202).json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
@@ -1137,10 +1141,11 @@ class YouTubeAutomationAgent {
     this.app.post('/api/content/:productionId/narration/silence', protect, async (req, res) => {
       try {
         if (!this.scenes) return res.status(503).json({ error: 'Narration recovery requires completed setup' });
-        const result = await this.scenes.setSilenceOverride(req.params.productionId, req.body || {});
-        await this.refreshContentReview(
+        const result = await this.runSceneEditWithReview(
           req.params.productionId,
-          result.enabled ? 'Intentional silence recorded; rebuild and review before approval' : 'Narration is required again; regenerate it before approval'
+          assertLease => this.scenes.setSilenceOverrideUnlocked(req.params.productionId, req.body || {}, assertLease),
+          'Intentional silence or narration requirement changed; rebuild and review before approval',
+          'narration silence override and review invalidation'
         );
         return res.json({ success: true, result });
       } catch (error) {
@@ -1155,14 +1160,18 @@ class YouTubeAutomationAgent {
       async (req, res) => {
         try {
           if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
-          const result = await this.scenes.replaceAsset(req.params.productionId, req.params.sceneId, {
-            buffer: req.body,
-            contentType: req.get('content-type'),
-            filename: req.get('x-file-name'),
-            rightsConfirmed: req.get('x-rights-confirmed') === 'true',
-            containsSyntheticMedia: req.get('x-synthetic-media') === 'true'
-          });
-          await this.refreshContentReview(req.params.productionId, 'Replacement scene asset must be rebuilt and reviewed');
+          const result = await this.runSceneEditWithReview(
+            req.params.productionId,
+            assertLease => this.scenes.replaceAssetUnlocked(req.params.productionId, req.params.sceneId, {
+              buffer: req.body,
+              contentType: req.get('content-type'),
+              filename: req.get('x-file-name'),
+              rightsConfirmed: req.get('x-rights-confirmed') === 'true',
+              containsSyntheticMedia: req.get('x-synthetic-media') === 'true'
+            }, assertLease),
+            'Replacement scene asset must be rebuilt and reviewed',
+            'scene asset replacement and review invalidation'
+          );
           return res.json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
         } catch (error) {
           return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
