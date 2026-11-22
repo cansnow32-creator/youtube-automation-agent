@@ -58,6 +58,7 @@ FFmpeg is installed with `npm install` through `ffmpeg-static`.
 2. Enable **YouTube Data API v3**, and **YouTube Analytics API** for retention and outcome data.
 3. Create an OAuth 2.0 client of type **Desktop app** (not Web application) and save the JSON as `config/credentials.json`.
 4. Under **Google Auth Platform → Audience**, add the Google account that owns your channel as a **test user**. Otherwise sign-in fails with `Error 403: access_denied`. While the app is in Testing mode, Google expires the sign-in after 7 days.
+5. The loopback OAuth flow uses a cryptographically random state value and PKCE (S256); authorization codes are exchanged with the matching one-time verifier, and duplicate callbacks are rejected.
 
 On Windows, Node's `chmod(0600)` is not a substitute for NTFS access control. After creating `config/`, restrict the folder to your Windows account before storing OAuth credentials or tokens:
 
