@@ -69,7 +69,7 @@ async function testAttemptScopedClipOutputsAndLeaseLossPreservesPersistedOutput(
         assertLease: async () => {
           leaseChecks += 1;
           // The first clip has been produced; fail before the second can start.
-          if (leaseChecks >= 7) {
+          if (leaseChecks >= 6) {
             throw Object.assign(new Error('generation lease lost during provider clip set'), {
               code: 'GENERATION_JOB_LEASE_LOST',
               status: 409
