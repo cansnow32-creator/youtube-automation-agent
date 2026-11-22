@@ -399,7 +399,7 @@ class YouTubeAutomationAgent {
     this.app.use(createLoopbackSameOriginGuard());
 
     if (!process.env.API_KEY) {
-      this.logger.warn('API_KEY is not set; mutating API routes are unprotected');
+      this.logger.warn('API_KEY is not set; API routes rely on loopback and same-origin request checks, not a shared secret');
     }
     
     // Main dashboard route
@@ -2789,8 +2789,8 @@ class YouTubeAutomationAgent {
     }
     
     const PORT = process.env.PORT || 3456;
-    // Loopback by default: mutating routes are open whenever API_KEY is unset,
-    // so the dashboard must not be reachable from the network unless asked.
+    // Loopback-only by default. Without API_KEY there is no shared-secret auth;
+    // request-origin checks are a browser boundary, not protection from local processes.
     const HOST = process.env.HOST || '127.0.0.1';
     validateHostConfiguration(HOST);
     this.app.listen(PORT, HOST, () => {
