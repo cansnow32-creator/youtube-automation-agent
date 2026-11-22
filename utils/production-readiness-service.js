@@ -55,7 +55,7 @@ class ProductionReadinessService {
     if (summary.status === 'unverified') {
       reason = 'Run the verified production readiness check before continuing';
     } else if (summary.stale) {
-      reason = 'The production readiness check is older than 24 hours; run it again';
+      reason = 'The production readiness check is missing a valid timestamp or is older than 24 hours; run it again';
     } else if (summary.status === 'failed') {
       reason = `Fix ${summary.blockingFailures.join(', ')} and run the check again`;
     } else if (!['passed', 'warning'].includes(summary.status)) {
