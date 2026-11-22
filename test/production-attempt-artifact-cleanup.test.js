@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { ProductionManagementAgent, getVideoAttemptSidecarPaths } = require('../agents/production-management-agent');
+const { ThumbnailDesignerAgent } = require('../agents/thumbnail-designer-agent');
 
 function createLeaseLostError() {
   return Object.assign(new Error('generation job lease lost'), {
@@ -259,6 +260,35 @@ async function testThumbnailFallbackOutputIsPreservedAfterLeaseLoss() {
   }
 }
 
+async function testThumbnailDesignerPreservesCandidatesAfterLeaseLoss() {
+  const tempDir = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'agenttube-thumbnail-designer-lease-'));
+  const candidatePath = path.join(tempDir, 'candidate.png');
+  const agent = new ThumbnailDesignerAgent({}, {});
+  agent.createThumbnail = async () => {
+    await fs.writeFile(candidatePath, 'generated thumbnail candidate');
+    return candidatePath;
+  };
+  let assertions = 0;
+  const assertLease = async () => {
+    assertions += 1;
+    if (assertions >= 2) throw createLeaseLostError();
+  };
+  const concept = {
+    colors: { primary: 'blue', secondary: 'white', accent: 'gold' },
+    primaryText: 'TEST',
+    secondaryText: 'LEASE'
+  };
+
+  try {
+    await assert.rejects(agent.generateABVariants(concept, assertLease),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST');
+    assert.equal(await fs.access(candidatePath).then(() => true, () => false), true,
+      'thumbnail candidates must remain available for recovery after lease loss');
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function testSimulationArtifactIsPreservedAfterLeaseLoss() {
   const id = 'simulation-lease-' + crypto.randomUUID();
   const attemptId = 'lease_attempt';
@@ -305,6 +335,7 @@ async function run() {
   await testCaptionOutputIsPreservedAfterLeaseLoss();
   await testFinalVideoOutputIsPreservedAfterLeaseLossForRecovery();
   await testThumbnailFallbackOutputIsPreservedAfterLeaseLoss();
+  await testThumbnailDesignerPreservesCandidatesAfterLeaseLoss();
   await testSimulationArtifactIsPreservedAfterLeaseLoss();
   console.log('Production attempt-scoped media artifact tests passed');
 }
