@@ -1376,6 +1376,7 @@ class ProductionManagementAgent {
     } catch (error) {
       // A stale worker has no authority to delete attempt files: the next lease
       // owner may be validating or reusing them during recovery.
+      if (isLeaseFailure(error)) throw error;
       await assertLease();
       await removeAttemptFiles(generatedPaths, [
         productionData.assets.audio?.path,
@@ -1514,6 +1515,8 @@ class ProductionManagementAgent {
       await fs.writeFile(placeholderPath, JSON.stringify(assemblyInstructions, null, 2));
       await assertLease();
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await removeAttemptFiles([placeholderPath]);
       throw error;
     }
