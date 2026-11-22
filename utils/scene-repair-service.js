@@ -9,6 +9,11 @@ const { ProvenanceService } = require('./provenance-service');
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
+function isLeaseFailure(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code.includes('LEASE') || code.includes('LOCK_LOST') || code.includes('LOCK_UNVERIFIED');
+}
+
 async function replaceFileWithRollback(tempPath, destinationPath, token = crypto.randomUUID()) {
   const backupPath = `${destinationPath}.${token}.backup`;
   let backedUp = false;
@@ -420,6 +425,8 @@ class SceneRepairService {
       }, assertLease.lease);
       return next;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       if (!scenePersisted) {
         await fs.unlink(outputPath).catch(() => {});
         if (generatedPath) {
@@ -427,7 +434,6 @@ class SceneRepairService {
           await fs.unlink(`${generatedPath}.pcm`).catch(() => {});
         }
       }
-      await assertLease();
       const evidence = this.videoGenerator.lastNarrationResult || {};
       await this.db.updateProductionScene(productionId, sceneId, {
         narrationStatus: 'failed', narrationProvider: evidence.provider || scene.narrationProvider,
@@ -629,10 +635,11 @@ class SceneRepairService {
       }, assertLease.lease);
       return { scene: next, estimate };
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       if (!scenePersisted) {
         for (const filePath of attemptFiles) await fs.unlink(filePath).catch(() => {});
       }
-      await assertLease();
       await this.db.updateProductionScene(productionId, sceneId, { status: 'failed' }, assertLease.lease).catch(() => {});
       await this.db.saveProductionSceneRevision({
         productionId, sceneId, action: 'regenerate', status: 'failed', before,
@@ -711,6 +718,8 @@ class SceneRepairService {
       }, assertLease.lease);
       return next;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       if (!scenePersisted) {
         await fs.unlink(tempPath).catch(() => {});
         await fs.unlink(outputPath).catch(() => {});
@@ -881,6 +890,8 @@ class SceneRepairService {
         await assertLease();
         await replaceFileWithRollback(visualTempPath, visualPath, attemptId);
       } catch (error) {
+        if (isLeaseFailure(error)) throw error;
+        await assertLease();
         await fs.unlink(visualTempPath).catch(() => {});
         throw error;
       }
@@ -907,6 +918,8 @@ class SceneRepairService {
         await assertLease();
         await replaceFileWithRollback(finalTempPath, finalPath, attemptId);
       } catch (error) {
+        if (isLeaseFailure(error)) throw error;
+        await assertLease();
         await fs.unlink(finalTempPath).catch(() => {});
         throw error;
       }
