@@ -32,10 +32,13 @@ async function run() {
   auth.callbackHandled = false;
 
   let resolveExchange;
+  let signalExchange;
+  const exchangeStarted = new Promise(resolve => { signalExchange = resolve; });
   let exchangeArgs;
   const oauth2Client = {
     getToken: options => {
       exchangeArgs = options;
+      signalExchange();
       return new Promise(resolve => { resolveExchange = resolve; });
     }
   };
@@ -46,6 +49,7 @@ async function run() {
     resolveAuth = resolve;
     rejectAuth = reject;
   });
+  authResult.catch(() => {});
   auth.resolveAuth = resolveAuth;
   auth.rejectAuth = rejectAuth;
 
@@ -66,7 +70,7 @@ async function run() {
     assert.strictEqual(wrongMethod.status, 405, 'non-GET callbacks must be rejected');
 
     const firstCallback = request(port, '/callback?code=valid-code&state=expected-state-value');
-    await new Promise(resolve => setImmediate(resolve));
+    await exchangeStarted;
     assert.deepStrictEqual(exchangeArgs, {
       code: 'valid-code',
       codeVerifier: 'test-pkce-verifier'
