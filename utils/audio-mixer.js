@@ -102,7 +102,9 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
   const temporaryPath = `${outputPath}.${mixAttemptId}.mixing.mp4`;
   const manifestTempPath = `${manifestPath}.${mixAttemptId}.tmp`;
   const backupPath = `${outputPath}.${mixAttemptId}.backup`;
+  const manifestBackupPath = `${manifestPath}.${mixAttemptId}.backup`;
   let backedUp = false;
+  let manifestBackedUp = false;
   const [videoHash, musicHash] = await Promise.all([hashFile(videoPath), hashFile(musicPath)]);
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
     videoHash, musicHash, volume, fadeIn, fadeOut, loop: music.loop !== false,
@@ -206,15 +208,27 @@ async function mixBackgroundMusic(videoPath, outputPath, music = {}, dependencie
     await assertLease();
     await fileSystem.writeFile(manifestTempPath, JSON.stringify({ version: 1, fingerprint, result }, null, 2));
     await assertLease();
+    try {
+      await fileSystem.rename(manifestPath, manifestBackupPath);
+      manifestBackedUp = true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await assertLease();
     await fileSystem.rename(manifestTempPath, manifestPath);
     await assertLease();
     if (backedUp) await fileSystem.rm(backupPath, { force: true }).catch(() => {});
+    if (manifestBackedUp) await fileSystem.rm(manifestBackupPath, { force: true }).catch(() => {});
     return result;
   } catch (error) {
     if (isLeaseFailure(error)) throw error;
     // A generic provider/FFmpeg failure may only restore or clean after ownership
     // is re-verified. A stale worker leaves both output and rollback backup intact.
     await assertLease();
+    if (manifestBackedUp) {
+      await fileSystem.rm(manifestPath, { force: true }).catch(() => {});
+      await fileSystem.rename(manifestBackupPath, manifestPath).catch(() => {});
+    }
     if (backedUp) {
       await fileSystem.rm(outputPath, { force: true }).catch(() => {});
       await fileSystem.rename(backupPath, outputPath).catch(() => {});
