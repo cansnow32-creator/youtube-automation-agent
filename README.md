@@ -6,7 +6,7 @@ It researches topics, writes scripts, generates narration and visuals, assembles
 
 [![CI](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js 22+](https://img.shields.io/badge/node-18.17%2B-43853d.svg)](package.json)
+[![Node.js 22+](https://img.shields.io/badge/node-22%2B-43853d.svg)](package.json)
 [![Releases](https://img.shields.io/github/v/release/darkzOGx/youtube-automation-agent?label=release)](https://github.com/darkzOGx/youtube-automation-agent/releases)
 
 ![The operator console: videos waiting for your decision, a generation job in progress, and the publishing calendar](assets/screenshots/overview.png)
