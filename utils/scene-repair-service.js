@@ -1048,7 +1048,7 @@ class SceneRepairService {
     filters.push(`${scenes.map((_, index) => `[a${index}]`).join('')}concat=n=${scenes.length}:v=0:a=1[aout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[aout]', '-c:a', 'aac', tempPath);
     try {
-      await this.runFFmpeg(args);
+      await this.runFFmpeg(args, { assertLease });
       const stat = await fs.stat(tempPath);
       if (!stat.isFile() || stat.size <= 0) throw new Error('Narration mix output is empty');
       const duration = await this.getMediaDuration(tempPath);
@@ -1059,6 +1059,8 @@ class SceneRepairService {
       await replaceFileWithRollback(tempPath, outputPath);
       return outputPath;
     } catch (error) {
+      if (isLeaseFailure(error)) throw error;
+      await assertLease();
       await fs.unlink(tempPath).catch(() => {});
       throw error;
     }
