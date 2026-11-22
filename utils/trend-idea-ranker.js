@@ -253,7 +253,8 @@ function scoreTrendIdeas(ideas, trendTopics, channelStrategy = {}, performanceSn
     const performance = historical?.score ?? null;
     const viewerValue = scoreViewerValue(idea, demand);
     const productionFit = scoreProductionFit(idea, channelStrategy);
-    const productionRequirements = scoreProductionRequirements(idea, channelStrategy);\n    const productionEffort = scoreProductionEffort(idea, channelStrategy);
+    const productionRequirements = scoreProductionRequirements(idea, channelStrategy);
+    const productionEffort = scoreProductionEffort(idea, channelStrategy);
 
     let weights;
     let score;
