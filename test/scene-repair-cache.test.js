@@ -117,6 +117,26 @@ async function run() {
     assert.equal(ffmpegReceivedLease, true, 'scene narration FFmpeg must receive the active lease assertion');
     assert.equal(segmentScene.audioPath, undefined, 'a scene audio segment must not be published after lease loss');
 
+    const mixDir = path.join(directory, 'narration-mix-lease');
+    await fs.mkdir(path.join(mixDir, 'audio'), { recursive: true });
+    const mixCalls = [];
+    const mixService = new SceneRepairService({}, {}, {
+      dataRoot: mixDir,
+      getMediaDuration: async () => 8,
+      runFFmpeg: async (args, options = {}) => {
+        mixCalls.push({ args, hasLease: typeof options.assertLease === 'function' });
+        await options.assertLease?.();
+        const output = args[args.length - 1];
+        if (output !== '-') await fs.writeFile(output, 'rendered-narration-mix');
+      }
+    });
+    const mixOutput = await mixService.rebuildNarration('mix-lease-production', [{
+      narrationStatus: 'current', audioPath, duration: 8
+    }], null, 'mix-fingerprint', async () => {} , 'mix-attempt');
+    assert.equal((await fs.stat(mixOutput)).isFile(), true, 'narration mix should publish after valid FFmpeg output');
+    assert.equal(mixCalls.length, 2, 'narration mix should render and validate its output');
+    assert.ok(mixCalls.every(call => call.hasLease), 'render and validation FFmpeg calls must both receive lease assertion');
+
     const fallbackPath = path.join(directory, 'full-narration.mp3');
     await fs.writeFile(fallbackPath, Buffer.from('fallback-audio'));
     const fallbackOne = await service.buildRebuildFingerprint([{ ...scenes[0], audioPath: null }], fallbackPath);
