@@ -1685,8 +1685,8 @@ class Database {
          WHERE id = ? AND status = ? AND external_task_id IS ?`,
         [JSON.stringify(history.length ? { previousTasks: history } : {}), taskId, expectedStatus, expectedExternalTaskId || null]
       );
-      const rows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
-      return { claimed: result.changes === 1, task: this.parseMediaGenerationTask(rows[0]) };
+      const savedRows = await tx.all('SELECT * FROM media_generation_tasks WHERE id = ?', [taskId]);
+      return { claimed: result.changes === 1, task: this.parseMediaGenerationTask(savedRows[0]) };
     };
     if (lease) return this.withIsolatedTransaction(persist);
     const current = await this.getMediaGenerationTaskById(taskId);
