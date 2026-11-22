@@ -1764,7 +1764,17 @@ class YouTubeAutomationAgent {
       const updates = {};
       const allowed = ['approval_required', 'notification_enabled', 'channel_timezone', 'max_daily_posts', 'content_buffer_days'];
       for (const key of allowed) {
-        if (req.body?.[key] !== undefined) updates[key] = String(req.body[key]);
+        if (req.body?.[key] === undefined) continue;
+        if (key === 'approval_required' || key === 'notification_enabled') {
+          const value = req.body[key];
+          const normalized = typeof value === 'boolean' ? String(value) : String(value).trim().toLowerCase();
+          if (!['true', 'false'].includes(normalized)) return res.status(400).json({ error: `${key} must be a boolean` });
+          updates[key] = normalized;
+        } else if (key === 'channel_timezone') {
+          updates[key] = this.validateTimezone(req.body[key]);
+        } else {
+          updates[key] = String(req.body[key]);
+        }
       }
       const provider = req.body?.video_provider;
       if (provider !== undefined) {
@@ -2532,12 +2542,24 @@ class YouTubeAutomationAgent {
     }
   }
 
+  validateTimezone(value) {
+    const timezone = String(value ?? '').trim();
+    if (!timezone) return '';
+    if (timezone.length > 100) throw new Error('timezone must be 100 characters or less');
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+      return timezone;
+    } catch (_error) {
+      throw new Error('timezone must be a valid IANA time zone, such as Europe/Istanbul');
+    }
+  }
+
   validateProfile(input) {
     const textFields = ['channelName', 'goal', 'targetAudience', 'brandVoice', 'defaultStyle', 'callToAction', 'visualStyle', 'timezone'];
     const result = {};
     for (const field of textFields) {
       if (input[field] !== undefined) {
-        const value = String(input[field]).trim();
+        const value = field === 'timezone' ? this.validateTimezone(input[field]) : String(input[field]).trim();
         if (value.length > 500) throw new Error(`${field} is too long`);
         result[field] = value;
       }
