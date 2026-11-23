@@ -31,9 +31,20 @@ async function acquireGenerationJobLease(db, jobId, options = {}) {
   let leaseFailure = null;
   let renewalInFlight = Promise.resolve();
   let released = false;
+  let leaseExpiresAt = Date.now() + leaseMs;
   const assertLease = async () => {
     await renewalInFlight;
     if (leaseFailure) throw leaseFailure;
+    // Heartbeat timers cannot run while the event loop is blocked or the
+    // process is suspended. Never let a worker continue past its last
+    // confirmed lease deadline merely because the timer has not fired.
+    if (Date.now() >= leaseExpiresAt) {
+      leaseFailure = Object.assign(
+        new Error('Generation job lease expired before it could be renewed for ' + jobId),
+        { code: 'GENERATION_JOB_LEASE_LOST', status: 409 }
+      );
+      throw leaseFailure;
+    }
   };
   // Expose the exact lock identity so checkpoint writes can fence stale workers
   // inside the same SQLite transaction as their mutation.
@@ -49,6 +60,8 @@ async function acquireGenerationJobLease(db, jobId, options = {}) {
             new Error('Generation job lease lost for ' + jobId),
             { code: 'GENERATION_JOB_LEASE_LOST', status: 409 }
           );
+        } else {
+          leaseExpiresAt = Date.now() + leaseMs;
         }
       } catch (cause) {
         leaseFailure = Object.assign(
