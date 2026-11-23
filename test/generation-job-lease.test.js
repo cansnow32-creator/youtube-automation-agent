@@ -148,6 +148,32 @@ async function testGenerationRunnerHoldsLeaseUntilAllStagesFinish() {
   assert.equal(updates.some(item => item.changes.status === 'completed'), true);
 }
 
+async function testBlockedEventLoopCannotOutliveLease() {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const originalNow = Date.now;
+  let heartbeat;
+  global.setInterval = callback => { heartbeat = callback; return { unref() {} }; };
+  global.clearInterval = () => {};
+  let now = 1_000_000;
+  Date.now = () => now;
+  const db = createLockDatabase();
+  try {
+    const lease = await acquireGenerationJobLease(db, 'job-expiry', { leaseMs: 60_000, heartbeatMs: 1_000 });
+    now += 60_000;
+    await assert.rejects(
+      lease.assertLease(),
+      error => error.code === 'GENERATION_JOB_LEASE_LOST' && error.status === 409,
+      'a worker must fail closed after its confirmed lease deadline even when the heartbeat timer never ran'
+    );
+    await lease.release();
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+    Date.now = originalNow;
+  }
+}
+
 async function testHeartbeatRenewalsAreSerialized() {
   const originalSetInterval = global.setInterval;
   const originalClearInterval = global.clearInterval;
@@ -194,6 +220,7 @@ async function run() {
   await testLeaseLossFailsClosedAndReleasesOnlyOwnedLock();
   await testMissingLockSupportFailsClosed();
   await testHeartbeatRenewalsAreSerialized();
+  await testBlockedEventLoopCannotOutliveLease();
   await testGenerationRunnerHoldsLeaseUntilAllStagesFinish();
   console.log('Generation job lease tests passed');
 }
