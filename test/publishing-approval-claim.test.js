@@ -145,6 +145,20 @@ async function run() {
     assert.equal(warningReadinessClaim.status, 'uploading',
       'a fresh warning readiness run without blocking failures may allow upload');
 
+    await database.executeQuery(
+      'INSERT INTO content_reviews (production_id, status) VALUES (?, ?)',
+      ['production-5', 'approved']
+    );
+    await insertSchedule('tied-readiness', 'production-5');
+    const tiedTime = new Date(Date.now() - 100).toISOString();
+    await addReadiness('readiness-tied-failed', 'failed', [
+      { id: 'video_assembly', blocking: true, status: 'failed' }
+    ], tiedTime);
+    await addReadiness('readiness-tied-passed', 'passed', [], tiedTime);
+    const tiedReadinessClaim = await database.claimScheduleEntryForUpload('tied-readiness');
+    assert.equal(tiedReadinessClaim.status, 'uploading',
+      'when readiness timestamps tie, the latest inserted run must determine upload eligibility');
+
     process.stdout.write('Publishing approval claim tests passed\n');
   } finally {
     await new Promise((resolve, reject) => database.db.close(error => error ? reject(error) : resolve()));
