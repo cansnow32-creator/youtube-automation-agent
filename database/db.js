@@ -3137,7 +3137,7 @@ class Database {
            SELECT 1 FROM readiness_runs AS readiness
            WHERE readiness.id = (
              SELECT latest.id FROM readiness_runs AS latest
-             ORDER BY latest.completed_at DESC LIMIT 1
+             ORDER BY latest.completed_at DESC, latest.rowid DESC LIMIT 1
            )
              AND readiness.status IN ('passed', 'warning')
              AND readiness.completed_at IS NOT NULL
